@@ -38,8 +38,26 @@ if [[ ! -d "$REPOSITORY_ROOT/dashboard" ]]; then
   echo "error: dashboard scaffold is missing from $REPOSITORY_ROOT/dashboard" >&2
   exit 1
 fi
+if [[ ! -d "$REPOSITORY_ROOT/migrations" || -L "$REPOSITORY_ROOT/migrations" ]]; then
+  echo "error: migration scaffold must be a regular directory at $REPOSITORY_ROOT/migrations" >&2
+  exit 1
+fi
+if [[ ! -f "$REPOSITORY_ROOT/migrations/0000_bootstrap.sql" || -L "$REPOSITORY_ROOT/migrations/0000_bootstrap.sql" ]]; then
+  echo "error: migration bootstrap is missing from $REPOSITORY_ROOT/migrations" >&2
+  exit 1
+fi
+if [[ ! -f "$REPOSITORY_ROOT/migrations/README.md" || -L "$REPOSITORY_ROOT/migrations/README.md" ]]; then
+  echo "error: migration authoring reference is missing from $REPOSITORY_ROOT/migrations" >&2
+  exit 1
+fi
+for migration_source in "$REPOSITORY_ROOT"/migrations/*.sql; do
+  if [[ -L "$migration_source" || ! -f "$migration_source" ]]; then
+    echo "error: migration source must be a regular non-symlink file: $migration_source" >&2
+    exit 1
+  fi
+done
 
-mkdir -p "$PACKAGE/tools" "$PACKAGE/dashboard" "$PACKAGE/workspace" "$PACKAGE/runtime"
+mkdir -p "$PACKAGE/tools" "$PACKAGE/dashboard" "$PACKAGE/migrations" "$PACKAGE/workspace" "$PACKAGE/runtime"
 install -m 0755 "$REPOSITORY_ROOT/target/release/lite-mcp" "$PACKAGE/lite-mcp"
 install -m 0755 "$UV_SOURCE" "$PACKAGE/uv"
 install -m 0644 "$REPOSITORY_ROOT/tools/execute_sql.py" "$PACKAGE/tools/execute_sql.py"
@@ -54,6 +72,18 @@ install -m 0644 "$REPOSITORY_ROOT/README.md" "$PACKAGE/README.md"
     -type f ! -name '*.pyc' ! -name '*.pyo' -print0 |
     while IFS= read -r -d '' relative_path; do
       destination_path="$PACKAGE/dashboard/$relative_path"
+      mkdir -p "$(dirname "$destination_path")"
+      cp -p "$relative_path" "$destination_path"
+    done
+)
+
+# Migration files are user-owned schema history. Package every regular source
+# file, preserve applied migration bytes, and never follow symlinks.
+(
+  cd "$REPOSITORY_ROOT/migrations"
+  find . -type f -print0 |
+    while IFS= read -r -d '' relative_path; do
+      destination_path="$PACKAGE/migrations/$relative_path"
       mkdir -p "$(dirname "$destination_path")"
       cp -p "$relative_path" "$destination_path"
     done
