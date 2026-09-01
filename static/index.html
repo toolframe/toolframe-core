@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>lite-mcp · Database dashboard</title>
+  <style>
+    :root {
+      --ink: #17212b;
+      --muted: #667482;
+      --line: #dbe2e8;
+      --panel: #ffffff;
+      --page: #f4f7f9;
+      --accent: #246b77;
+      --accent-dark: #174f59;
+      --accent-soft: #e6f2f2;
+      --warning: #a45d13;
+      --warning-soft: #fff4e5;
+      --danger: #b43d45;
+      --danger-soft: #fff0f0;
+      --shadow: 0 12px 30px rgba(27, 49, 65, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--page);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top right, rgba(196, 229, 230, 0.42), transparent 30rem),
+        var(--page);
+      color: var(--ink);
+    }
+
+    button,
+    code {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 48px;
+    }
+
+    .topbar,
+    .section-heading,
+    .table-card-header,
+    .endpoint {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .topbar {
+      margin-bottom: 28px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 44px;
+      height: 44px;
+      place-items: center;
+      border-radius: 13px;
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 7px 16px rgba(36, 107, 119, 0.23);
+      font-size: 21px;
+      font-weight: 800;
+      letter-spacing: -0.08em;
+    }
+
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--muted);
+      font-size: 0.71rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1,
+    h2,
+    h3 {
+      letter-spacing: -0.025em;
+    }
+
+    h1 {
+      margin-bottom: 0;
+      font-size: clamp(1.7rem, 3vw, 2.2rem);
+      line-height: 1;
+    }
+
+    h2 {
+      margin-bottom: 0;
+      font-size: clamp(1.25rem, 2.5vw, 1.55rem);
+    }
+
+    h3 {
+      margin-bottom: 0;
+      overflow-wrap: anywhere;
+      font-size: 1.05rem;
+    }
+
+    .refresh-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 0 16px;
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 750;
+      transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+    }
+
+    .refresh-button:hover:not(:disabled) {
+      border-color: var(--accent-dark);
+      background: var(--accent-dark);
+      transform: translateY(-1px);
+    }
+
+    .refresh-button:focus-visible,
+    code:focus-visible {
+      outline: 3px solid rgba(36, 107, 119, 0.3);
+      outline-offset: 3px;
+    }
+
+    .refresh-button:disabled {
+      cursor: wait;
+      opacity: 0.68;
+    }
+
+    .notice {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      margin-bottom: 20px;
+      padding: 18px 20px;
+      border: 1px solid #f0d4ab;
+      border-radius: 14px;
+      background: var(--warning-soft);
+      box-shadow: 0 4px 16px rgba(124, 79, 27, 0.04);
+    }
+
+    .notice-icon {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 50%;
+      background: #f3c982;
+      color: #6c3c07;
+      font-weight: 900;
+    }
+
+    .notice h2 {
+      margin-bottom: 5px;
+      color: #75450d;
+      font-size: 1rem;
+      letter-spacing: 0;
+    }
+
+    .notice p {
+      max-width: 720px;
+      margin-bottom: 13px;
+      color: #704d26;
+      font-size: 0.9rem;
+      line-height: 1.55;
+    }
+
+    .endpoint {
+      justify-content: flex-start;
+      width: fit-content;
+      gap: 9px;
+      color: #704d26;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    code {
+      padding: 3px 7px;
+      border: 1px solid #ebc88e;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.7);
+      color: #693d0b;
+      font-size: 0.84rem;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(150px, 0.8fr));
+      gap: 12px;
+      margin-bottom: 35px;
+    }
+
+    .meta-card {
+      min-width: 0;
+      padding: 16px 17px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .meta-card span {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .meta-card strong {
+      display: block;
+      overflow-wrap: anywhere;
+      font-size: 0.96rem;
+      line-height: 1.4;
+    }
+
+    .section-heading {
+      align-items: flex-end;
+      margin-bottom: 15px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      font-size: 0.77rem;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #9daab4;
+    }
+
+    .status[data-state="loading"] .status-dot {
+      background: #c28a27;
+      box-shadow: 0 0 0 4px rgba(194, 138, 39, 0.13);
+    }
+
+    .status[data-state="success"] {
+      border-color: #b9dfdc;
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+    }
+
+    .status[data-state="success"] .status-dot {
+      background: #2a9389;
+    }
+
+    .status[data-state="error"] {
+      border-color: #efc8ca;
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .status[data-state="error"] .status-dot {
+      background: var(--danger);
+    }
+
+    .table-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+      gap: 16px;
+    }
+
+    .table-card {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .table-card-header {
+      align-items: flex-start;
+      padding: 17px 18px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .table-card-header > div:first-child {
+      min-width: 0;
+    }
+
+    .table-summary {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 0.79rem;
+    }
+
+    .truncated {
+      flex: 0 0 auto;
+      padding: 4px 7px;
+      border-radius: 6px;
+      background: #fff0d7;
+      color: var(--warning);
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .table-scroll {
+      overflow-x: auto;
+      overscroll-behavior-inline: contain;
+    }
+
+    table {
+      width: 100%;
+      min-width: 420px;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    caption {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    th,
+    td {
+      max-width: 270px;
+      padding: 11px 14px;
+      border-bottom: 1px solid #edf1f3;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      background: #f8fafb;
+      color: #52616d;
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    td {
+      color: #283945;
+      line-height: 1.4;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody tr:hover td {
+      background: #fbfcfc;
+    }
+
+    td.is-null {
+      color: #89959e;
+      font-style: italic;
+    }
+
+    .message {
+      display: grid;
+      min-height: 190px;
+      place-items: center;
+      padding: 28px;
+      border: 1px dashed #c9d4db;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.58);
+      text-align: center;
+    }
+
+    .message-inner {
+      max-width: 430px;
+    }
+
+    .message-icon {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      margin: 0 auto 12px;
+      place-items: center;
+      border-radius: 12px;
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+      font-weight: 900;
+    }
+
+    .message[data-state="error"] .message-icon {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .message h3 {
+      margin-bottom: 6px;
+      font-size: 1rem;
+    }
+
+    .message p {
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.55;
+    }
+
+    footer {
+      margin-top: 36px;
+      color: var(--muted);
+      font-size: 0.76rem;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(100% - 24px, 600px);
+        padding-top: 20px;
+      }
+
+      .topbar {
+        align-items: flex-start;
+      }
+
+      .meta-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .section-heading {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .status {
+        align-self: flex-start;
+      }
+    }
+
+    @media (max-width: 430px) {
+      .topbar {
+        flex-direction: column;
+      }
+
+      .refresh-button {
+        width: 100%;
+      }
+
+      .notice {
+        padding: 16px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .refresh-button {
+        transition: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">⌁</span>
+        <div>
+          <p class="eyebrow">Embedded database console</p>
+          <h1>lite-mcp</h1>
+        </div>
+      </div>
+      <button class="refresh-button" id="refresh-button" type="button" aria-controls="table-preview">
+        Refresh
+      </button>
+    </header>
+
+    <main>
+      <section class="notice" role="note" aria-labelledby="notice-title">
+        <span class="notice-icon" aria-hidden="true">!</span>
+        <div>
+          <h2 id="notice-title">Open database access</h2>
+          <p>This server has no authentication. Its MCP SQL tool can modify the database, so keep this endpoint on a trusted network.</p>
+          <div class="endpoint">
+            <span>MCP endpoint</span>
+            <code>/mcp</code>
+          </div>
+        </div>
+      </section>
+
+      <section class="meta-grid" aria-label="Database details">
+        <div class="meta-card">
+          <span>Database path</span>
+          <strong id="database-path">Not available</strong>
+        </div>
+        <div class="meta-card">
+          <span>Tables</span>
+          <strong id="table-count">—</strong>
+        </div>
+        <div class="meta-card">
+          <span>Last refreshed</span>
+          <strong id="last-refreshed">—</strong>
+        </div>
+      </section>
+
+      <section aria-labelledby="preview-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Live preview</p>
+            <h2 id="preview-title">Database tables</h2>
+          </div>
+          <div class="status" id="status" data-state="idle" role="status" aria-live="polite">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="status-text">Waiting to load</span>
+          </div>
+        </div>
+        <div id="table-preview" aria-live="polite" aria-busy="false"></div>
+      </section>
+    </main>
+
+    <footer>Preview data is read from the local database through <code>/api/database</code>.</footer>
+  </div>
+
+  <script>
+    "use strict";
+
+    const refreshButton = document.getElementById("refresh-button");
+    const status = document.getElementById("status");
+    const statusText = document.getElementById("status-text");
+    const databasePath = document.getElementById("database-path");
+    const tableCount = document.getElementById("table-count");
+    const lastRefreshed = document.getElementById("last-refreshed");
+    const tablePreview = document.getElementById("table-preview");
+    let activeRequest = 0;
+
+    function makeElement(tagName, className, text) {
+      const element = document.createElement(tagName);
+      if (className) {
+        element.className = className;
+      }
+      if (text !== undefined) {
+        element.textContent = text;
+      }
+      return element;
+    }
+
+    function setStatus(state, label) {
+      status.dataset.state = state;
+      statusText.textContent = label;
+    }
+
+    function setMessage(state, icon, heading, description) {
+      const message = makeElement("div", "message");
+      message.dataset.state = state;
+      message.setAttribute("role", state === "error" ? "alert" : "status");
+
+      const inner = makeElement("div", "message-inner");
+      inner.appendChild(makeElement("div", "message-icon", icon));
+      inner.appendChild(makeElement("h3", "", heading));
+      inner.appendChild(makeElement("p", "", description));
+      message.appendChild(inner);
+      return message;
+    }
+
+    function setLoadingState() {
+      tablePreview.replaceChildren(setMessage("loading", "…", "Loading database tables", "Fetching the latest preview from the server."));
+      tablePreview.setAttribute("aria-busy", "true");
+      setStatus("loading", "Loading…");
+    }
+
+    function isDatabasePayload(value) {
+      return value !== null && typeof value === "object" && Array.isArray(value.tables);
+    }
+
+    function displayColumnName(value, index) {
+      if (typeof value === "string") {
+        return value || "(unnamed column)";
+      }
+      return `Column ${index + 1}`;
+    }
+
+    function displayCellValue(value, exists) {
+      if (!exists || value === null) {
+        return { text: "NULL", isNull: true };
+      }
+
+      if (typeof value === "string") {
+        return { text: value || '""', isNull: false };
+      }
+
+      if (typeof value === "number" || typeof value === "boolean") {
+        return { text: String(value), isNull: false };
+      }
+
+      let serialized;
+      try {
+        serialized = JSON.stringify(value);
+      } catch (error) {
+        serialized = undefined;
+      }
+      return { text: serialized === undefined ? String(value) : serialized, isNull: false };
+    }
+
+    function makeTableCard(table, index) {
+      const columns = Array.isArray(table && table.columns) ? table.columns : [];
+      const rows = Array.isArray(table && table.rows) ? table.rows : [];
+      const tableName = table && typeof table.name === "string" && table.name ? table.name : `Table ${index + 1}`;
+
+      const card = makeElement("article", "table-card");
+      const cardHeader = makeElement("div", "table-card-header");
+      const titleBlock = makeElement("div");
+      titleBlock.appendChild(makeElement("h3", "", tableName));
+      titleBlock.appendChild(makeElement("p", "table-summary", `${rows.length} preview row${rows.length === 1 ? "" : "s"} · ${columns.length} column${columns.length === 1 ? "" : "s"}`));
+      cardHeader.appendChild(titleBlock);
+
+      if (table && table.truncated === true) {
+        cardHeader.appendChild(makeElement("span", "truncated", "Preview truncated"));
+      }
+      card.appendChild(cardHeader);
+
+      if (columns.length === 0) {
+        card.appendChild(setMessage("empty", "∅", "No columns reported", "This table does not have any columns in the preview response."));
+        return card;
+      }
+
+      const scroll = makeElement("div", "table-scroll");
+      const previewTable = makeElement("table");
+      previewTable.appendChild(makeElement("caption", "", `Preview of ${tableName}`));
+
+      const head = makeElement("thead");
+      const headingRow = makeElement("tr");
+      columns.forEach((column, columnIndex) => {
+        const heading = makeElement("th", "", displayColumnName(column, columnIndex));
+        heading.setAttribute("scope", "col");
+        headingRow.appendChild(heading);
+      });
+      head.appendChild(headingRow);
+      previewTable.appendChild(head);
+
+      const body = makeElement("tbody");
+      rows.forEach((row) => {
+        const cells = Array.isArray(row) ? row : [];
+        const rowElement = makeElement("tr");
+        columns.forEach((column, columnIndex) => {
+          const cell = makeElement("td");
+          const rendered = displayCellValue(cells[columnIndex], columnIndex < cells.length);
+          cell.textContent = rendered.text;
+          if (rendered.isNull) {
+            cell.className = "is-null";
+          }
+          rowElement.appendChild(cell);
+        });
+        body.appendChild(rowElement);
+      });
+      previewTable.appendChild(body);
+      scroll.appendChild(previewTable);
+      card.appendChild(scroll);
+      return card;
+    }
+
+    function renderDatabase(payload) {
+      const tables = payload.tables;
+      databasePath.textContent = typeof payload.database_path === "string" && payload.database_path ? payload.database_path : "Not reported";
+      tableCount.textContent = `${tables.length} table${tables.length === 1 ? "" : "s"}`;
+      lastRefreshed.textContent = typeof payload.generated_at === "string" && payload.generated_at ? payload.generated_at : "Not reported";
+      tablePreview.setAttribute("aria-busy", "false");
+
+      if (tables.length === 0) {
+        tablePreview.replaceChildren(setMessage("empty", "∅", "No tables found", "The database is available, but it does not contain any tables to preview."));
+        return;
+      }
+
+      const grid = makeElement("div", "table-grid");
+      tables.forEach((table, index) => {
+        grid.appendChild(makeTableCard(table, index));
+      });
+      tablePreview.replaceChildren(grid);
+    }
+
+    async function loadDatabase() {
+      const requestId = ++activeRequest;
+      refreshButton.disabled = true;
+      setLoadingState();
+
+      try {
+        const response = await fetch("/api/database", {
+          method: "GET",
+          headers: { Accept: "application/json" }
+        });
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}.`);
+        }
+
+        const payload = await response.json();
+        if (!isDatabasePayload(payload)) {
+          throw new Error("The database response had an unexpected shape.");
+        }
+
+        if (requestId !== activeRequest) {
+          return;
+        }
+        renderDatabase(payload);
+        setStatus("success", "Up to date");
+      } catch (error) {
+        if (requestId !== activeRequest) {
+          return;
+        }
+        databasePath.textContent = "Not available";
+        tableCount.textContent = "—";
+        lastRefreshed.textContent = "—";
+        tablePreview.replaceChildren(setMessage("error", "!", "Couldn’t load the database", "Check that the server is running, then use Refresh to try again."));
+        tablePreview.setAttribute("aria-busy", "false");
+        setStatus("error", "Load failed");
+      } finally {
+        if (requestId === activeRequest) {
+          refreshButton.disabled = false;
+        }
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      refreshButton.addEventListener("click", loadDatabase);
+      loadDatabase();
+    });
+  </script>
+</body>
+</html>
