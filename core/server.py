@@ -6,8 +6,7 @@ import logging
 import os
 
 import uvicorn
-
-from lite_mcp_runtime import build_application
+from lite_mcp_runtime import STREAMLIT_RESOURCE_LIMIT_MIB, build_application
 
 
 def main() -> None:
@@ -22,6 +21,7 @@ def main() -> None:
         fd=listen_fd,
         workers=1,
         access_log=False,
+        ws_max_size=STREAMLIT_RESOURCE_LIMIT_MIB * 1024 * 1024,
         log_level=os.environ.get("LITE_MCP_UVICORN_LOG_LEVEL", "info").lower(),
     )
 

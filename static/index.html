@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>lite-mcp · Database dashboard</title>
+  <title>lite-mcp · System diagnostics</title>
   <style>
     :root {
       --ink: #17212b;
@@ -66,6 +66,14 @@
 
     .topbar {
       margin-bottom: 28px;
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     .brand {
@@ -142,6 +150,32 @@
       font-size: 0.9rem;
       font-weight: 750;
       transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+    }
+
+    .dashboard-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 0 15px;
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--accent-dark);
+      font-size: 0.9rem;
+      font-weight: 750;
+      text-decoration: none;
+      transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+    }
+
+    .dashboard-link:hover {
+      background: var(--accent-soft);
+      transform: translateY(-1px);
+    }
+
+    .dashboard-link:focus-visible {
+      outline: 3px solid rgba(36, 107, 119, 0.3);
+      outline-offset: 3px;
     }
 
     .refresh-button:hover:not(:disabled) {
@@ -519,6 +553,11 @@
         flex-direction: column;
       }
 
+      .topbar-actions {
+        width: 100%;
+      }
+
+      .dashboard-link,
       .refresh-button {
         width: 100%;
       }
@@ -541,13 +580,16 @@
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">⌁</span>
         <div>
-          <p class="eyebrow">Embedded database console</p>
-          <h1>lite-mcp</h1>
+          <p class="eyebrow">Lite MCP info</p>
+          <h1>System diagnostics</h1>
         </div>
       </div>
-      <button class="refresh-button" id="refresh-button" type="button" aria-controls="table-preview tool-list">
-        Refresh preview
-      </button>
+      <div class="topbar-actions">
+        <a class="dashboard-link" href="/">Open Streamlit dashboard</a>
+        <button class="refresh-button" id="refresh-button" type="button" aria-controls="table-preview tool-list">
+          Refresh preview
+        </button>
+      </div>
     </header>
 
     <main>
@@ -555,7 +597,8 @@
         <span class="notice-icon" aria-hidden="true">!</span>
         <div>
           <h2 id="notice-title">Open, trusted-code access</h2>
-          <p>This LAN server has no authentication. Loaded Python tools share the process, environment, secrets, workspace, and database. Run only tools you trust.</p>
+          <p>This LAN server has no authentication. Loaded Python tools and the Streamlit dashboard share the process, environment, secrets, workspace, and database. Run only code you trust.</p>
+          <p>Edit the main dashboard in <code>dashboard/</code>, then open <a href="/">/</a> to view it. This page remains available at <code>/info</code> for built-in system diagnostics.</p>
           <div class="endpoint">
             <span>MCP endpoint</span>
             <code>/mcp</code>

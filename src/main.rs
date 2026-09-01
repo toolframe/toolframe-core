@@ -23,7 +23,70 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 const READY_SENTINEL: &str = "LITE_MCP_READY";
+const FATAL_SENTINEL: &str = "LITE_MCP_FATAL ";
 const STDERR_HISTORY_LINES: usize = 80;
+const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Default)]
+struct StderrState {
+    history: VecDeque<String>,
+    fatal: Option<FatalDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct FatalDiagnostic {
+    raw_line: String,
+    payload: FatalPayload,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum FatalPayload {
+    Json(serde_json::Value),
+    Malformed(String),
+}
+
+impl FatalDiagnostic {
+    fn summary(&self) -> String {
+        let payload = match &self.payload {
+            FatalPayload::Json(payload) => payload,
+            FatalPayload::Malformed(error) => {
+                return format!(
+                    "malformed dashboard fatal sentinel: {error}; raw line: {}",
+                    self.raw_line
+                );
+            }
+        };
+
+        let field = |name: &str| payload.get(name).and_then(serde_json::Value::as_str);
+        let mut details = Vec::new();
+        for (label, field_name) in [
+            ("traceId", "traceId"),
+            ("phase", "phase"),
+            ("path", "path"),
+            ("widget", "widget"),
+            ("exceptionType", "exceptionType"),
+        ] {
+            if let Some(value) = field(field_name) {
+                details.push(format!("{label}={value}"));
+            }
+        }
+        if let Some(retryable) = payload
+            .get("retryable")
+            .and_then(serde_json::Value::as_bool)
+        {
+            details.push(format!("retryable={retryable}"));
+        }
+        let context = if details.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", details.join(", "))
+        };
+        let message = field("message")
+            .map(str::to_owned)
+            .unwrap_or_else(|| payload.to_string());
+        format!("dashboard fatal error{context}: {message}")
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -47,6 +110,10 @@ struct Cli {
     /// Startup-only Python tool directory.
     #[arg(long, env = "LITE_MCP_TOOLS")]
     tools_dir: Option<PathBuf>,
+
+    /// Editable Streamlit dashboard directory. Source changes load on browser rerun.
+    #[arg(long, env = "LITE_MCP_DASHBOARD_DIR")]
+    dashboard_dir: Option<PathBuf>,
 
     /// Working directory and trusted read/write area for Python tools.
     #[arg(long, env = "LITE_MCP_WORKSPACE")]
@@ -94,12 +161,16 @@ async fn run(cli: Cli) -> Result<()> {
         &executable_root,
         cli.database,
         cli.tools_dir,
+        cli.dashboard_dir,
         cli.workspace_dir,
         cli.runtime_dir,
     )?;
-    let tools_created = runtime::prepare_directories(&paths)?;
-    if tools_created {
+    let directories = runtime::prepare_directories(&paths)?;
+    if directories.tools_scaffolded {
         info!(path = %paths.tools.display(), "created tools directory and SQL reference tool");
+    }
+    if directories.dashboard_scaffolded {
+        info!(path = %paths.dashboard.display(), "created editable Streamlit dashboard scaffold");
     }
 
     db::initialize(&paths.database)
@@ -114,6 +185,12 @@ async fn run(cli: Cli) -> Result<()> {
         .tools
         .canonicalize()
         .with_context(|| format!("could not resolve tools path {}", paths.tools.display()))?;
+    let dashboard_dir = paths.dashboard.canonicalize().with_context(|| {
+        format!(
+            "could not resolve dashboard path {}",
+            paths.dashboard.display()
+        )
+    })?;
     let workspace = paths.workspace.canonicalize().with_context(|| {
         format!(
             "could not resolve workspace path {}",
@@ -126,8 +203,11 @@ async fn run(cli: Cli) -> Result<()> {
         .with_context(|| format!("could not resolve runtime path {}", paths.runtime.display()))?;
 
     let catalog = tools::discover(&tools_dir)?;
-    let startup_tool_context = format_startup_tool_context(&catalog);
-    let prepared = runtime::prepare_runtime(&runtime_dir, &catalog)?;
+    let dashboard_manifest_path = dashboard_dir.join("pyproject.toml");
+    let dashboard_manifest = tools::inspect_dashboard_manifest(&dashboard_manifest_path)?;
+    let startup_dependency_context =
+        format_startup_dependency_context(&catalog, &dashboard_manifest, &dashboard_manifest_path);
+    let prepared = runtime::prepare_runtime(&runtime_dir, &catalog, &dashboard_manifest)?;
     let uv = runtime::locate_uv(cli.uv_path.as_deref(), &executable_root)?;
 
     let listener = bind_available(cli.host, cli.port, cli.port_search_span).await?;
@@ -141,7 +221,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     let allowed_hosts = runtime::allowed_hosts(cli.host);
     let allowed_origins = runtime::allowed_origins(cli.host, address.port());
-    let dependency_json = serde_json::to_string(&catalog.dependencies)
+    let dependency_json = serde_json::to_string(&prepared.dependencies)
         .context("could not encode dependency summary")?;
     let ready_token = tools::content_hash(format!(
         "{}:{}:{}",
@@ -177,10 +257,12 @@ async fn run(cli: Cli) -> Result<()> {
         .env("UV_PYTHON_INSTALL_DIR", runtime_dir.join("python"))
         .env("LITE_MCP_DB", &database)
         .env("LITE_MCP_TOOLS", &tools_dir)
+        .env("LITE_MCP_DASHBOARD_DIR", &dashboard_dir)
         .env("LITE_MCP_WORKSPACE", &workspace)
         .env("LITE_MCP_RUNTIME", &runtime_dir)
         .env("LITE_MCP_MANIFEST", &prepared.manifest)
-        .env("LITE_MCP_DASHBOARD", &prepared.dashboard)
+        .env("LITE_MCP_INFO_PAGE", &prepared.info_page)
+        .env("LITE_MCP_DASHBOARD_RUNNER", &prepared.dashboard_runner)
         .env("LITE_MCP_LISTEN_FD", listen_fd.to_string())
         .env("LITE_MCP_READY_TOKEN", ready_token)
         .env("LITE_MCP_HOST", cli.host.to_string())
@@ -224,10 +306,10 @@ async fn run(cli: Cli) -> Result<()> {
         .take()
         .ok_or_else(|| anyhow!("could not capture UV stderr"))?;
 
-    let stderr_history = Arc::new(Mutex::new(VecDeque::new()));
+    let stderr_state = Arc::new(Mutex::new(StderrState::default()));
     let (ready_sender, mut ready_receiver) = oneshot::channel();
     tokio::spawn(forward_stdout(stdout, ready_sender, ready_line));
-    tokio::spawn(forward_stderr(stderr, Arc::clone(&stderr_history)));
+    let mut stderr_task = tokio::spawn(forward_stderr(stderr, Arc::clone(&stderr_state)));
 
     let mut wait = Box::pin(child.wait());
     let mut deadline = Box::pin(time::sleep(Duration::from_secs(cli.startup_timeout)));
@@ -235,61 +317,87 @@ async fn run(cli: Cli) -> Result<()> {
         ready = &mut ready_receiver => {
             if ready.is_err() {
                 let status = match time::timeout(Duration::from_secs(2), &mut wait).await {
-                    Ok(status) => Some(status.context("could not wait for UV during startup")?),
+                    Ok(status) => status.context("could not wait for UV during startup")?,
                     Err(_) => {
                         terminate_process_group(child_pid, libc::SIGTERM);
-                        if time::timeout(Duration::from_secs(5), &mut wait)
-                            .await
-                            .is_err()
-                        {
-                            terminate_process_group(child_pid, libc::SIGKILL);
-                            let _ = wait.await;
+                        match time::timeout(Duration::from_secs(5), &mut wait).await {
+                            Ok(status) => status.context("could not wait for UV during startup")?,
+                            Err(_) => {
+                                terminate_process_group(child_pid, libc::SIGKILL);
+                                wait.await.context("could not wait for UV after forced startup termination")?
+                            }
                         }
-                        None
                     }
                 };
-                let diagnostics = recent_stderr(&stderr_history).await;
-                if let Some(status) = status {
-                    bail!("Python runtime exited before reporting readiness ({status}){diagnostics}{startup_tool_context}");
-                }
-                bail!("Python stopped producing output before reporting readiness{diagnostics}{startup_tool_context}");
+                drain_stderr_task(&mut stderr_task).await;
+                let (fatal, diagnostics) = stderr_snapshot(&stderr_state).await;
+                let fatal = format_fatal_context(fatal.as_ref());
+                bail!("Python runtime exited before reporting readiness ({status}){fatal}{diagnostics}{startup_dependency_context}");
             }
         }
         status = &mut wait => {
             let status = status.context("could not wait for UV during startup")?;
-            let diagnostics = recent_stderr(&stderr_history).await;
-            bail!("Python runtime exited before startup completed ({status}){diagnostics}{startup_tool_context}");
+            drain_stderr_task(&mut stderr_task).await;
+            let (fatal, diagnostics) = stderr_snapshot(&stderr_state).await;
+            let fatal = format_fatal_context(fatal.as_ref());
+            bail!("Python runtime exited before startup completed ({status}){fatal}{diagnostics}{startup_dependency_context}");
         }
         _ = &mut deadline => {
             terminate_process_group(child_pid, libc::SIGTERM);
-            if time::timeout(Duration::from_secs(5), &mut wait).await.is_err() {
-                terminate_process_group(child_pid, libc::SIGKILL);
-                let _ = wait.await;
+            match time::timeout(Duration::from_secs(5), &mut wait).await {
+                Ok(status) => {
+                    status.context("could not wait for UV after startup timeout")?;
+                }
+                Err(_) => {
+                    terminate_process_group(child_pid, libc::SIGKILL);
+                    wait.await.context("could not wait for UV after startup timeout")?;
+                }
             }
-            let diagnostics = recent_stderr(&stderr_history).await;
-            bail!("Python runtime did not become ready within {} seconds{diagnostics}{startup_tool_context}", cli.startup_timeout);
+            drain_stderr_task(&mut stderr_task).await;
+            let (fatal, diagnostics) = stderr_snapshot(&stderr_state).await;
+            let fatal = format_fatal_context(fatal.as_ref());
+            bail!("Python runtime did not become ready within {} seconds{fatal}{diagnostics}{startup_dependency_context}", cli.startup_timeout);
         }
     }
 
-    announce(address, &database, &tools_dir, catalog.manifest.tools.len());
+    announce(
+        address,
+        &database,
+        &tools_dir,
+        &dashboard_dir,
+        catalog.manifest.tools.len(),
+    );
 
-    tokio::select! {
+    let (status, shutdown_requested) = tokio::select! {
         status = &mut wait => {
             let status = status.context("could not wait for the Python runtime")?;
-            if !status.success() {
-                let diagnostics = recent_stderr(&stderr_history).await;
-                bail!("Python runtime stopped unexpectedly ({status}){diagnostics}");
-            }
+            (status, false)
         }
         _ = shutdown_signal() => {
             info!("shutdown requested; stopping Python runtime");
             terminate_process_group(child_pid, libc::SIGTERM);
-            if time::timeout(Duration::from_secs(5), &mut wait).await.is_err() {
-                warn!("Python runtime did not stop in 5 seconds; forcing termination");
-                terminate_process_group(child_pid, libc::SIGKILL);
-                let _ = wait.await;
-            }
+            let status = match time::timeout(Duration::from_secs(5), &mut wait).await {
+                Ok(status) => status.context("could not wait for the Python runtime during shutdown")?,
+                Err(_) => {
+                    warn!("Python runtime did not stop in 5 seconds; forcing termination");
+                    terminate_process_group(child_pid, libc::SIGKILL);
+                    wait.await.context("could not wait for the Python runtime after forced shutdown")?
+                }
+            };
+            (status, true)
         }
+    };
+
+    drain_stderr_task(&mut stderr_task).await;
+    let (fatal, diagnostics) = stderr_snapshot(&stderr_state).await;
+    if let Some(fatal) = fatal {
+        bail!(
+            "Python runtime reported {} before stopping ({status}){diagnostics}",
+            fatal.summary()
+        );
+    }
+    if !shutdown_requested && !status.success() {
+        bail!("Python runtime stopped unexpectedly ({status}){diagnostics}");
     }
 
     info!("server stopped");
@@ -314,30 +422,64 @@ async fn forward_stdout(
     }
 }
 
-async fn forward_stderr(
-    stderr: tokio::process::ChildStderr,
-    history: Arc<Mutex<VecDeque<String>>>,
-) {
+async fn forward_stderr(stderr: tokio::process::ChildStderr, state: Arc<Mutex<StderrState>>) {
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         eprintln!("{line}");
-        let mut history = history.lock().await;
-        history.push_back(line);
-        while history.len() > STDERR_HISTORY_LINES {
-            history.pop_front();
+        let fatal = parse_fatal_sentinel(&line);
+        let mut state = state.lock().await;
+        if state.fatal.is_none()
+            && let Some(fatal) = fatal
+        {
+            state.fatal = Some(fatal);
+        }
+        state.history.push_back(line);
+        while state.history.len() > STDERR_HISTORY_LINES {
+            state.history.pop_front();
         }
     }
 }
 
-async fn recent_stderr(history: &Mutex<VecDeque<String>>) -> String {
-    let history = history.lock().await;
-    if history.is_empty() {
+fn parse_fatal_sentinel(line: &str) -> Option<FatalDiagnostic> {
+    let encoded = line.strip_prefix(FATAL_SENTINEL)?;
+    let payload = match serde_json::from_str::<serde_json::Value>(encoded) {
+        Ok(payload) if payload.is_object() => FatalPayload::Json(payload),
+        Ok(_) => FatalPayload::Malformed("payload must be a JSON object".to_owned()),
+        Err(error) => FatalPayload::Malformed(format!("invalid JSON: {error}")),
+    };
+    Some(FatalDiagnostic {
+        raw_line: line.to_owned(),
+        payload,
+    })
+}
+
+fn format_fatal_context(fatal: Option<&FatalDiagnostic>) -> String {
+    fatal
+        .map(|fatal| format!("\nFatal diagnostic: {}", fatal.summary()))
+        .unwrap_or_default()
+}
+
+async fn stderr_snapshot(state: &Mutex<StderrState>) -> (Option<FatalDiagnostic>, String) {
+    let state = state.lock().await;
+    let diagnostics = if state.history.is_empty() {
         String::new()
     } else {
         format!(
             "\nRecent Python/UV diagnostics:\n{}",
-            history.iter().cloned().collect::<Vec<_>>().join("\n")
+            state.history.iter().cloned().collect::<Vec<_>>().join("\n")
         )
+    };
+    (state.fatal.clone(), diagnostics)
+}
+
+async fn drain_stderr_task(task: &mut tokio::task::JoinHandle<()>) {
+    if time::timeout(STDERR_DRAIN_TIMEOUT, &mut *task)
+        .await
+        .is_err()
+    {
+        warn!("timed out while draining Python stderr; preserving collected diagnostics");
+        task.abort();
+        let _ = task.await;
     }
 }
 
@@ -421,7 +563,13 @@ fn terminate_process_group(pid: u32, signal: i32) {
 #[cfg(not(unix))]
 fn terminate_process_group(_: u32, _: i32) {}
 
-fn announce(address: SocketAddr, database: &Path, tools_dir: &Path, tool_count: usize) {
+fn announce(
+    address: SocketAddr,
+    database: &Path,
+    tools_dir: &Path,
+    dashboard_dir: &Path,
+    tool_count: usize,
+) {
     let port = address.port();
     let primary_ip = match address.ip() {
         IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -431,10 +579,12 @@ fn announce(address: SocketAddr, database: &Path, tools_dir: &Path, tool_count: 
     let local_url = runtime::http_origin(primary_ip, port);
 
     println!("lite-mcp {} is ready", env!("CARGO_PKG_VERSION"));
-    println!("Dashboard: {local_url}/");
+    println!("Dashboard: {local_url}/ (Streamlit)");
+    println!("Info:      {local_url}/info");
     println!("MCP:       {local_url}/mcp");
     println!("Database:  {}", database.display());
     println!("Tools:     {} ({tool_count} loaded)", tools_dir.display());
+    println!("Dashboard files: {}", dashboard_dir.display());
 
     if address.ip().is_unspecified()
         && let Ok(interfaces) = local_ip_address::list_afinet_netifas()
@@ -451,19 +601,35 @@ fn announce(address: SocketAddr, database: &Path, tools_dir: &Path, tool_count: 
     }
 
     println!(
-        "WARNING: no authentication; every LAN client can call trusted Python tools and modify data."
+        "WARNING: no authentication; every LAN client can view Dashboard data, submit Dashboard writes, call trusted Python tools, and modify data."
     );
     println!("LITE_MCP_URL={local_url}");
     println!("LITE_MCP_MCP_URL={local_url}/mcp");
     let _ = std::io::stdout().flush();
 }
 
-fn format_startup_tool_context(catalog: &tools::ToolCatalog) -> String {
+fn format_startup_dependency_context(
+    catalog: &tools::ToolCatalog,
+    dashboard: &tools::DashboardManifest,
+    dashboard_manifest_path: &Path,
+) -> String {
+    let dashboard_dependencies = if dashboard.dependencies.is_empty() {
+        "none".to_owned()
+    } else {
+        dashboard.dependencies.join(", ")
+    };
+    let dashboard_declaration = format!(
+        "\nDashboard dependency declaration:\n- {} (requires-python {}; dependencies: {})",
+        dashboard_manifest_path.display(),
+        dashboard.requires_python,
+        dashboard_dependencies
+    );
+
     if catalog.manifest.tools.is_empty() {
-        return "\nStartup tool declarations: none".to_owned();
+        return format!("{dashboard_declaration}\nStartup tool declarations: none");
     }
 
-    let declarations = catalog
+    let tool_declarations = catalog
         .manifest
         .tools
         .iter()
@@ -482,7 +648,7 @@ fn format_startup_tool_context(catalog: &tools::ToolCatalog) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    format!("\nStartup tool declarations:\n{declarations}")
+    format!("{dashboard_declaration}\nStartup tool declarations:\n{tool_declarations}")
 }
 
 fn initialize_logging() {
@@ -577,5 +743,29 @@ mod tests {
         assert!(finite_nonnegative("NaN").is_err());
         assert_eq!(positive_usize("1").expect("positive cap"), 1);
         assert!(positive_usize("0").is_err());
+    }
+
+    #[test]
+    fn parses_structured_dashboard_fatal_sentinel() {
+        let fatal = parse_fatal_sentinel(
+            r#"LITE_MCP_FATAL {"traceId":"trace-42","phase":"render","path":"/dashboard/app.py","widget":"example_card","exceptionType":"RuntimeError","message":"boom","retryable":false}"#,
+        )
+        .expect("parse fatal sentinel");
+
+        assert!(fatal.summary().contains("traceId=trace-42"));
+        assert!(fatal.summary().contains("widget=example_card"));
+        assert!(fatal.summary().contains("retryable=false"));
+        assert!(fatal.summary().ends_with(": boom"));
+    }
+
+    #[test]
+    fn malformed_fatal_sentinel_is_still_fatal_and_normal_lines_are_ignored() {
+        let fatal =
+            parse_fatal_sentinel("LITE_MCP_FATAL {not-json").expect("recognize malformed sentinel");
+        assert!(matches!(fatal.payload, FatalPayload::Malformed(_)));
+        assert!(fatal.summary().contains("malformed"));
+
+        assert!(parse_fatal_sentinel("LITE_MCP_FATALITY {}").is_none());
+        assert!(parse_fatal_sentinel("ordinary Python diagnostic").is_none());
     }
 }

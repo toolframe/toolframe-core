@@ -5,31 +5,53 @@ use std::{
     io::Write,
     net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::tools::{ToolCatalog, catalog_json, content_hash, runtime_project_toml};
+use crate::tools::{
+    DashboardManifest, ToolCatalog, catalog_json, content_hash, runtime_dependencies,
+    runtime_project_toml,
+};
 
 const CORE_SERVER: &str = include_str!("../core/server.py");
 const CORE_SUPPORT: &str = include_str!("../core/lite_mcp_runtime.py");
-const DASHBOARD: &str = include_str!("../static/index.html");
+const CORE_DASHBOARD: &str = include_str!("../core/lite_mcp_dashboard.py");
+const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/lite_mcp_dashboard_runner.py");
+const INFO_PAGE: &str = include_str!("../static/index.html");
 const DEFAULT_SQL_TOOL: &str = include_str!("../tools/execute_sql.py");
+const DASHBOARD_APP: &str = include_str!("../dashboard/app.py");
+const DASHBOARD_PROJECT: &str = include_str!("../dashboard/pyproject.toml");
+const DASHBOARD_COMPONENTS_INIT: &str = include_str!("../dashboard/components/__init__.py");
+const DASHBOARD_WIDGETS_INIT: &str = include_str!("../dashboard/widgets/__init__.py");
+const DASHBOARD_EXAMPLE_CARD: &str = include_str!("../dashboard/widgets/example_card.py");
+static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub database: PathBuf,
     pub tools: PathBuf,
+    pub dashboard: PathBuf,
     pub workspace: PathBuf,
     pub runtime: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreparedDirectories {
+    pub tools_scaffolded: bool,
+    pub dashboard_scaffolded: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct PreparedRuntime {
     pub core_server: PathBuf,
-    pub dashboard: PathBuf,
+    pub dashboard_sdk: PathBuf,
+    pub dashboard_runner: PathBuf,
+    pub info_page: PathBuf,
     pub manifest: PathBuf,
     pub project: PathBuf,
+    pub dependencies: Vec<String>,
 }
 
 pub fn executable_root() -> Result<PathBuf> {
@@ -44,6 +66,7 @@ pub fn resolve_paths(
     root: &Path,
     database: Option<PathBuf>,
     tools: Option<PathBuf>,
+    dashboard: Option<PathBuf>,
     workspace: Option<PathBuf>,
     runtime: Option<PathBuf>,
 ) -> Result<AppPaths> {
@@ -51,12 +74,13 @@ pub fn resolve_paths(
     Ok(AppPaths {
         database: absolute_override(database, &cwd, &root.join("data.db")),
         tools: absolute_override(tools, &cwd, &root.join("tools")),
+        dashboard: absolute_override(dashboard, &cwd, &root.join("dashboard")),
         workspace: absolute_override(workspace, &cwd, &root.join("workspace")),
         runtime: absolute_override(runtime, &cwd, &root.join("runtime")),
     })
 }
 
-pub fn prepare_directories(paths: &AppPaths) -> Result<bool> {
+pub fn prepare_directories(paths: &AppPaths) -> Result<PreparedDirectories> {
     let tools_created = create_directory_if_missing(&paths.tools, "tools")?;
     create_directory_if_missing(&paths.workspace, "workspace")?;
     create_directory_if_missing(&paths.runtime, "runtime")?;
@@ -79,15 +103,26 @@ pub fn prepare_directories(paths: &AppPaths) -> Result<bool> {
             .with_context(|| format!("could not sync {}", destination.display()))?;
     }
 
-    Ok(tools_created)
+    let dashboard_scaffolded = scaffold_dashboard_if_missing(&paths.dashboard)?;
+
+    Ok(PreparedDirectories {
+        tools_scaffolded: tools_created,
+        dashboard_scaffolded,
+    })
 }
 
-pub fn prepare_runtime(runtime_dir: &Path, catalog: &ToolCatalog) -> Result<PreparedRuntime> {
+pub fn prepare_runtime(
+    runtime_dir: &Path,
+    catalog: &ToolCatalog,
+    dashboard: &DashboardManifest,
+) -> Result<PreparedRuntime> {
     let core_hash = content_hash(
         [
             CORE_SERVER.as_bytes(),
             CORE_SUPPORT.as_bytes(),
-            DASHBOARD.as_bytes(),
+            CORE_DASHBOARD.as_bytes(),
+            CORE_DASHBOARD_RUNNER.as_bytes(),
+            INFO_PAGE.as_bytes(),
         ]
         .concat(),
     );
@@ -101,12 +136,17 @@ pub fn prepare_runtime(runtime_dir: &Path, catalog: &ToolCatalog) -> Result<Prep
 
     let core_server = core_dir.join("server.py");
     let core_support = core_dir.join("lite_mcp_runtime.py");
-    let dashboard = core_dir.join("index.html");
+    let dashboard_sdk = core_dir.join("lite_mcp_dashboard.py");
+    let dashboard_runner = core_dir.join("lite_mcp_dashboard_runner.py");
+    let info_page = core_dir.join("info.html");
     write_managed(&core_server, CORE_SERVER)?;
     write_managed(&core_support, CORE_SUPPORT)?;
-    write_managed(&dashboard, DASHBOARD)?;
+    write_managed(&dashboard_sdk, CORE_DASHBOARD)?;
+    write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
+    write_managed(&info_page, INFO_PAGE)?;
 
-    let project_toml = runtime_project_toml(catalog)?;
+    let project_toml = runtime_project_toml(catalog, dashboard)?;
+    let dependencies = runtime_dependencies(catalog, dashboard);
     let project = environments_dir.join(content_hash(&project_toml));
     fs::create_dir_all(&project)
         .with_context(|| format!("could not create UV project {}", project.display()))?;
@@ -118,9 +158,12 @@ pub fn prepare_runtime(runtime_dir: &Path, catalog: &ToolCatalog) -> Result<Prep
 
     Ok(PreparedRuntime {
         core_server,
-        dashboard,
+        dashboard_sdk,
+        dashboard_runner,
+        info_page,
         manifest,
         project,
+        dependencies,
     })
 }
 
@@ -214,6 +257,178 @@ fn create_directory_if_missing(path: &Path, label: &str) -> Result<bool> {
     Ok(true)
 }
 
+fn scaffold_dashboard_if_missing(path: &Path) -> Result<bool> {
+    if path.exists() {
+        if path.is_dir() {
+            return Ok(false);
+        }
+        bail!(
+            "dashboard path {} exists but is not a directory",
+            path.display()
+        );
+    }
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("dashboard path {} has no parent directory", path.display()))?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "could not create dashboard parent directory {}",
+            parent.display()
+        )
+    })?;
+
+    let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let staging_name = format!(".lite-mcp-dashboard-{}-{sequence}.tmp", std::process::id());
+    let staging = parent.join(staging_name);
+    fs::create_dir(&staging).with_context(|| {
+        format!(
+            "could not create temporary dashboard scaffold {}",
+            staging.display()
+        )
+    })?;
+
+    let mut published = false;
+    let result = (|| -> Result<()> {
+        let components = staging.join("components");
+        let widgets = staging.join("widgets");
+        fs::create_dir(&components)
+            .with_context(|| format!("could not create {}", components.display()))?;
+        fs::create_dir(&widgets)
+            .with_context(|| format!("could not create {}", widgets.display()))?;
+
+        for (destination, content) in [
+            (staging.join("app.py"), DASHBOARD_APP),
+            (staging.join("pyproject.toml"), DASHBOARD_PROJECT),
+            (components.join("__init__.py"), DASHBOARD_COMPONENTS_INIT),
+            (widgets.join("__init__.py"), DASHBOARD_WIDGETS_INIT),
+            (widgets.join("example_card.py"), DASHBOARD_EXAMPLE_CARD),
+        ] {
+            write_scaffold_file(&destination, content)?;
+        }
+
+        // Publish the complete tree with no-replace semantics. A second launcher
+        // may have created the user-owned directory while this tree was staged.
+        published = rename_directory_if_absent(&staging, path)?;
+        Ok(())
+    })();
+
+    if staging.exists() {
+        fs::remove_dir_all(&staging).with_context(|| {
+            format!(
+                "could not remove temporary dashboard scaffold {}",
+                staging.display()
+            )
+        })?;
+    }
+    result?;
+
+    // If another launcher won the race, its directory remains untouched.
+    Ok(published)
+}
+
+#[cfg(target_vendor = "apple")]
+fn rename_directory_if_absent(source: &Path, destination: &Path) -> Result<bool> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let source = CString::new(source.as_os_str().as_bytes())
+        .context("temporary dashboard path contains a NUL byte")?;
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .context("dashboard path contains a NUL byte")?;
+    // SAFETY: both pointers reference live NUL-terminated path buffers, and
+    // RENAME_EXCL asks the kernel not to replace an existing destination.
+    let result =
+        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::EEXIST) | Some(libc::ENOTEMPTY)
+    ) {
+        return Ok(false);
+    }
+    Err(error).with_context(|| {
+        format!(
+            "could not publish dashboard scaffold at {}",
+            destination.to_string_lossy()
+        )
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_directory_if_absent(source: &Path, destination: &Path) -> Result<bool> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let source = CString::new(source.as_os_str().as_bytes())
+        .context("temporary dashboard path contains a NUL byte")?;
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .context("dashboard path contains a NUL byte")?;
+    // SAFETY: both pointers reference live NUL-terminated path buffers, and
+    // RENAME_NOREPLACE asks the kernel not to replace an existing destination.
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::EEXIST) | Some(libc::ENOTEMPTY)
+    ) {
+        return Ok(false);
+    }
+    Err(error).with_context(|| {
+        format!(
+            "could not publish dashboard scaffold at {}",
+            destination.to_string_lossy()
+        )
+    })
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android")))]
+fn rename_directory_if_absent(source: &Path, destination: &Path) -> Result<bool> {
+    if destination.exists() {
+        return Ok(false);
+    }
+    match fs::rename(source, destination) {
+        Ok(()) => Ok(true),
+        Err(_) if destination.exists() => Ok(false),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "could not publish dashboard scaffold at {}",
+                destination.display()
+            )
+        }),
+    }
+}
+
+fn write_scaffold_file(path: &Path, content: &str) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .with_context(|| {
+            format!(
+                "could not create dashboard scaffold file {}",
+                path.display()
+            )
+        })?;
+    file.write_all(content.as_bytes())
+        .with_context(|| format!("could not write {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("could not sync {}", path.display()))?;
+    Ok(())
+}
+
 fn write_managed(path: &Path, content: &str) -> Result<()> {
     if fs::read(path).is_ok_and(|current| current == content.as_bytes()) {
         return Ok(());
@@ -270,16 +485,21 @@ mod tests {
         let paths = AppPaths {
             database: directory.path().join("data.db"),
             tools: directory.path().join("nested").join("tools"),
+            dashboard: directory.path().join("nested").join("dashboard"),
             workspace: directory.path().join("nested").join("workspace"),
             runtime: directory.path().join("nested").join("runtime"),
         };
 
-        assert!(prepare_directories(&paths).expect("prepare new directories"));
+        let prepared = prepare_directories(&paths).expect("prepare new directories");
+        assert!(prepared.tools_scaffolded);
+        assert!(prepared.dashboard_scaffolded);
         let sql = paths.tools.join("execute_sql.py");
         assert!(sql.is_file());
         fs::write(&sql, "# user-owned\n").expect("replace scaffold as user");
 
-        assert!(!prepare_directories(&paths).expect("prepare existing directories"));
+        let prepared = prepare_directories(&paths).expect("prepare existing directories");
+        assert!(!prepared.tools_scaffolded);
+        assert!(!prepared.dashboard_scaffolded);
         assert_eq!(
             fs::read_to_string(sql).expect("read user tool"),
             "# user-owned\n"
@@ -289,11 +509,93 @@ mod tests {
     #[test]
     fn resolves_defaults_beside_the_executable_root() {
         let root = Path::new("/tmp/lite-mcp-dist");
-        let paths = resolve_paths(root, None, None, None, None).expect("resolve paths");
+        let paths = resolve_paths(root, None, None, None, None, None).expect("resolve paths");
         assert_eq!(paths.database, root.join("data.db"));
         assert_eq!(paths.tools, root.join("tools"));
+        assert_eq!(paths.dashboard, root.join("dashboard"));
         assert_eq!(paths.workspace, root.join("workspace"));
         assert_eq!(paths.runtime, root.join("runtime"));
+    }
+
+    #[test]
+    fn resolves_relative_dashboard_override_from_the_current_directory() {
+        let root = Path::new("/tmp/lite-mcp-dist");
+        let cwd = env::current_dir().expect("read current directory");
+        let paths = resolve_paths(
+            root,
+            None,
+            None,
+            Some(PathBuf::from("custom-dashboard")),
+            None,
+            None,
+        )
+        .expect("resolve paths");
+        assert_eq!(paths.dashboard, cwd.join("custom-dashboard"));
+    }
+
+    #[test]
+    fn dashboard_scaffold_is_complete_and_never_repairs_an_existing_directory() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let paths = AppPaths {
+            database: directory.path().join("data.db"),
+            tools: directory.path().join("tools"),
+            dashboard: directory.path().join("dashboard"),
+            workspace: directory.path().join("workspace"),
+            runtime: directory.path().join("runtime"),
+        };
+
+        let prepared = prepare_directories(&paths).expect("prepare new directories");
+        assert!(prepared.dashboard_scaffolded);
+        for relative in [
+            "app.py",
+            "pyproject.toml",
+            "components/__init__.py",
+            "widgets/__init__.py",
+            "widgets/example_card.py",
+        ] {
+            assert!(
+                paths.dashboard.join(relative).is_file(),
+                "missing scaffold file {relative}"
+            );
+        }
+
+        let app = paths.dashboard.join("app.py");
+        let widgets_init = paths.dashboard.join("widgets/__init__.py");
+        fs::write(&app, "# user-owned dashboard\n").expect("replace dashboard app");
+        fs::remove_file(&widgets_init).expect("remove a scaffold file");
+
+        let prepared = prepare_directories(&paths).expect("prepare existing directories");
+        assert!(!prepared.dashboard_scaffolded);
+        assert_eq!(
+            fs::read_to_string(app).expect("read dashboard app"),
+            "# user-owned dashboard\n"
+        );
+        assert!(
+            !widgets_init.exists(),
+            "existing dashboard must not be repaired"
+        );
+    }
+
+    #[test]
+    fn existing_empty_dashboard_directory_is_not_scaffolded() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let paths = AppPaths {
+            database: directory.path().join("data.db"),
+            tools: directory.path().join("tools"),
+            dashboard: directory.path().join("dashboard"),
+            workspace: directory.path().join("workspace"),
+            runtime: directory.path().join("runtime"),
+        };
+        fs::create_dir(&paths.dashboard).expect("create user dashboard directory");
+
+        let prepared = prepare_directories(&paths).expect("prepare directories");
+        assert!(!prepared.dashboard_scaffolded);
+        assert!(
+            fs::read_dir(&paths.dashboard)
+                .expect("read dashboard")
+                .next()
+                .is_none()
+        );
     }
 
     #[test]

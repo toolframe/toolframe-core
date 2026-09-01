@@ -4,13 +4,13 @@ import os
 import sqlite3
 import sys
 import tempfile
+import types
 import unittest
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from unittest.mock import patch
 
 import anyio
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CORE_DIRECTORY = REPOSITORY_ROOT / "core"
@@ -18,7 +18,6 @@ if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
 import lite_mcp_runtime as runtime
-
 
 TOOL_SOURCE = '''from fastmcp.tools import tool
 
@@ -79,12 +78,15 @@ class RuntimeTests(unittest.TestCase):
             runtime.load_tools(manifest_path)
 
     def test_multiple_tools_abort_startup(self):
-        source = TOOL_SOURCE + '''
+        source = (
+            TOOL_SOURCE
+            + '''
 @tool
 def second() -> str:
     """Return a second value."""
     return "second"
 '''
+        )
         manifest_path, _ = self.write_manifest(source)
 
         with self.assertRaisesRegex(runtime.ToolLoadError, "exactly one"):
@@ -219,12 +221,23 @@ def second() -> str:
         manifest_path, _ = self.write_manifest()
         database = self.root / "data.db"
         sqlite3.connect(database).close()
-        dashboard = self.root / "index.html"
-        dashboard.write_text("<h1>test</h1>", encoding="utf-8")
+        dashboard = self.root / "dashboard"
+        dashboard.mkdir()
+        (dashboard / "app.py").write_text("pass\n", encoding="utf-8")
+        workspace = self.root / "workspace"
+        workspace.mkdir()
+        info_page = self.root / "index.html"
+        info_page.write_text("<h1>test</h1>", encoding="utf-8")
+        runner_path = self.root / "lite_mcp_dashboard_runner.py"
+        runner_path.write_text("pass\n", encoding="utf-8")
         environment = {
             "LITE_MCP_MANIFEST": str(manifest_path),
             "LITE_MCP_DB": str(database),
-            "LITE_MCP_DASHBOARD": str(dashboard),
+            "LITE_MCP_DASHBOARD_DIR": str(dashboard),
+            "LITE_MCP_DASHBOARD_RUNNER": str(runner_path),
+            "LITE_MCP_INFO_PAGE": str(info_page),
+            "LITE_MCP_WORKSPACE": str(workspace),
+            "LITE_MCP_PORT": "8000",
             "LITE_MCP_ALLOWED_HOSTS": '["localhost","127.0.0.1"]',
             "LITE_MCP_ALLOWED_ORIGINS": '["http://localhost:8000"]',
             "LITE_MCP_MAX_CONCURRENCY": "60",
@@ -234,23 +247,53 @@ def second() -> str:
             "LITE_MCP_DEPENDENCIES_JSON": '["fastmcp==4.0.0"]',
         }
 
-        with patch.dict(os.environ, environment, clear=False):
-            app = runtime.build_application()
+        class FakeStreamlitApp:
+            def __init__(self, script_path, **kwargs):
+                self.script_path = script_path
+                self.on_script_error = kwargs["on_script_error"]
+
+            async def __call__(self, scope, receive, send):
+                return None
+
+            def lifespan(self):
+                @asynccontextmanager
+                async def lifespan(_):
+                    yield None
+
+                return lifespan
+
+        fake_streamlit = types.SimpleNamespace(App=FakeStreamlitApp)
+        fake_dashboard_sdk = types.SimpleNamespace(
+            _configure=lambda **_: None,
+            preflight_dashboard=lambda _: (),
+        )
+        previous_reporter = runtime._DASHBOARD_FATAL_REPORTER
+        try:
+            with (
+                patch.dict(os.environ, environment, clear=False),
+                patch.dict(sys.modules, {"lite_mcp_dashboard": fake_dashboard_sdk}),
+                patch.object(
+                    runtime,
+                    "_load_and_configure_streamlit",
+                    return_value=fake_streamlit,
+                ),
+            ):
+                app = runtime.build_application()
+        finally:
+            runtime._DASHBOARD_FATAL_REPORTER = previous_reporter
 
         paths = {route.path for route in app.routes}
-        self.assertIn("/", paths)
+        self.assertIn("/info", paths)
         self.assertIn("/healthz", paths)
         self.assertIn("/api/database", paths)
         self.assertIn("/api/runtime", paths)
-        mounted_routes = {
-            child.path
-            for route in app.routes
-            if hasattr(route, "routes")
-            for child in route.routes
-        }
-        self.assertIn("/mcp", mounted_routes)
-        self.assertNotIn("/sse", paths)
+        self.assertIn("/mcp", paths)
+        self.assertIn("/sse", paths)
         self.assertFalse(any("reload" in path for path in paths))
+        self.assertEqual(app.routes[-4].path, "/mcp")
+        self.assertEqual(app.routes[-3].path, "/mcp/{unsupported_path:path}")
+        self.assertEqual(app.routes[-2].path, "/sse")
+        self.assertEqual(app.routes[-1].path, "")
 
 
 if __name__ == "__main__":

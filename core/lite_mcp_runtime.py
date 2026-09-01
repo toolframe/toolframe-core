@@ -9,8 +9,10 @@ import json
 import logging
 import math
 import os
+import signal
 import sqlite3
 import sys
+import threading
 import traceback
 import types
 import uuid
@@ -28,11 +30,14 @@ from fastmcp.server.middleware import Middleware
 from fastmcp.tools import Tool, ToolResult
 from fastmcp.tools.function_tool import ToolMeta
 from fastmcp.utilities.lifespan import combine_lifespans
-
+from starlette.routing import Route
 
 LOGGER = logging.getLogger("lite_mcp.runtime")
 READY_SENTINEL = "LITE_MCP_READY"
+FATAL_SENTINEL = "LITE_MCP_FATAL"
 DATABASE_PREVIEW_ROWS = 25
+STREAMLIT_VERSION = "1.61.0"
+STREAMLIT_RESOURCE_LIMIT_MIB = 25
 
 
 class LiteMcpError(Exception):
@@ -70,7 +75,9 @@ class ToolLoadError(RuntimeError):
 class RuntimeGuardMiddleware(Middleware):
     """Apply the global call limit, timeout, result cap, and error contract."""
 
-    def __init__(self, concurrency: int, timeout_seconds: float, result_limit: int) -> None:
+    def __init__(
+        self, concurrency: int, timeout_seconds: float, result_limit: int
+    ) -> None:
         self._semaphore = anyio.Semaphore(concurrency) if concurrency > 0 else None
         self._timeout_seconds = timeout_seconds
         self._result_limit = result_limit
@@ -92,7 +99,9 @@ class RuntimeGuardMiddleware(Middleware):
                     "recoveryHint": "Retry once or reduce the requested work. Blocking native code may continue in the background.",
                 },
             )
-        except BaseException as error:  # Keep tool failures from terminating the server.
+        except (
+            BaseException
+        ) as error:  # Keep tool failures from terminating the server.
             if isinstance(error, anyio.get_cancelled_exc_class()):
                 raise
             lite_error = _find_lite_mcp_error(error)
@@ -117,17 +126,19 @@ class RuntimeGuardMiddleware(Middleware):
             if validation:
                 code = "invalid_arguments"
                 message = "The tool arguments did not satisfy its input schema."
-                recovery_hint = "Correct the arguments using the published input schema."
+                recovery_hint = (
+                    "Correct the arguments using the published input schema."
+                )
             elif not_found:
                 code = "tool_not_found"
                 message = "The requested tool is not present in the startup catalog."
-                recovery_hint = "List tools again and use a tool loaded at process startup."
+                recovery_hint = (
+                    "List tools again and use a tool loaded at process startup."
+                )
             else:
                 code = "internal_error"
                 message = "The tool encountered an unexpected server error."
-                recovery_hint = (
-                    "Use the traceId to inspect the server log before deciding whether to retry."
-                )
+                recovery_hint = "Use the traceId to inspect the server log before deciding whether to retry."
             return error_result(
                 code,
                 message,
@@ -185,15 +196,18 @@ class RuntimeGuardMiddleware(Middleware):
 
 
 class HostOriginMiddleware:
-    """Validate Host and browser Origin headers for every HTTP route."""
+    """Validate Host and browser Origin headers for HTTP and WebSocket routes."""
 
-    def __init__(self, app: Any, allowed_hosts: list[str], allowed_origins: list[str]) -> None:
+    def __init__(
+        self, app: Any, allowed_hosts: list[str], allowed_origins: list[str]
+    ) -> None:
         self.app = app
         self.allowed_hosts = {host.casefold() for host in allowed_hosts}
         self.allowed_origins = {origin.casefold() for origin in allowed_origins}
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope.get("type") != "http":
+        scope_type = scope.get("type")
+        if scope_type not in {"http", "websocket"}:
             await self.app(scope, receive, send)
             return
 
@@ -203,15 +217,105 @@ class HostOriginMiddleware:
         }
         host = _host_without_port(headers.get("host", "")).casefold()
         if not host or host not in self.allowed_hosts:
-            await PlainTextResponse("Unrecognized Host header", status_code=421)(scope, receive, send)
+            if scope_type == "websocket":
+                await send(
+                    {
+                        "type": "websocket.close",
+                        "code": 1008,
+                        "reason": "Unrecognized Host header",
+                    }
+                )
+                return
+            await PlainTextResponse("Unrecognized Host header", status_code=421)(
+                scope, receive, send
+            )
             return
 
         origin = headers.get("origin")
         if origin is not None and origin.casefold() not in self.allowed_origins:
-            await PlainTextResponse("Origin is not allowed", status_code=403)(scope, receive, send)
+            if scope_type == "websocket":
+                await send(
+                    {
+                        "type": "websocket.close",
+                        "code": 1008,
+                        "reason": "Origin is not allowed",
+                    }
+                )
+                return
+            await PlainTextResponse("Origin is not allowed", status_code=403)(
+                scope, receive, send
+            )
             return
 
         await self.app(scope, receive, send)
+
+
+class DashboardFatalReporter:
+    """Report the first uncaught Streamlit script error and stop the process."""
+
+    def __init__(self, dashboard_dir: Path) -> None:
+        self._dashboard_dir = dashboard_dir.resolve(strict=False)
+        self._lock = threading.Lock()
+        self._reported = False
+
+    def __call__(self, error: BaseException) -> bool:
+        # Streamlit normally keeps these exceptions away from the callback. The
+        # guard is intentional so a direct invocation can never break rerun/stop.
+        if _is_streamlit_control_exception(error):
+            return False
+
+        with self._lock:
+            if self._reported:
+                return True
+            self._reported = True
+
+        trace_id = uuid.uuid4().hex
+        phase, path, widget = _dashboard_error_location(error, self._dashboard_dir)
+        LOGGER.critical(
+            "fatal dashboard error traceId=%s phase=%s path=%s widget=%s\n%s",
+            trace_id,
+            phase,
+            path or "<unknown>",
+            widget or "<none>",
+            "".join(
+                traceback.format_exception(type(error), error, error.__traceback__)
+            ),
+        )
+        payload = {
+            "traceId": trace_id,
+            "phase": phase,
+            "path": _safe_single_line(path) if path else None,
+            "widget": _safe_single_line(widget) if widget else None,
+            "exceptionType": type(error).__name__,
+            "message": _safe_single_line(str(error), limit=512) or type(error).__name__,
+            "retryable": False,
+        }
+        print(
+            f"{FATAL_SENTINEL} "
+            + json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+            file=sys.stderr,
+            flush=True,
+        )
+        sys.stderr.flush()
+        os.kill(os.getpid(), signal.SIGTERM)
+        return True
+
+
+_DASHBOARD_FATAL_REPORTER: DashboardFatalReporter | None = None
+
+
+def configure_dashboard_fatal_reporter(dashboard_dir: Path) -> DashboardFatalReporter:
+    global _DASHBOARD_FATAL_REPORTER
+    reporter = DashboardFatalReporter(dashboard_dir)
+    _DASHBOARD_FATAL_REPORTER = reporter
+    return reporter
+
+
+def report_dashboard_fatal(error: BaseException) -> bool:
+    reporter = _DASHBOARD_FATAL_REPORTER
+    if reporter is None:
+        raise RuntimeError("dashboard fatal reporter is not configured") from error
+    return reporter(error)
 
 
 def error_result(
@@ -241,7 +345,9 @@ def error_result(
     )
 
 
-def load_tools(manifest_path: Path) -> tuple[list[Tool], list[dict[str, Any]], list[str]]:
+def load_tools(
+    manifest_path: Path,
+) -> tuple[list[Tool], list[dict[str, Any]], list[str]]:
     manifest = _read_manifest(manifest_path)
     tools_dir = Path(manifest["toolsDir"]).resolve(strict=True)
     if not tools_dir.is_dir():
@@ -258,7 +364,9 @@ def load_tools(manifest_path: Path) -> tuple[list[Tool], list[dict[str, Any]], l
         path = Path(entry.get("path", ""))
         try:
             if path.is_symlink():
-                raise ToolLoadError(path, "path", "tool path became a symlink after discovery")
+                raise ToolLoadError(
+                    path, "path", "tool path became a symlink after discovery"
+                )
             path = path.resolve(strict=True)
             if path.parent != tools_dir or not path.is_file():
                 raise ToolLoadError(
@@ -267,7 +375,9 @@ def load_tools(manifest_path: Path) -> tuple[list[Tool], list[dict[str, Any]], l
                     "tool must be a direct, regular, non-symlink child of toolsDir",
                 )
             if entry.get("sourceFilename") != path.name:
-                raise ToolLoadError(path, "manifest", "source filename does not match path")
+                raise ToolLoadError(
+                    path, "manifest", "source filename does not match path"
+                )
 
             source = path.read_bytes()
             actual_hash = hashlib.sha256(source).hexdigest()
@@ -280,7 +390,9 @@ def load_tools(manifest_path: Path) -> tuple[list[Tool], list[dict[str, Any]], l
 
             expected_name = entry.get("name")
             if expected_name in names:
-                raise ToolLoadError(path, "identity", f"duplicate tool name {expected_name!r}")
+                raise ToolLoadError(
+                    path, "identity", f"duplicate tool name {expected_name!r}"
+                )
             module = _import_tool(path, expected_name, actual_hash)
             function = _one_decorated_function(path, module)
             if function.__name__ != expected_name:
@@ -297,7 +409,11 @@ def load_tools(manifest_path: Path) -> tuple[list[Tool], list[dict[str, Any]], l
                     f"published tool name {tool_object.name!r} must be {expected_name!r}",
                 )
             if not (tool_object.description or "").strip():
-                raise ToolLoadError(path, "schema", "tool must have a non-empty docstring or description")
+                raise ToolLoadError(
+                    path,
+                    "schema",
+                    "tool must have a non-empty docstring or description",
+                )
 
             # Materialize schemas now so a malformed tool aborts before HTTP startup.
             tool_object.to_mcp_tool()
@@ -321,7 +437,9 @@ def load_tools(manifest_path: Path) -> tuple[list[Tool], list[dict[str, Any]], l
                 path,
                 traceback.format_exc(),
             )
-            raise ToolLoadError(path, "import", f"{type(error).__name__}: {error}") from error
+            raise ToolLoadError(
+                path, "import", f"{type(error).__name__}: {error}"
+            ) from error
 
     return loaded, runtime_details, sorted(dependencies)
 
@@ -334,17 +452,63 @@ def build_application() -> FastAPI:
         )
     manifest_path = _required_path("LITE_MCP_MANIFEST")
     database_path = _required_path("LITE_MCP_DB")
-    dashboard_path = _required_path("LITE_MCP_DASHBOARD")
+    dashboard_dir = _required_directory("LITE_MCP_DASHBOARD_DIR")
+    dashboard_app_path = dashboard_dir / "app.py"
+    if not dashboard_app_path.is_file() or dashboard_app_path.is_symlink():
+        raise RuntimeError(
+            f"dashboard app must be a regular, non-symlink file: {dashboard_app_path}"
+        )
+    dashboard_runner_path = _required_file("LITE_MCP_DASHBOARD_RUNNER")
+    info_page_path = _required_file("LITE_MCP_INFO_PAGE")
+    workspace_path = _required_directory("LITE_MCP_WORKSPACE")
     allowed_hosts = _json_string_list("LITE_MCP_ALLOWED_HOSTS")
     allowed_origins = _json_string_list("LITE_MCP_ALLOWED_ORIGINS")
     concurrency = _integer_setting("LITE_MCP_MAX_CONCURRENCY", minimum=0)
     timeout_seconds = _float_setting("LITE_MCP_TOOL_TIMEOUT_SECONDS", minimum=0)
     result_limit = _integer_setting("LITE_MCP_RESULT_LIMIT_BYTES", minimum=1)
+    port = _integer_setting("LITE_MCP_PORT", minimum=1)
+    if port > 65535:
+        raise RuntimeError("LITE_MCP_PORT must be at most 65535")
     ready_token = os.environ.get("LITE_MCP_READY_TOKEN", "").strip()
     if not ready_token:
         raise RuntimeError("LITE_MCP_READY_TOKEN is required")
 
     tools, tool_details, tool_dependencies = load_tools(manifest_path)
+    dependency_summary = _json_string_list("LITE_MCP_DEPENDENCIES_JSON", required=False)
+    if not dependency_summary:
+        dependency_summary = tool_dependencies
+
+    streamlit = _load_and_configure_streamlit(
+        dashboard_dir=dashboard_dir,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+        port=port,
+    )
+    runtime_summary = _runtime_summary(
+        dashboard_dir=dashboard_dir,
+        tool_details=tool_details,
+        dependency_summary=dependency_summary,
+        concurrency=concurrency,
+        timeout_seconds=timeout_seconds,
+        result_limit=result_limit,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+        python_version=sys.version.split()[0],
+    )
+
+    import lite_mcp_dashboard as dashboard_sdk
+
+    dashboard_sdk._configure(
+        database_path=database_path,
+        dashboard_dir=dashboard_dir,
+        workspace=workspace_path,
+        logger=logging.getLogger("lite_mcp.dashboard"),
+        runtime=runtime_summary,
+    )
+    # Import-safe preflight intentionally does not render the app. Rendering is
+    # session-scoped and may have database side effects.
+    dashboard_sdk.preflight_dashboard(dashboard_dir)
+
     mcp = FastMCP(
         "lite-mcp",
         version=os.environ.get("LITE_MCP_VERSION", "0.0.0"),
@@ -352,7 +516,9 @@ def build_application() -> FastAPI:
     )
     for tool_object in tools:
         mcp.add_tool(tool_object)
-    mcp.add_middleware(RuntimeGuardMiddleware(concurrency, timeout_seconds, result_limit))
+    mcp.add_middleware(
+        RuntimeGuardMiddleware(concurrency, timeout_seconds, result_limit)
+    )
 
     mcp_app = mcp.http_app(
         path="/mcp",
@@ -361,6 +527,12 @@ def build_application() -> FastAPI:
         host_origin_protection=True,
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
+    )
+    fatal_reporter = configure_dashboard_fatal_reporter(dashboard_dir)
+    streamlit_app = streamlit.App(
+        str(dashboard_runner_path),
+        on_script_error=fatal_reporter,
+        debug=False,
     )
 
     @asynccontextmanager
@@ -379,7 +551,11 @@ def build_application() -> FastAPI:
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
-        lifespan=combine_lifespans(mcp_app.lifespan, readiness_lifespan),
+        lifespan=combine_lifespans(
+            mcp_app.lifespan,
+            streamlit_app.lifespan(),
+            readiness_lifespan,
+        ),
     )
     app.add_middleware(
         HostOriginMiddleware,
@@ -387,14 +563,11 @@ def build_application() -> FastAPI:
         allowed_origins=allowed_origins,
     )
 
-    dashboard = dashboard_path.read_text(encoding="utf-8")
-    dependency_summary = _json_string_list("LITE_MCP_DEPENDENCIES_JSON", required=False)
-    if not dependency_summary:
-        dependency_summary = tool_dependencies
+    info_page = info_page_path.read_text(encoding="utf-8")
 
-    @app.get("/", response_class=HTMLResponse)
-    async def index() -> HTMLResponse:
-        return HTMLResponse(dashboard)
+    @app.get("/info", response_class=HTMLResponse)
+    async def info() -> HTMLResponse:
+        return HTMLResponse(info_page)
 
     @app.get("/healthz")
     async def health() -> dict[str, str]:
@@ -415,27 +588,141 @@ def build_application() -> FastAPI:
 
     @app.get("/api/runtime")
     async def runtime_snapshot() -> dict[str, Any]:
-        return {
-            "pythonVersion": sys.version.split()[0],
-            "tools": tool_details,
-            "dependencies": dependency_summary,
-            "startupOnly": True,
-            "maxConcurrency": concurrency,
-            "toolTimeoutSeconds": timeout_seconds,
-            "resultLimitBytes": result_limit,
-        }
+        return runtime_summary
 
-    # Mount last as a catch-all so FastMCP owns the exact /mcp path without a
-    # POST redirect to /mcp/. The explicit FastAPI routes above keep precedence.
-    app.mount("/", mcp_app)
+    # Route the full FastMCP ASGI application at the exact endpoint instead of
+    # using Mount("/mcp"), which redirects POST /mcp to /mcp/. This retains the
+    # FastMCP request-context and Host/Origin middleware while allowing the root
+    # mount to belong entirely to Streamlit.
+    app.router.routes.append(Route("/mcp", mcp_app))
+
+    @app.api_route(
+        "/mcp/{unsupported_path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    )
+    async def reject_unsupported_mcp_path(unsupported_path: str) -> PlainTextResponse:
+        del unsupported_path
+        return PlainTextResponse("Not Found", status_code=404)
+
+    @app.api_route(
+        "/sse",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    )
+    async def reject_legacy_sse() -> PlainTextResponse:
+        return PlainTextResponse("Not Found", status_code=404)
+
+    app.mount("/", streamlit_app)
     return app
+
+
+def _load_and_configure_streamlit(
+    *,
+    dashboard_dir: Path,
+    allowed_hosts: list[str],
+    allowed_origins: list[str],
+    port: int,
+) -> Any:
+    import streamlit
+    from streamlit import config as streamlit_config
+
+    if streamlit.__version__ != STREAMLIT_VERSION or not hasattr(streamlit, "App"):
+        raise RuntimeError(
+            f"lite-mcp requires streamlit=={STREAMLIT_VERSION} with st.App; "
+            f"found {getattr(streamlit, '__version__', '<unknown>')}"
+        )
+    for key, value in _streamlit_config_values(
+        dashboard_dir=dashboard_dir,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+        port=port,
+    ).items():
+        streamlit_config.set_option(key, value, where_defined="lite-mcp runtime")
+    return streamlit
+
+
+def _streamlit_config_values(
+    *,
+    dashboard_dir: Path,
+    allowed_hosts: list[str],
+    allowed_origins: list[str],
+    port: int,
+) -> dict[str, Any]:
+    if not dashboard_dir.is_absolute():
+        raise RuntimeError("the Streamlit dashboard watch directory must be absolute")
+    return {
+        "server.folderWatchList": [str(dashboard_dir)],
+        "server.runOnSave": False,
+        "server.headless": True,
+        "browser.gatherUsageStats": False,
+        "client.toolbarMode": "minimal",
+        "client.showErrorDetails": "none",
+        "server.allowedHosts": list(allowed_hosts),
+        "server.corsAllowedOrigins": list(allowed_origins),
+        "server.enableCORS": True,
+        "server.enableXsrfProtection": True,
+        "server.maxUploadSize": STREAMLIT_RESOURCE_LIMIT_MIB,
+        "server.maxMessageSize": STREAMLIT_RESOURCE_LIMIT_MIB,
+        "server.maxWidgetStateSize": STREAMLIT_RESOURCE_LIMIT_MIB,
+        "server.port": port,
+        "browser.serverPort": port,
+        "server.baseUrlPath": "",
+    }
+
+
+def _runtime_summary(
+    *,
+    dashboard_dir: Path,
+    tool_details: list[dict[str, Any]],
+    dependency_summary: list[str],
+    concurrency: int,
+    timeout_seconds: float,
+    result_limit: int,
+    allowed_hosts: list[str],
+    allowed_origins: list[str],
+    python_version: str,
+) -> dict[str, Any]:
+    return {
+        "pythonVersion": python_version,
+        "tools": tool_details,
+        "dependencies": dependency_summary,
+        "startupOnly": True,
+        "maxConcurrency": concurrency,
+        "toolTimeoutSeconds": timeout_seconds,
+        "resultLimitBytes": result_limit,
+        "dashboard": {
+            "framework": f"Streamlit {STREAMLIT_VERSION}",
+            "directory": str(dashboard_dir),
+            "entrypoint": "app.py",
+            "sourceLifecycle": "browser refresh or Streamlit rerun",
+            "dependencyLifecycle": "process restart",
+            "failurePolicy": "uncaught errors stop lite-mcp",
+        },
+        "security": {
+            "authentication": "none",
+            "networkScope": "LAN",
+            "trustedDashboardCode": True,
+            "allowedHosts": list(allowed_hosts),
+            "allowedOrigins": list(allowed_origins),
+            "maxUploadMiB": STREAMLIT_RESOURCE_LIMIT_MIB,
+            "maxWebSocketMessageMiB": STREAMLIT_RESOURCE_LIMIT_MIB,
+            "warning": "Dashboard data is visible to every client allowed on this LAN service.",
+        },
+        "lifecycle": {
+            "tools": "loaded once at process startup",
+            "dashboardSource": "loaded on each Streamlit run",
+            "reloadApi": False,
+            "automaticProcessRestart": False,
+        },
+    }
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except Exception as error:
-        raise ToolLoadError(path, "manifest", f"{type(error).__name__}: {error}") from error
+        raise ToolLoadError(
+            path, "manifest", f"{type(error).__name__}: {error}"
+        ) from error
     if not isinstance(manifest, dict) or manifest.get("version") != 1:
         raise ToolLoadError(path, "manifest", "unsupported or missing manifest version")
     if manifest.get("pythonVersion") != "3.14.0":
@@ -449,7 +736,9 @@ def _import_tool(path: Path, name: str, source_hash: str) -> types.ModuleType:
     module_name = f"lite_mcp_user_{name}_{source_hash[:16]}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise ToolLoadError(path, "import", "could not create a Python module specification")
+        raise ToolLoadError(
+            path, "import", "could not create a Python module specification"
+        )
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     try:
@@ -490,13 +779,20 @@ def _database_snapshot(path: Path) -> dict[str, Any]:
         tables = []
         for name in names:
             identifier = '"' + name.replace('"', '""') + '"'
-            cursor = connection.execute(f"SELECT * FROM {identifier} LIMIT ?", (DATABASE_PREVIEW_ROWS + 1,))
+            cursor = connection.execute(
+                f"SELECT * FROM {identifier} LIMIT ?", (DATABASE_PREVIEW_ROWS + 1,)
+            )
             rows = cursor.fetchall()
             tables.append(
                 {
                     "name": name,
-                    "columns": [description[0] for description in cursor.description or []],
-                    "rows": [[_json_value(value) for value in row] for row in rows[:DATABASE_PREVIEW_ROWS]],
+                    "columns": [
+                        description[0] for description in cursor.description or []
+                    ],
+                    "rows": [
+                        [_json_value(value) for value in row]
+                        for row in rows[:DATABASE_PREVIEW_ROWS]
+                    ],
                     "truncated": len(rows) > DATABASE_PREVIEW_ROWS,
                 }
             )
@@ -533,6 +829,20 @@ def _required_path(name: str) -> Path:
     path = Path(value)
     if not path.is_absolute():
         raise RuntimeError(f"{name} must be an absolute path")
+    return path
+
+
+def _required_file(name: str) -> Path:
+    path = _required_path(name)
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError(f"{name} must name a regular, non-symlink file")
+    return path
+
+
+def _required_directory(name: str) -> Path:
+    path = _required_path(name)
+    if not path.is_dir() or path.is_symlink():
+        raise RuntimeError(f"{name} must name a directory, not a symlink")
     return path
 
 
@@ -597,3 +907,68 @@ def _find_lite_mcp_error(error: BaseException) -> LiteMcpError | None:
         seen.add(id(current))
         current = current.__cause__ or current.__context__
     return None
+
+
+def _is_streamlit_control_exception(error: BaseException) -> bool:
+    return any(
+        base.__name__ == "ScriptControlException"
+        and base.__module__.startswith("streamlit.")
+        for base in type(error).__mro__
+    )
+
+
+def _dashboard_error_location(
+    error: BaseException,
+    dashboard_dir: Path,
+) -> tuple[str, str | None, str | None]:
+    dashboard_root = dashboard_dir.resolve(strict=False)
+    phase_value = getattr(error, "phase", None)
+    phase = str(phase_value) if phase_value else "script-execution"
+    candidate: str | None = None
+    explicit_path = getattr(error, "path", None)
+    if explicit_path is not None:
+        candidate = str(explicit_path)
+    elif isinstance(error, SyntaxError) and error.filename:
+        candidate = error.filename
+        phase = "compile"
+    else:
+        frames = traceback.extract_tb(error.__traceback__)
+        for frame in reversed(frames):
+            frame_path = Path(frame.filename)
+            try:
+                frame_path.resolve(strict=False).relative_to(dashboard_root)
+            except ValueError:
+                continue
+            candidate = str(frame_path)
+            break
+
+    widget_value = getattr(error, "widget", None)
+    widget = str(widget_value) if widget_value else None
+    if candidate is not None:
+        candidate_path = Path(candidate)
+        try:
+            relative = candidate_path.resolve(strict=False).relative_to(dashboard_root)
+        except ValueError:
+            relative = None
+        if (
+            relative is not None
+            and len(relative.parts) == 2
+            and relative.parts[0] == "widgets"
+        ):
+            widget = relative.stem
+            if phase == "script-execution":
+                phase = "widget-execution"
+        elif relative == Path("app.py") and phase == "script-execution":
+            phase = "app-execution"
+    return phase, candidate, widget
+
+
+def _safe_single_line(value: str, *, limit: int = 1024) -> str:
+    normalized = " ".join(str(value).splitlines())
+    normalized = "".join(
+        character if character.isprintable() else " " for character in normalized
+    )
+    normalized = " ".join(normalized.split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: max(0, limit - 1)] + "…"

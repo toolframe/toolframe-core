@@ -17,8 +17,11 @@ const CORE_DEPENDENCIES: &[&str] = &[
     "fastapi==0.135.2",
     "fastmcp==4.0.0",
     "pydantic==2.12.5",
+    "streamlit==1.61.0",
     "uvicorn==0.42.0",
 ];
+const DASHBOARD_PROJECT_NAME: &str = "lite-mcp-dashboard";
+const DASHBOARD_PROJECT_VERSION: &str = "0.0.0";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,12 +49,33 @@ pub struct ToolCatalog {
     pub dependencies: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DashboardManifest {
+    pub requires_python: String,
+    pub dependencies: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct ScriptMetadata {
     requires_python: String,
     dependencies: Vec<String>,
     tool: Option<toml::Table>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardMetadata {
+    project: DashboardProjectMetadata,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct DashboardProjectMetadata {
+    name: String,
+    version: String,
+    requires_python: String,
+    dependencies: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -156,13 +180,81 @@ pub fn discover(tools_dir: &Path) -> Result<ToolCatalog> {
     })
 }
 
-pub fn runtime_project_toml(catalog: &ToolCatalog) -> Result<String> {
+pub fn inspect_dashboard_manifest(path: &Path) -> Result<DashboardManifest> {
+    let source = fs::read_to_string(path)
+        .with_context(|| format!("could not read dashboard manifest {}", path.display()))?;
+    let metadata: DashboardMetadata = toml::from_str(&source)
+        .map_err(|error| anyhow!("invalid dashboard manifest {}: {error}", path.display()))?;
+
+    if metadata.project.name != DASHBOARD_PROJECT_NAME {
+        bail!(
+            "dashboard manifest {} [project.name]: must be {DASHBOARD_PROJECT_NAME:?}",
+            path.display()
+        );
+    }
+    if metadata.project.version != DASHBOARD_PROJECT_VERSION {
+        bail!(
+            "dashboard manifest {} [project.version]: must be {DASHBOARD_PROJECT_VERSION:?}",
+            path.display()
+        );
+    }
+    if let Some((index, _)) = metadata
+        .project
+        .dependencies
+        .iter()
+        .enumerate()
+        .find(|(_, dependency)| dependency.trim().is_empty())
+    {
+        bail!(
+            "dashboard manifest {} [project.dependencies]: entry {index} must not be empty",
+            path.display()
+        );
+    }
+
+    let specifiers =
+        VersionSpecifiers::from_str(&metadata.project.requires_python).map_err(|error| {
+            anyhow!(
+                "dashboard manifest {} [project.requires-python]: invalid specifier: {error}",
+                path.display()
+            )
+        })?;
+    let python = Version::from_str(PYTHON_VERSION).expect("static Python version is valid");
+    if !specifiers.contains(&python) {
+        bail!(
+            "dashboard manifest {} [project.requires-python]: {:?} does not accept Python {PYTHON_VERSION}",
+            path.display(),
+            metadata.project.requires_python
+        );
+    }
+
+    Ok(DashboardManifest {
+        requires_python: metadata.project.requires_python,
+        dependencies: metadata.project.dependencies,
+    })
+}
+
+pub fn runtime_dependencies(catalog: &ToolCatalog, dashboard: &DashboardManifest) -> Vec<String> {
+    catalog
+        .dependencies
+        .iter()
+        .chain(&dashboard.dependencies)
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub fn runtime_project_toml(
+    catalog: &ToolCatalog,
+    dashboard: &DashboardManifest,
+) -> Result<String> {
+    let dependencies = runtime_dependencies(catalog, dashboard);
     toml::to_string_pretty(&RuntimeProject {
         project: ProjectMetadata {
             name: "lite-mcp-runtime",
             version: "0.0.0",
             requires_python: PYTHON_REQUIREMENT,
-            dependencies: &catalog.dependencies,
+            dependencies: &dependencies,
         },
         tool: RuntimeToolConfig {
             uv: UvConfig { package: false },
@@ -289,6 +381,12 @@ mod tests {
         path
     }
 
+    fn write_dashboard_manifest(directory: &Path, project_fields: &str) -> PathBuf {
+        let path = directory.join("pyproject.toml");
+        fs::write(&path, format!("[project]\n{project_fields}")).expect("write dashboard manifest");
+        path
+    }
+
     #[test]
     fn discovers_direct_tools_and_aggregates_dependencies() {
         let directory = tempfile::tempdir().expect("create temp directory");
@@ -371,5 +469,83 @@ mod tests {
         .expect("extract metadata");
         assert!(metadata.contains("requires-python"));
         assert!(metadata.contains("dependencies = []"));
+    }
+
+    #[test]
+    fn validates_dashboard_manifest_and_merges_dependencies_deterministically() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        write_tool(
+            directory.path(),
+            "weather.py",
+            "# requires-python = \">=3.14,<3.15\"\n# dependencies = [\"httpx==1.0.0\"]\n",
+        );
+        let dashboard_path = write_dashboard_manifest(
+            directory.path(),
+            "name = \"lite-mcp-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14,<3.15\"\ndependencies = [\"duckdb==1.4.0\", \"httpx==1.0.0\"]\n",
+        );
+
+        let catalog = discover(directory.path()).expect("discover tools");
+        let dashboard =
+            inspect_dashboard_manifest(&dashboard_path).expect("inspect dashboard manifest");
+        let dependencies = runtime_dependencies(&catalog, &dashboard);
+
+        assert!(dependencies.windows(2).all(|items| items[0] < items[1]));
+        assert_eq!(
+            dependencies
+                .iter()
+                .filter(|dependency| dependency.as_str() == "httpx==1.0.0")
+                .count(),
+            1
+        );
+        assert!(dependencies.iter().any(|item| item == "duckdb==1.4.0"));
+        assert!(dependencies.iter().any(|item| item == "streamlit==1.61.0"));
+
+        let project = runtime_project_toml(&catalog, &dashboard).expect("render UV project");
+        let parsed: toml::Value = toml::from_str(&project).expect("parse generated UV project");
+        let rendered = parsed["project"]["dependencies"]
+            .as_array()
+            .expect("dependency array")
+            .iter()
+            .map(|item| item.as_str().expect("dependency string"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            dependencies.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_or_incompatible_dashboard_manifest_fields() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let path = write_dashboard_manifest(
+            directory.path(),
+            "name = \"lite-mcp-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.15\"\ndependencies = []\n",
+        );
+        assert!(
+            inspect_dashboard_manifest(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("does not accept Python 3.14.0")
+        );
+
+        fs::write(
+            &path,
+            "[project]\nname = \"lite-mcp-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = [\"   \"]\n",
+        )
+        .expect("replace dashboard manifest");
+        assert!(
+            inspect_dashboard_manifest(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("must not be empty")
+        );
+
+        fs::write(
+            &path,
+            "[project]\nname = \"lite-mcp-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = []\ndescription = \"unsupported\"\n\n[tool.uv]\npackage = false\n",
+        )
+        .expect("replace dashboard manifest");
+        let error = inspect_dashboard_manifest(&path).unwrap_err().to_string();
+        assert!(error.contains("unknown field"), "unexpected error: {error}");
     }
 }
