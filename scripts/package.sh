@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+UV_SOURCE="${UV_BIN:-$(command -v uv || true)}"
+DESTINATION="$REPOSITORY_ROOT/dist/lite-mcp"
+STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/lite-mcp-package.XXXXXX")"
+
+cleanup() {
+  rm -rf "$STAGING_ROOT"
+}
+trap cleanup EXIT
+
+if [[ -z "$UV_SOURCE" || ! -x "$UV_SOURCE" ]]; then
+  echo "error: set UV_BIN to an executable uv binary or install uv on PATH" >&2
+  exit 1
+fi
+
+if [[ -e "$DESTINATION" || -L "$DESTINATION" ]]; then
+  echo "error: $DESTINATION already exists; move it aside before packaging so user data is never overwritten" >&2
+  exit 1
+fi
+
+UV_VERSION="$($UV_SOURCE --version | awk '{print $2}')"
+IFS=. read -r UV_MAJOR UV_MINOR UV_PATCH_REST <<<"$UV_VERSION"
+UV_PATCH="${UV_PATCH_REST%%[^0-9]*}"
+if (( UV_MAJOR == 0 && (UV_MINOR < 12 || (UV_MINOR == 12 && UV_PATCH < 8)) )); then
+  echo "error: uv 0.12.8 or newer is required to provision final Python 3.14 (found $UV_VERSION)" >&2
+  exit 1
+fi
+
+cd "$REPOSITORY_ROOT"
+cargo build --release
+
+PACKAGE="$STAGING_ROOT/lite-mcp"
+mkdir -p "$PACKAGE/tools" "$PACKAGE/workspace" "$PACKAGE/runtime"
+install -m 0755 "$REPOSITORY_ROOT/target/release/lite-mcp" "$PACKAGE/lite-mcp"
+install -m 0755 "$UV_SOURCE" "$PACKAGE/uv"
+install -m 0644 "$REPOSITORY_ROOT/tools/execute_sql.py" "$PACKAGE/tools/execute_sql.py"
+install -m 0644 "$REPOSITORY_ROOT/README.md" "$PACKAGE/README.md"
+
+mkdir -p "$REPOSITORY_ROOT/dist"
+mv "$PACKAGE" "$DESTINATION"
+
+echo "Packaged $DESTINATION"
+echo "Run: $DESTINATION/lite-mcp"
