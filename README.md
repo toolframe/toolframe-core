@@ -1,7 +1,7 @@
 # lite-mcp
 
 `lite-mcp` is a LAN-only Streamlit dashboard and startup-only Python MCP
-tool hub. A Rust launcher prepares SQLite and one shared UV environment, then
+tool hub. A Rust launcher applies SQLite migrations and prepares one shared UV environment, then
 supervises one Python 3.14 process, one Uvicorn server, and one port. The
 Streamlit `st.App` is mounted at `/`; FastMCP serves modern Streamable HTTP at
 `/mcp`.
@@ -39,6 +39,9 @@ lite-mcp/
 │   ├── components/
 │   └── widgets/
 │       └── example_card.py
+├── migrations/
+│   ├── 0000_bootstrap.sql
+│   └── README.md
 ├── tools/
 │   └── execute_sql.py
 ├── workspace/
@@ -46,25 +49,26 @@ lite-mcp/
 ```
 
 The packaging script refuses to overwrite an existing `dist/lite-mcp` and
-copies dashboard source files without `__pycache__`, `.pyc`, or `.pyo` files.
-It does not alter the source tree. At runtime, a missing entire `dashboard/`
-directory is created from the embedded scaffold. Existing dashboard
-directories and files are never overwritten, completed, or automatically
-upgraded.
+copies the editable dashboard and migration source. Dashboard `__pycache__`,
+`.pyc`, and `.pyo` files are excluded. It does not alter the source tree. At
+runtime, a missing entire `dashboard/` or `migrations/` directory is created
+from the embedded scaffold. Existing directories and files are never
+overwritten, completed, or automatically upgraded.
 
 On first online launch, UV downloads Python 3.14 and the pinned core,
 dashboard, and tool dependencies into `runtime/`; no system Python is
 required. UV 0.12.8 or newer is required. Pass `--offline` only after those
 artifacts are cached.
 
-At startup the launcher creates `data.db`, binds the preferred or next
-available port without a release/rebind race, validates the dashboard and
-loads every tool, and prints its URLs:
+At startup the launcher validates and applies migrations to `data.db`, then
+binds the preferred or next available port without a release/rebind race,
+validates the dashboard, loads every tool, and prints its URLs:
 
 ```text
 lite-mcp 0.1.0 is ready
 Dashboard: http://127.0.0.1:8000/
 MCP:       http://127.0.0.1:8000/mcp
+Migrations: /path/to/lite-mcp/migrations (current 0000; 1 applied this start; 1 total)
 LAN:       http://192.168.1.20:8000/
 ```
 
@@ -83,6 +87,51 @@ url = "http://127.0.0.1:8000/mcp"
 
 Only modern Streamable HTTP is served. There is no legacy SSE endpoint,
 client-facing stdio transport, hot reload service, reload API, or reload UI.
+
+## Database migrations
+
+`migrations/` is the source of truth for the `data.db` schema and includes an
+agent-facing [authoring reference](migrations/README.md). The default
+`0000_bootstrap.sql` creates the table used by the example dashboard widget.
+The launcher applies migrations before it binds the HTTP listener or starts
+Python, so a migration failure fails the whole application.
+
+To change the schema, add the next direct migration file and update the widget
+or tool that uses it in the same code change:
+
+```sql
+-- migrations/0001_add_status.sql
+ALTER TABLE dashboard_example_entries
+ADD COLUMN status TEXT NOT NULL DEFAULT 'open';
+
+CREATE INDEX dashboard_example_entries_status_idx
+ON dashboard_example_entries(status);
+```
+
+Files must form one contiguous sequence starting with the exact
+`0000_bootstrap.sql`, using names such as `0001_add_status.sql`. Descriptions
+may contain lowercase ASCII letters, digits, `_`, and `-`. Only direct,
+regular, non-symlink UTF-8 `.sql` files are migrations, and each file is
+limited to 4 MiB. Hidden/private files, non-SQL files, and nested files are
+ignored.
+
+All pending files run in numeric order inside one `BEGIN IMMEDIATE`
+transaction. A failure rolls back the complete pending batch. The internal
+`_lite_mcp_migrations` table records each filename and exact-byte SHA-256
+checksum. Never edit, rename, or delete an applied migration: restore the
+original file and add the next migration instead.
+
+Migration SQL may contain multiple schema or data statements. It must not
+contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PRAGMA`,
+`ATTACH`, `DETACH`, or `CREATE TRIGGER`; the launcher owns the transaction,
+SQLite configuration, and migration ledger protection. Migrations run only at
+process startup, so restart `lite-mcp` after adding one. Back up `data.db`
+before destructive migrations.
+
+If the entire migrations directory is absent, the launcher creates the
+bootstrap and reference without overwriting anything. An existing empty or
+incomplete directory is user-owned and fails validation rather than being
+silently repaired.
 
 ## Dashboard
 
@@ -166,6 +215,8 @@ DDL statement and commits it when successful. It returns a typed result with
 DataFrame. Multi-statement SQL, `ATTACH`, `DETACH`, extension loading, and
 writable security/journal PRAGMAs are rejected. Values must be bound through
 parameters; interpolating user input into SQL is not supported.
+Use `execute` for runtime interaction; durable schema changes belong in the
+versioned migration directory.
 
 Use a transaction for several changes that must commit atomically:
 
@@ -202,16 +253,22 @@ errors are not. Full SQL and tracebacks stay in server stderr and are never
 sent to a LAN browser.
 
 The generated `widgets/example_card.py` is a complete small CRUD reference. It
-creates (without pre-seeding) a clearly named
-`dashboard_example_entries` table, displays a metric, table, and built-in
-chart, accepts new rows with `st.form`, edits rows with `st.data_editor`, and
-deletes a selected row only after explicit confirmation. It binds all values,
-refreshes after a successful commit, and displays caught widget errors. Its
-updates use an `id` plus version or `updated_at` check; a stale update reports
-a conflict and asks the user to refresh instead of silently overwriting
-another LAN session.
+uses the `dashboard_example_entries` table owned by `0000_bootstrap.sql`,
+displays a metric, table, and built-in chart, accepts new rows with `st.form`,
+edits rows with `st.data_editor`, and deletes a selected row only after explicit
+confirmation. It binds all values, refreshes after a successful commit, and
+displays caught widget errors. Its updates use an `id` plus version or
+`updated_at` check; a stale update reports a conflict and asks the user to
+refresh instead of silently overwriting another LAN session.
 
 ## Failure behavior
+
+Migration discovery, integrity, metadata, or SQL failures are fatal before the
+listener is bound or Python starts. Diagnostics identify the migration phase,
+path, version and checksum when available, SQLite code, retryability, and a
+recovery hint. A busy/locked or transient I/O failure may be retryable; an
+invalid name, history drift, incompatible ledger, syntax error, or constraint
+failure is not.
 
 The dashboard is part of the application contract. Missing dashboard files,
 invalid dependency metadata, dependency resolution failures, syntax errors,
@@ -300,6 +357,10 @@ query output is capped at 100 rows. Mutations report `affected_rows` and
 retryable; syntax, constraint, empty, oversized, missing-environment, and
 multi-statement errors are not.
 
+This tool is for ad hoc inspection and repair, not schema history. A durable
+schema change must be a new `migrations/NNNN_description.sql` file so every
+database receives the same ordered change and drift remains detectable.
+
 ## HTTP routes
 
 | Route | Purpose |
@@ -324,6 +385,7 @@ reduces DNS-rebinding exposure but is not authentication or a code sandbox.
 | `--port` | `LITE_MCP_PORT` | `8000` |
 | `--port-search-span` | `LITE_MCP_PORT_SEARCH_SPAN` | `100` |
 | `--database` | `LITE_MCP_DB` | `<executable>/data.db` |
+| `--migrations-dir` | `LITE_MCP_MIGRATIONS_DIR` | `<executable>/migrations` |
 | `--tools-dir` | `LITE_MCP_TOOLS` | `<executable>/tools` |
 | `--dashboard-dir` | `LITE_MCP_DASHBOARD_DIR` | `<executable>/dashboard` |
 | `--workspace-dir` | `LITE_MCP_WORKSPACE` | `<executable>/workspace` |
@@ -335,8 +397,8 @@ reduces DNS-rebinding exposure but is not authentication or a code sandbox.
 | `--result-limit` | `LITE_MCP_RESULT_LIMIT` | 4 MiB |
 | `--startup-timeout` | `LITE_MCP_STARTUP_TIMEOUT` | 600 seconds |
 
-The dashboard directory override is resolved relative to the current working
-directory when it is relative, matching the other path overrides.
+Migration, dashboard, and other path overrides are resolved relative to the
+current working directory when they are relative.
 
 Timeouts are best effort. A blocking thread or native extension cannot always
 be safely killed inside the shared Python process.
@@ -353,6 +415,7 @@ relative to the compiled executable:
 ```sh
 cargo run --release -- \
   --database ./data.db \
+  --migrations-dir ./migrations \
   --tools-dir ./tools \
   --dashboard-dir ./dashboard \
   --workspace-dir ./workspace \
