@@ -107,6 +107,10 @@ struct Cli {
     #[arg(long, env = "LITE_MCP_DB")]
     database: Option<PathBuf>,
 
+    /// Startup-only SQL migration directory.
+    #[arg(long, env = "LITE_MCP_MIGRATIONS_DIR")]
+    migrations_dir: Option<PathBuf>,
+
     /// Startup-only Python tool directory.
     #[arg(long, env = "LITE_MCP_TOOLS")]
     tools_dir: Option<PathBuf>,
@@ -160,6 +164,7 @@ async fn run(cli: Cli) -> Result<()> {
     let paths = runtime::resolve_paths(
         &executable_root,
         cli.database,
+        cli.migrations_dir,
         cli.tools_dir,
         cli.dashboard_dir,
         cli.workspace_dir,
@@ -172,13 +177,27 @@ async fn run(cli: Cli) -> Result<()> {
     if directories.dashboard_scaffolded {
         info!(path = %paths.dashboard.display(), "created editable Streamlit dashboard scaffold");
     }
+    if directories.migrations_scaffolded {
+        info!(path = %paths.migrations.display(), "created editable SQL migration scaffold");
+    }
 
-    db::initialize(&paths.database)
-        .with_context(|| format!("failed to initialize {}", paths.database.display()))?;
+    let migration_report = db::migrate(&paths.database, &paths.migrations).with_context(|| {
+        format!(
+            "failed to migrate {} from {}",
+            paths.database.display(),
+            paths.migrations.display()
+        )
+    })?;
     let database = paths.database.canonicalize().with_context(|| {
         format!(
             "could not resolve database path {}",
             paths.database.display()
+        )
+    })?;
+    let migrations_dir = paths.migrations.canonicalize().with_context(|| {
+        format!(
+            "could not resolve migrations path {}",
+            paths.migrations.display()
         )
     })?;
     let tools_dir = paths
@@ -256,6 +275,7 @@ async fn run(cli: Cli) -> Result<()> {
         .env("UV_CACHE_DIR", runtime_dir.join("cache"))
         .env("UV_PYTHON_INSTALL_DIR", runtime_dir.join("python"))
         .env("LITE_MCP_DB", &database)
+        .env("LITE_MCP_MIGRATIONS_DIR", &migrations_dir)
         .env("LITE_MCP_TOOLS", &tools_dir)
         .env("LITE_MCP_DASHBOARD_DIR", &dashboard_dir)
         .env("LITE_MCP_WORKSPACE", &workspace)
@@ -363,6 +383,8 @@ async fn run(cli: Cli) -> Result<()> {
     announce(
         address,
         &database,
+        &migrations_dir,
+        migration_report,
         &tools_dir,
         &dashboard_dir,
         catalog.manifest.tools.len(),
@@ -566,6 +588,8 @@ fn terminate_process_group(_: u32, _: i32) {}
 fn announce(
     address: SocketAddr,
     database: &Path,
+    migrations_dir: &Path,
+    migrations: db::MigrationReport,
     tools_dir: &Path,
     dashboard_dir: &Path,
     tool_count: usize,
@@ -583,6 +607,13 @@ fn announce(
     println!("Info:      {local_url}/info");
     println!("MCP:       {local_url}/mcp");
     println!("Database:  {}", database.display());
+    println!(
+        "Migrations: {} (current {:04}; {} applied this start; {} total)",
+        migrations_dir.display(),
+        migrations.current_version,
+        migrations.applied_now,
+        migrations.total
+    );
     println!("Tools:     {} ({tool_count} loaded)", tools_dir.display());
     println!("Dashboard files: {}", dashboard_dir.display());
 

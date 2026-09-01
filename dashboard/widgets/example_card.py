@@ -98,22 +98,6 @@ def _validated_value(value: Any) -> float:
     return number
 
 
-def _initialize_table(context: DashboardContext) -> None:
-    context.db.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {_TABLE} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            label TEXT NOT NULL CHECK (length(trim(label)) BETWEEN 1 AND 80),
-            value REAL NOT NULL,
-            version INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        (),
-    )
-
-
 def _load_entries(context: DashboardContext):
     return context.db.query(
         f"""
@@ -316,7 +300,6 @@ def render(context: DashboardContext) -> None:
         st.success(flash)
 
     try:
-        _initialize_table(context)
         entries = _load_entries(context)
     except DashboardDatabaseError as error:
         _handle_database_error(error)

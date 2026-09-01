@@ -26,11 +26,14 @@ const DASHBOARD_PROJECT: &str = include_str!("../dashboard/pyproject.toml");
 const DASHBOARD_COMPONENTS_INIT: &str = include_str!("../dashboard/components/__init__.py");
 const DASHBOARD_WIDGETS_INIT: &str = include_str!("../dashboard/widgets/__init__.py");
 const DASHBOARD_EXAMPLE_CARD: &str = include_str!("../dashboard/widgets/example_card.py");
+const DEFAULT_BOOTSTRAP_MIGRATION: &str = include_str!("../migrations/0000_bootstrap.sql");
+const DEFAULT_MIGRATION_README: &str = include_str!("../migrations/README.md");
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub database: PathBuf,
+    pub migrations: PathBuf,
     pub tools: PathBuf,
     pub dashboard: PathBuf,
     pub workspace: PathBuf,
@@ -39,6 +42,7 @@ pub struct AppPaths {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PreparedDirectories {
+    pub migrations_scaffolded: bool,
     pub tools_scaffolded: bool,
     pub dashboard_scaffolded: bool,
 }
@@ -65,6 +69,7 @@ pub fn executable_root() -> Result<PathBuf> {
 pub fn resolve_paths(
     root: &Path,
     database: Option<PathBuf>,
+    migrations: Option<PathBuf>,
     tools: Option<PathBuf>,
     dashboard: Option<PathBuf>,
     workspace: Option<PathBuf>,
@@ -73,6 +78,7 @@ pub fn resolve_paths(
     let cwd = env::current_dir().context("could not read the current directory")?;
     Ok(AppPaths {
         database: absolute_override(database, &cwd, &root.join("data.db")),
+        migrations: absolute_override(migrations, &cwd, &root.join("migrations")),
         tools: absolute_override(tools, &cwd, &root.join("tools")),
         dashboard: absolute_override(dashboard, &cwd, &root.join("dashboard")),
         workspace: absolute_override(workspace, &cwd, &root.join("workspace")),
@@ -81,6 +87,7 @@ pub fn resolve_paths(
 }
 
 pub fn prepare_directories(paths: &AppPaths) -> Result<PreparedDirectories> {
+    let migrations_scaffolded = scaffold_migrations_if_missing(&paths.migrations)?;
     let tools_created = create_directory_if_missing(&paths.tools, "tools")?;
     create_directory_if_missing(&paths.workspace, "workspace")?;
     create_directory_if_missing(&paths.runtime, "runtime")?;
@@ -106,6 +113,7 @@ pub fn prepare_directories(paths: &AppPaths) -> Result<PreparedDirectories> {
     let dashboard_scaffolded = scaffold_dashboard_if_missing(&paths.dashboard)?;
 
     Ok(PreparedDirectories {
+        migrations_scaffolded,
         tools_scaffolded: tools_created,
         dashboard_scaffolded,
     })
@@ -258,52 +266,69 @@ fn create_directory_if_missing(path: &Path, label: &str) -> Result<bool> {
 }
 
 fn scaffold_dashboard_if_missing(path: &Path) -> Result<bool> {
+    scaffold_directory_if_missing(
+        path,
+        "dashboard",
+        &[
+            ("app.py", DASHBOARD_APP),
+            ("pyproject.toml", DASHBOARD_PROJECT),
+            ("components/__init__.py", DASHBOARD_COMPONENTS_INIT),
+            ("widgets/__init__.py", DASHBOARD_WIDGETS_INIT),
+            ("widgets/example_card.py", DASHBOARD_EXAMPLE_CARD),
+        ],
+    )
+}
+
+fn scaffold_migrations_if_missing(path: &Path) -> Result<bool> {
+    scaffold_directory_if_missing(
+        path,
+        "migrations",
+        &[
+            ("0000_bootstrap.sql", DEFAULT_BOOTSTRAP_MIGRATION),
+            ("README.md", DEFAULT_MIGRATION_README),
+        ],
+    )
+}
+
+fn scaffold_directory_if_missing(path: &Path, label: &str, files: &[(&str, &str)]) -> Result<bool> {
     if path.exists() {
         if path.is_dir() {
             return Ok(false);
         }
         bail!(
-            "dashboard path {} exists but is not a directory",
+            "{label} path {} exists but is not a directory",
             path.display()
         );
     }
 
     let parent = path
         .parent()
-        .ok_or_else(|| anyhow!("dashboard path {} has no parent directory", path.display()))?;
+        .ok_or_else(|| anyhow!("{label} path {} has no parent directory", path.display()))?;
     fs::create_dir_all(parent).with_context(|| {
         format!(
-            "could not create dashboard parent directory {}",
+            "could not create {label} parent directory {}",
             parent.display()
         )
     })?;
 
     let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let staging_name = format!(".lite-mcp-dashboard-{}-{sequence}.tmp", std::process::id());
+    let staging_name = format!(".lite-mcp-{label}-{}-{sequence}.tmp", std::process::id());
     let staging = parent.join(staging_name);
     fs::create_dir(&staging).with_context(|| {
         format!(
-            "could not create temporary dashboard scaffold {}",
+            "could not create temporary {label} scaffold {}",
             staging.display()
         )
     })?;
 
     let mut published = false;
     let result = (|| -> Result<()> {
-        let components = staging.join("components");
-        let widgets = staging.join("widgets");
-        fs::create_dir(&components)
-            .with_context(|| format!("could not create {}", components.display()))?;
-        fs::create_dir(&widgets)
-            .with_context(|| format!("could not create {}", widgets.display()))?;
-
-        for (destination, content) in [
-            (staging.join("app.py"), DASHBOARD_APP),
-            (staging.join("pyproject.toml"), DASHBOARD_PROJECT),
-            (components.join("__init__.py"), DASHBOARD_COMPONENTS_INIT),
-            (widgets.join("__init__.py"), DASHBOARD_WIDGETS_INIT),
-            (widgets.join("example_card.py"), DASHBOARD_EXAMPLE_CARD),
-        ] {
+        for (relative, content) in files {
+            let destination = staging.join(relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("could not create {}", parent.display()))?;
+            }
             write_scaffold_file(&destination, content)?;
         }
 
@@ -316,7 +341,7 @@ fn scaffold_dashboard_if_missing(path: &Path) -> Result<bool> {
     if staging.exists() {
         fs::remove_dir_all(&staging).with_context(|| {
             format!(
-                "could not remove temporary dashboard scaffold {}",
+                "could not remove temporary {label} scaffold {}",
                 staging.display()
             )
         })?;
@@ -351,7 +376,7 @@ fn rename_directory_if_absent(source: &Path, destination: &Path) -> Result<bool>
     }
     Err(error).with_context(|| {
         format!(
-            "could not publish dashboard scaffold at {}",
+            "could not publish scaffold at {}",
             destination.to_string_lossy()
         )
     })
@@ -388,7 +413,7 @@ fn rename_directory_if_absent(source: &Path, destination: &Path) -> Result<bool>
     }
     Err(error).with_context(|| {
         format!(
-            "could not publish dashboard scaffold at {}",
+            "could not publish scaffold at {}",
             destination.to_string_lossy()
         )
     })
@@ -402,12 +427,8 @@ fn rename_directory_if_absent(source: &Path, destination: &Path) -> Result<bool>
     match fs::rename(source, destination) {
         Ok(()) => Ok(true),
         Err(_) if destination.exists() => Ok(false),
-        Err(error) => Err(error).with_context(|| {
-            format!(
-                "could not publish dashboard scaffold at {}",
-                destination.display()
-            )
-        }),
+        Err(error) => Err(error)
+            .with_context(|| format!("could not publish scaffold at {}", destination.display())),
     }
 }
 
@@ -416,12 +437,7 @@ fn write_scaffold_file(path: &Path, content: &str) -> Result<()> {
         .create_new(true)
         .write(true)
         .open(path)
-        .with_context(|| {
-            format!(
-                "could not create dashboard scaffold file {}",
-                path.display()
-            )
-        })?;
+        .with_context(|| format!("could not create scaffold file {}", path.display()))?;
     file.write_all(content.as_bytes())
         .with_context(|| format!("could not write {}", path.display()))?;
     file.sync_all()
@@ -484,6 +500,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("create temp directory");
         let paths = AppPaths {
             database: directory.path().join("data.db"),
+            migrations: directory.path().join("nested").join("migrations"),
             tools: directory.path().join("nested").join("tools"),
             dashboard: directory.path().join("nested").join("dashboard"),
             workspace: directory.path().join("nested").join("workspace"),
@@ -493,6 +510,7 @@ mod tests {
         let prepared = prepare_directories(&paths).expect("prepare new directories");
         assert!(prepared.tools_scaffolded);
         assert!(prepared.dashboard_scaffolded);
+        assert!(prepared.migrations_scaffolded);
         let sql = paths.tools.join("execute_sql.py");
         assert!(sql.is_file());
         fs::write(&sql, "# user-owned\n").expect("replace scaffold as user");
@@ -500,6 +518,7 @@ mod tests {
         let prepared = prepare_directories(&paths).expect("prepare existing directories");
         assert!(!prepared.tools_scaffolded);
         assert!(!prepared.dashboard_scaffolded);
+        assert!(!prepared.migrations_scaffolded);
         assert_eq!(
             fs::read_to_string(sql).expect("read user tool"),
             "# user-owned\n"
@@ -509,8 +528,9 @@ mod tests {
     #[test]
     fn resolves_defaults_beside_the_executable_root() {
         let root = Path::new("/tmp/lite-mcp-dist");
-        let paths = resolve_paths(root, None, None, None, None, None).expect("resolve paths");
+        let paths = resolve_paths(root, None, None, None, None, None, None).expect("resolve paths");
         assert_eq!(paths.database, root.join("data.db"));
+        assert_eq!(paths.migrations, root.join("migrations"));
         assert_eq!(paths.tools, root.join("tools"));
         assert_eq!(paths.dashboard, root.join("dashboard"));
         assert_eq!(paths.workspace, root.join("workspace"));
@@ -525,6 +545,7 @@ mod tests {
             root,
             None,
             None,
+            None,
             Some(PathBuf::from("custom-dashboard")),
             None,
             None,
@@ -534,10 +555,85 @@ mod tests {
     }
 
     #[test]
+    fn resolves_relative_migrations_override_from_the_current_directory() {
+        let root = Path::new("/tmp/lite-mcp-dist");
+        let cwd = env::current_dir().expect("read current directory");
+        let paths = resolve_paths(
+            root,
+            None,
+            Some(PathBuf::from("custom-migrations")),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("resolve paths");
+        assert_eq!(paths.migrations, cwd.join("custom-migrations"));
+    }
+
+    #[test]
+    fn migration_scaffold_is_complete_and_never_repairs_an_existing_directory() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let paths = AppPaths {
+            database: directory.path().join("data.db"),
+            migrations: directory.path().join("migrations"),
+            tools: directory.path().join("tools"),
+            dashboard: directory.path().join("dashboard"),
+            workspace: directory.path().join("workspace"),
+            runtime: directory.path().join("runtime"),
+        };
+
+        let prepared = prepare_directories(&paths).expect("prepare new directories");
+        assert!(prepared.migrations_scaffolded);
+        let bootstrap = paths.migrations.join("0000_bootstrap.sql");
+        assert_eq!(
+            fs::read_to_string(&bootstrap).expect("read bootstrap"),
+            DEFAULT_BOOTSTRAP_MIGRATION
+        );
+        assert_eq!(
+            fs::read_to_string(paths.migrations.join("README.md"))
+                .expect("read migration reference"),
+            DEFAULT_MIGRATION_README
+        );
+
+        fs::write(&bootstrap, "-- user-owned migration\n").expect("replace bootstrap");
+        let prepared = prepare_directories(&paths).expect("prepare existing directories");
+        assert!(!prepared.migrations_scaffolded);
+        assert_eq!(
+            fs::read_to_string(bootstrap).expect("read user migration"),
+            "-- user-owned migration\n"
+        );
+    }
+
+    #[test]
+    fn existing_empty_migrations_directory_is_not_scaffolded() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let paths = AppPaths {
+            database: directory.path().join("data.db"),
+            migrations: directory.path().join("migrations"),
+            tools: directory.path().join("tools"),
+            dashboard: directory.path().join("dashboard"),
+            workspace: directory.path().join("workspace"),
+            runtime: directory.path().join("runtime"),
+        };
+        fs::create_dir(&paths.migrations).expect("create user migrations directory");
+
+        let prepared = prepare_directories(&paths).expect("prepare directories");
+        assert!(!prepared.migrations_scaffolded);
+        assert!(
+            fs::read_dir(&paths.migrations)
+                .expect("read migrations")
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn dashboard_scaffold_is_complete_and_never_repairs_an_existing_directory() {
         let directory = tempfile::tempdir().expect("create temp directory");
         let paths = AppPaths {
             database: directory.path().join("data.db"),
+            migrations: directory.path().join("migrations"),
             tools: directory.path().join("tools"),
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),
@@ -581,6 +677,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("create temp directory");
         let paths = AppPaths {
             database: directory.path().join("data.db"),
+            migrations: directory.path().join("migrations"),
             tools: directory.path().join("tools"),
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),

@@ -480,6 +480,7 @@ class DefaultWidgetContractTests(unittest.TestCase):
                 "result_too_large",
             }.issubset(module._EXPECTED_DATABASE_ERRORS)
         )
+        self.assertNotIn("CREATE TABLE", path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
