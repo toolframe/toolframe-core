@@ -1,7 +1,11 @@
 /target/
+/dist/
+/runtime/
 /data.db
 /data.db-shm
 /data.db-wal
+__pycache__/
+*.py[cod]
 *.log
 .DS_Store
 

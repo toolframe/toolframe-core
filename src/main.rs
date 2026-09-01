@@ -1,157 +1,343 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     io::Write,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    process::Stdio,
     sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
-use axum::{Json, Router, extract::State, http::StatusCode, response::Html, routing::get};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
-use lite_mcp::{db, mcp::SqlMcpServer};
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+use lite_mcp::{db, runtime, tools};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    net::TcpListener,
+    process::Command,
+    sync::{Mutex, oneshot},
+    time,
 };
-use serde::Serialize;
-use tokio::net::TcpListener;
-use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-const INDEX_HTML: &str = include_str!("../static/index.html");
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+const READY_SENTINEL: &str = "LITE_MCP_READY";
+const STDERR_HISTORY_LINES: usize = 80;
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Cli {
-    /// Interface to listen on. The default exposes the server to the LAN.
+    /// Interface to listen on. The default intentionally exposes the server to the LAN.
     #[arg(long, env = "LITE_MCP_HOST", default_value_t = DEFAULT_HOST)]
     host: IpAddr,
 
-    /// Preferred port. If unavailable, nearby ports are tried; 0 lets the OS choose.
+    /// Preferred port. Busy ports are skipped; 0 asks the OS for any available port.
     #[arg(long, env = "LITE_MCP_PORT", default_value_t = 8000)]
     port: u16,
 
-    /// Number of ports to try after the preferred port before asking the OS.
+    /// Number of sequential ports to try before asking the OS for a free port.
     #[arg(long, env = "LITE_MCP_PORT_SEARCH_SPAN", default_value_t = 100)]
     port_search_span: u16,
 
-    /// SQLite database path.
-    #[arg(long, env = "LITE_MCP_DB", default_value = "data.db")]
-    database: PathBuf,
-}
+    /// SQLite database path. Relative overrides are resolved from the current directory.
+    #[arg(long, env = "LITE_MCP_DB")]
+    database: Option<PathBuf>,
 
-#[derive(Clone)]
-struct AppState {
-    database_path: Arc<PathBuf>,
-}
+    /// Startup-only Python tool directory.
+    #[arg(long, env = "LITE_MCP_TOOLS")]
+    tools_dir: Option<PathBuf>,
 
-#[derive(Debug, Serialize)]
-struct ErrorBody {
-    error: String,
+    /// Working directory and trusted read/write area for Python tools.
+    #[arg(long, env = "LITE_MCP_WORKSPACE")]
+    workspace_dir: Option<PathBuf>,
+
+    /// Private UV project, Python installation, lock, and cache directory.
+    #[arg(long, env = "LITE_MCP_RUNTIME")]
+    runtime_dir: Option<PathBuf>,
+
+    /// UV executable. Resolution order is this override, bundled sibling, then PATH.
+    #[arg(long, env = "LITE_MCP_UV")]
+    uv_path: Option<PathBuf>,
+
+    /// Resolve only from artifacts already available to UV.
+    #[arg(long, env = "LITE_MCP_OFFLINE", default_value_t = false)]
+    offline: bool,
+
+    /// Concurrent tool calls. The default is 60; explicit 0 means unlimited.
+    #[arg(long, env = "LITE_MCP_MAX_CONCURRENCY", default_value_t = 60)]
+    max_concurrency: u32,
+
+    /// Best-effort timeout for each tool call in seconds; 0 disables it.
+    #[arg(long, env = "LITE_MCP_TOOL_TIMEOUT", default_value_t = 60.0, value_parser = finite_nonnegative)]
+    tool_timeout: f64,
+
+    /// Maximum encoded MCP tool result size in bytes.
+    #[arg(long, env = "LITE_MCP_RESULT_LIMIT", default_value_t = 4_194_304, value_parser = positive_usize)]
+    result_limit: usize,
+
+    /// Maximum time for Python, dependency resolution, and strict tool loading.
+    #[arg(long, env = "LITE_MCP_STARTUP_TIMEOUT", default_value_t = 600)]
+    startup_timeout: u64,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     initialize_logging();
     let cli = Cli::parse();
+    run(cli).await
+}
 
-    db::initialize(&cli.database)
-        .with_context(|| format!("failed to initialize {}", cli.database.display()))?;
-    let database_path = Arc::new(
-        cli.database
-            .canonicalize()
-            .unwrap_or_else(|_| cli.database.clone()),
-    );
+async fn run(cli: Cli) -> Result<()> {
+    let executable_root = runtime::executable_root()?;
+    let paths = runtime::resolve_paths(
+        &executable_root,
+        cli.database,
+        cli.tools_dir,
+        cli.workspace_dir,
+        cli.runtime_dir,
+    )?;
+    let tools_created = runtime::prepare_directories(&paths)?;
+    if tools_created {
+        info!(path = %paths.tools.display(), "created tools directory and SQL reference tool");
+    }
+
+    db::initialize(&paths.database)
+        .with_context(|| format!("failed to initialize {}", paths.database.display()))?;
+    let database = paths.database.canonicalize().with_context(|| {
+        format!(
+            "could not resolve database path {}",
+            paths.database.display()
+        )
+    })?;
+    let tools_dir = paths
+        .tools
+        .canonicalize()
+        .with_context(|| format!("could not resolve tools path {}", paths.tools.display()))?;
+    let workspace = paths.workspace.canonicalize().with_context(|| {
+        format!(
+            "could not resolve workspace path {}",
+            paths.workspace.display()
+        )
+    })?;
+    let runtime_dir = paths
+        .runtime
+        .canonicalize()
+        .with_context(|| format!("could not resolve runtime path {}", paths.runtime.display()))?;
+
+    let catalog = tools::discover(&tools_dir)?;
+    let startup_tool_context = format_startup_tool_context(&catalog);
+    let prepared = runtime::prepare_runtime(&runtime_dir, &catalog)?;
+    let uv = runtime::locate_uv(cli.uv_path.as_deref(), &executable_root)?;
 
     let listener = bind_available(cli.host, cli.port, cli.port_search_span).await?;
     let address = listener
         .local_addr()
-        .context("could not read bound address")?;
-    let cancellation_token = CancellationToken::new();
-    let allowed_hosts = allowed_hosts(cli.host);
-    let allowed_origins = allowed_origins(cli.host, address.port());
+        .context("could not read the selected listen address")?;
+    let standard_listener = listener
+        .into_std()
+        .context("could not prepare the inherited HTTP listener")?;
+    let listen_fd = inherited_listener_fd(&standard_listener)?;
 
-    let mcp_database_path = Arc::clone(&database_path);
-    let mcp_service = StreamableHttpService::new(
-        move || Ok(SqlMcpServer::new(Arc::clone(&mcp_database_path))),
-        LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default()
-            .with_legacy_session_mode(false)
-            .with_json_response(true)
-            .with_allowed_hosts(allowed_hosts)
-            .with_allowed_origins(allowed_origins)
-            .with_cancellation_token(cancellation_token.child_token()),
-    );
+    let allowed_hosts = runtime::allowed_hosts(cli.host);
+    let allowed_origins = runtime::allowed_origins(cli.host, address.port());
+    let dependency_json = serde_json::to_string(&catalog.dependencies)
+        .context("could not encode dependency summary")?;
+    let ready_token = tools::content_hash(format!(
+        "{}:{}:{}",
+        std::process::id(),
+        prepared.manifest.display(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let ready_line = format!("{READY_SENTINEL} {ready_token}");
 
-    let state = AppState {
-        database_path: Arc::clone(&database_path),
-    };
-    let app = Router::new()
-        .route("/", get(index))
-        .route("/healthz", get(health))
-        .route("/api/database", get(database_snapshot))
-        .nest_service("/mcp", mcp_service)
-        .with_state(state);
+    let mut command = Command::new(&uv);
+    command.arg("--no-config");
+    if cli.offline {
+        command.arg("--offline");
+    }
+    command
+        .arg("run")
+        .arg("--project")
+        .arg(&prepared.project)
+        .arg("--python")
+        .arg("3.14")
+        .arg("python")
+        .arg(&prepared.core_server)
+        .current_dir(&workspace)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("PYTHONUNBUFFERED", "1")
+        .env("UV_MANAGED_PYTHON", "1")
+        .env("UV_CACHE_DIR", runtime_dir.join("cache"))
+        .env("UV_PYTHON_INSTALL_DIR", runtime_dir.join("python"))
+        .env("LITE_MCP_DB", &database)
+        .env("LITE_MCP_TOOLS", &tools_dir)
+        .env("LITE_MCP_WORKSPACE", &workspace)
+        .env("LITE_MCP_RUNTIME", &runtime_dir)
+        .env("LITE_MCP_MANIFEST", &prepared.manifest)
+        .env("LITE_MCP_DASHBOARD", &prepared.dashboard)
+        .env("LITE_MCP_LISTEN_FD", listen_fd.to_string())
+        .env("LITE_MCP_READY_TOKEN", ready_token)
+        .env("LITE_MCP_HOST", cli.host.to_string())
+        .env("LITE_MCP_PORT", address.port().to_string())
+        .env(
+            "LITE_MCP_ALLOWED_HOSTS",
+            serde_json::to_string(&allowed_hosts).context("could not encode allowed hosts")?,
+        )
+        .env(
+            "LITE_MCP_ALLOWED_ORIGINS",
+            serde_json::to_string(&allowed_origins).context("could not encode allowed origins")?,
+        )
+        .env("LITE_MCP_DEPENDENCIES_JSON", dependency_json)
+        .env("LITE_MCP_MAX_CONCURRENCY", cli.max_concurrency.to_string())
+        .env(
+            "LITE_MCP_TOOL_TIMEOUT_SECONDS",
+            cli.tool_timeout.to_string(),
+        )
+        .env("LITE_MCP_RESULT_LIMIT_BYTES", cli.result_limit.to_string())
+        .env("LITE_MCP_VERSION", env!("CARGO_PKG_VERSION"));
 
-    announce(address, &database_path);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
+    }
 
-    let shutdown_token = cancellation_token.clone();
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            shutdown_token.cancel();
-        })
-        .await
-        .context("HTTP server failed")?;
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("could not start UV at {}", uv.display()))?;
+    drop(standard_listener);
+    let child_pid = child
+        .id()
+        .ok_or_else(|| anyhow!("UV child process did not report a process id"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("could not capture UV stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("could not capture UV stderr"))?;
+
+    let stderr_history = Arc::new(Mutex::new(VecDeque::new()));
+    let (ready_sender, mut ready_receiver) = oneshot::channel();
+    tokio::spawn(forward_stdout(stdout, ready_sender, ready_line));
+    tokio::spawn(forward_stderr(stderr, Arc::clone(&stderr_history)));
+
+    let mut wait = Box::pin(child.wait());
+    let mut deadline = Box::pin(time::sleep(Duration::from_secs(cli.startup_timeout)));
+    tokio::select! {
+        ready = &mut ready_receiver => {
+            if ready.is_err() {
+                let status = match time::timeout(Duration::from_secs(2), &mut wait).await {
+                    Ok(status) => Some(status.context("could not wait for UV during startup")?),
+                    Err(_) => {
+                        terminate_process_group(child_pid, libc::SIGTERM);
+                        if time::timeout(Duration::from_secs(5), &mut wait)
+                            .await
+                            .is_err()
+                        {
+                            terminate_process_group(child_pid, libc::SIGKILL);
+                            let _ = wait.await;
+                        }
+                        None
+                    }
+                };
+                let diagnostics = recent_stderr(&stderr_history).await;
+                if let Some(status) = status {
+                    bail!("Python runtime exited before reporting readiness ({status}){diagnostics}{startup_tool_context}");
+                }
+                bail!("Python stopped producing output before reporting readiness{diagnostics}{startup_tool_context}");
+            }
+        }
+        status = &mut wait => {
+            let status = status.context("could not wait for UV during startup")?;
+            let diagnostics = recent_stderr(&stderr_history).await;
+            bail!("Python runtime exited before startup completed ({status}){diagnostics}{startup_tool_context}");
+        }
+        _ = &mut deadline => {
+            terminate_process_group(child_pid, libc::SIGTERM);
+            if time::timeout(Duration::from_secs(5), &mut wait).await.is_err() {
+                terminate_process_group(child_pid, libc::SIGKILL);
+                let _ = wait.await;
+            }
+            let diagnostics = recent_stderr(&stderr_history).await;
+            bail!("Python runtime did not become ready within {} seconds{diagnostics}{startup_tool_context}", cli.startup_timeout);
+        }
+    }
+
+    announce(address, &database, &tools_dir, catalog.manifest.tools.len());
+
+    tokio::select! {
+        status = &mut wait => {
+            let status = status.context("could not wait for the Python runtime")?;
+            if !status.success() {
+                let diagnostics = recent_stderr(&stderr_history).await;
+                bail!("Python runtime stopped unexpectedly ({status}){diagnostics}");
+            }
+        }
+        _ = shutdown_signal() => {
+            info!("shutdown requested; stopping Python runtime");
+            terminate_process_group(child_pid, libc::SIGTERM);
+            if time::timeout(Duration::from_secs(5), &mut wait).await.is_err() {
+                warn!("Python runtime did not stop in 5 seconds; forcing termination");
+                terminate_process_group(child_pid, libc::SIGKILL);
+                let _ = wait.await;
+            }
+        }
+    }
 
     info!("server stopped");
     Ok(())
 }
 
-fn initialize_logging() {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "lite_mcp=info,tower_http=info".into()),
+async fn forward_stdout(
+    stdout: tokio::process::ChildStdout,
+    ready_sender: oneshot::Sender<()>,
+    ready_line: String,
+) {
+    let mut lines = BufReader::new(stdout).lines();
+    let mut ready_sender = Some(ready_sender);
+    while let Ok(Some(line)) = lines.next_line().await {
+        if line.trim() == ready_line {
+            if let Some(sender) = ready_sender.take() {
+                let _ = sender.send(());
+            }
+        } else {
+            println!("{line}");
+        }
+    }
+}
+
+async fn forward_stderr(
+    stderr: tokio::process::ChildStderr,
+    history: Arc<Mutex<VecDeque<String>>>,
+) {
+    let mut lines = BufReader::new(stderr).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        eprintln!("{line}");
+        let mut history = history.lock().await;
+        history.push_back(line);
+        while history.len() > STDERR_HISTORY_LINES {
+            history.pop_front();
+        }
+    }
+}
+
+async fn recent_stderr(history: &Mutex<VecDeque<String>>) -> String {
+    let history = history.lock().await;
+    if history.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nRecent Python/UV diagnostics:\n{}",
+            history.iter().cloned().collect::<Vec<_>>().join("\n")
         )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-}
-
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
-}
-
-async fn health() -> &'static str {
-    "ok"
-}
-
-async fn database_snapshot(
-    State(state): State<AppState>,
-) -> Result<Json<db::DatabaseSnapshot>, (StatusCode, Json<ErrorBody>)> {
-    let path = Arc::clone(&state.database_path);
-    match tokio::task::spawn_blocking(move || db::snapshot(&path)).await {
-        Ok(Ok(snapshot)) => Ok(Json(snapshot)),
-        Ok(Err(error)) => {
-            error!(%error, "database preview failed");
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorBody {
-                    error: error.to_string(),
-                }),
-            ))
-        }
-        Err(error) => {
-            error!(%error, "database preview worker failed");
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorBody {
-                    error: "database preview worker failed".into(),
-                }),
-            ))
-        }
     }
 }
 
@@ -196,92 +382,117 @@ async fn bind_available(
         .context("could not bind any available port")
 }
 
-fn allowed_hosts(bind_host: IpAddr) -> Vec<String> {
-    let mut hosts = BTreeSet::from([
-        "localhost".to_owned(),
-        Ipv4Addr::LOCALHOST.to_string(),
-        "::1".to_owned(),
-    ]);
+#[cfg(unix)]
+fn inherited_listener_fd(listener: &std::net::TcpListener) -> Result<i32> {
+    use std::os::fd::AsRawFd;
 
-    if !bind_host.is_unspecified() {
-        hosts.insert(bind_host.to_string());
+    let fd = listener.as_raw_fd();
+    // SAFETY: fcntl is called with a valid listener fd and does not outlive it.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error()).context("could not inspect listener fd flags");
     }
-
-    if let Ok(interfaces) = local_ip_address::list_afinet_netifas() {
-        hosts.extend(
-            interfaces
-                .into_iter()
-                .map(|(_, address)| address.to_string()),
-        );
+    // SAFETY: this only clears close-on-exec for the validated listener fd.
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error()).context("could not make listener inheritable");
     }
-
-    hosts.into_iter().collect()
+    Ok(fd)
 }
 
-fn allowed_origins(bind_host: IpAddr, port: u16) -> Vec<String> {
-    let mut origins = BTreeSet::from([
-        format!("http://localhost:{port}"),
-        http_origin(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
-        http_origin(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), port),
-    ]);
-
-    if !bind_host.is_unspecified() {
-        origins.insert(http_origin(bind_host, port));
-    }
-
-    if let Ok(interfaces) = local_ip_address::list_afinet_netifas() {
-        origins.extend(
-            interfaces
-                .into_iter()
-                .map(|(_, address)| http_origin(address, port)),
-        );
-    }
-
-    origins.into_iter().collect()
+#[cfg(not(unix))]
+fn inherited_listener_fd(_: &std::net::TcpListener) -> Result<i32> {
+    bail!("inherited listener startup is currently supported on macOS and other Unix systems")
 }
 
-fn http_origin(address: IpAddr, port: u16) -> String {
-    match address {
-        IpAddr::V4(address) => format!("http://{address}:{port}"),
-        IpAddr::V6(address) => format!("http://[{address}]:{port}"),
+#[cfg(unix)]
+fn terminate_process_group(pid: u32, signal: i32) {
+    if let Ok(pid) = i32::try_from(pid) {
+        // SAFETY: negative pid targets only the dedicated child process group.
+        let result = unsafe { libc::kill(-pid, signal) };
+        if result < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                warn!(%error, pid, signal, "could not signal Python process group");
+            }
+        }
     }
 }
 
-fn announce(address: SocketAddr, database_path: &Path) {
+#[cfg(not(unix))]
+fn terminate_process_group(_: u32, _: i32) {}
+
+fn announce(address: SocketAddr, database: &Path, tools_dir: &Path, tool_count: usize) {
     let port = address.port();
     let primary_ip = match address.ip() {
         IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
         IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
         ip => ip,
     };
-    let local_url = http_origin(primary_ip, port);
+    let local_url = runtime::http_origin(primary_ip, port);
 
-    println!(
-        "lite-mcp {version} is ready",
-        version = env!("CARGO_PKG_VERSION")
-    );
+    println!("lite-mcp {} is ready", env!("CARGO_PKG_VERSION"));
     println!("Dashboard: {local_url}/");
     println!("MCP:       {local_url}/mcp");
-    println!("Database:  {}", database_path.display());
+    println!("Database:  {}", database.display());
+    println!("Tools:     {} ({tool_count} loaded)", tools_dir.display());
 
-    if address.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+    if address.ip().is_unspecified()
         && let Ok(interfaces) = local_ip_address::list_afinet_netifas()
     {
         let lan_urls = interfaces
             .into_iter()
             .map(|(_, ip)| ip)
             .filter(|ip| ip.is_ipv4() && !ip.is_loopback())
-            .map(|ip| format!("http://{ip}:{port}"))
+            .map(|ip| runtime::http_origin(ip, port))
             .collect::<BTreeSet<_>>();
         for url in lan_urls {
             println!("LAN:       {url}/");
         }
     }
 
-    println!("WARNING: no authentication; SQL access is trusted-network only.");
+    println!(
+        "WARNING: no authentication; every LAN client can call trusted Python tools and modify data."
+    );
     println!("LITE_MCP_URL={local_url}");
     println!("LITE_MCP_MCP_URL={local_url}/mcp");
     let _ = std::io::stdout().flush();
+}
+
+fn format_startup_tool_context(catalog: &tools::ToolCatalog) -> String {
+    if catalog.manifest.tools.is_empty() {
+        return "\nStartup tool declarations: none".to_owned();
+    }
+
+    let declarations = catalog
+        .manifest
+        .tools
+        .iter()
+        .map(|tool| {
+            let dependencies = if tool.dependencies.is_empty() {
+                "none".to_owned()
+            } else {
+                tool.dependencies.join(", ")
+            };
+            format!(
+                "- {} (requires-python {}; dependencies: {})",
+                tool.path.display(),
+                tool.requires_python,
+                dependencies
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("\nStartup tool declarations:\n{declarations}")
+}
+
+fn initialize_logging() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "lite_mcp=info".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 }
 
 async fn shutdown_signal() {
@@ -297,7 +508,6 @@ async fn shutdown_signal() {
                 return;
             }
         };
-
         tokio::select! {
             result = tokio::signal::ctrl_c() => {
                 if let Err(error) = result {
@@ -314,10 +524,29 @@ async fn shutdown_signal() {
     }
 }
 
+fn finite_nonnegative(value: &str) -> std::result::Result<f64, String> {
+    let value: f64 = value.parse().map_err(|_| "must be a number".to_owned())?;
+    if value.is_finite() && value >= 0.0 {
+        Ok(value)
+    } else {
+        Err("must be a finite non-negative number".to_owned())
+    }
+}
+
+fn positive_usize(value: &str) -> std::result::Result<usize, String> {
+    let value: usize = value
+        .parse()
+        .map_err(|_| "must be a positive integer".to_owned())?;
+    if value > 0 {
+        Ok(value)
+    } else {
+        Err("must be greater than zero".to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::response::IntoResponse;
 
     #[tokio::test]
     async fn skips_an_occupied_preferred_port() {
@@ -325,11 +554,9 @@ mod tests {
             .await
             .expect("bind occupied port");
         let occupied_port = occupied.local_addr().expect("occupied address").port();
-
         let selected = bind_available(IpAddr::V4(Ipv4Addr::LOCALHOST), occupied_port, 3)
             .await
             .expect("select fallback port");
-
         assert_ne!(
             selected.local_addr().expect("selected address").port(),
             occupied_port
@@ -337,7 +564,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepts_os_assigned_port() {
+    async fn accepts_an_os_assigned_port() {
         let selected = bind_available(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, 0)
             .await
             .expect("select OS-assigned port");
@@ -345,37 +572,10 @@ mod tests {
     }
 
     #[test]
-    fn allows_loopback_and_interface_hosts() {
-        let hosts = allowed_hosts(DEFAULT_HOST);
-        assert!(hosts.iter().any(|host| host == "localhost"));
-        assert!(hosts.iter().any(|host| host == "127.0.0.1"));
-    }
-
-    #[test]
-    fn allows_only_local_origins() {
-        let origins = allowed_origins(DEFAULT_HOST, 8123);
-        assert!(
-            origins
-                .iter()
-                .any(|origin| origin == "http://localhost:8123")
-        );
-        assert!(
-            origins
-                .iter()
-                .any(|origin| origin == "http://127.0.0.1:8123")
-        );
-        assert!(!origins.iter().any(|origin| origin.contains("example.com")));
-    }
-
-    #[test]
-    fn error_body_is_an_http_response() {
-        let response = (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorBody {
-                error: "failure".into(),
-            }),
-        )
-            .into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    fn validates_numeric_settings() {
+        assert_eq!(finite_nonnegative("0").expect("zero timeout"), 0.0);
+        assert!(finite_nonnegative("NaN").is_err());
+        assert_eq!(positive_usize("1").expect("positive cap"), 1);
+        assert!(positive_usize("0").is_err());
     }
 }

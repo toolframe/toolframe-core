@@ -219,7 +219,7 @@
 
     .meta-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(150px, 0.8fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
       gap: 12px;
       margin-bottom: 35px;
     }
@@ -305,6 +305,39 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
       gap: 16px;
+    }
+
+    .tool-section {
+      margin-bottom: 35px;
+    }
+
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+      gap: 12px;
+    }
+
+    .tool-card {
+      min-width: 0;
+      padding: 17px 18px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .tool-card p {
+      margin: 7px 0 12px;
+      color: var(--muted);
+      font-size: 0.86rem;
+      line-height: 1.5;
+    }
+
+    .tool-source {
+      color: var(--accent-dark);
+      font-size: 0.75rem;
+      font-weight: 750;
+      overflow-wrap: anywhere;
     }
 
     .table-card {
@@ -512,8 +545,8 @@
           <h1>lite-mcp</h1>
         </div>
       </div>
-      <button class="refresh-button" id="refresh-button" type="button" aria-controls="table-preview">
-        Refresh
+      <button class="refresh-button" id="refresh-button" type="button" aria-controls="table-preview tool-list">
+        Refresh preview
       </button>
     </header>
 
@@ -521,8 +554,8 @@
       <section class="notice" role="note" aria-labelledby="notice-title">
         <span class="notice-icon" aria-hidden="true">!</span>
         <div>
-          <h2 id="notice-title">Open database access</h2>
-          <p>This server has no authentication. Its MCP SQL tool can modify the database, so keep this endpoint on a trusted network.</p>
+          <h2 id="notice-title">Open, trusted-code access</h2>
+          <p>This LAN server has no authentication. Loaded Python tools share the process, environment, secrets, workspace, and database. Run only tools you trust.</p>
           <div class="endpoint">
             <span>MCP endpoint</span>
             <code>/mcp</code>
@@ -543,6 +576,32 @@
           <span>Last refreshed</span>
           <strong id="last-refreshed">—</strong>
         </div>
+        <div class="meta-card">
+          <span>Python</span>
+          <strong id="python-version">—</strong>
+        </div>
+        <div class="meta-card">
+          <span>Loaded tools</span>
+          <strong id="tool-count">—</strong>
+        </div>
+        <div class="meta-card">
+          <span>Shared dependencies</span>
+          <strong id="dependency-count">—</strong>
+        </div>
+      </section>
+
+      <section class="tool-section" aria-labelledby="tools-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Startup catalog</p>
+            <h2 id="tools-title">Loaded Python tools</h2>
+          </div>
+          <div class="status" data-state="success">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span>Restart to load file changes</span>
+          </div>
+        </div>
+        <div id="tool-list" aria-live="polite"></div>
       </section>
 
       <section aria-labelledby="preview-title">
@@ -560,7 +619,7 @@
       </section>
     </main>
 
-    <footer>Preview data is read from the local database through <code>/api/database</code>.</footer>
+    <footer>Preview data comes from <code>/api/database</code> and the immutable startup catalog from <code>/api/runtime</code>.</footer>
   </div>
 
   <script>
@@ -572,6 +631,10 @@
     const databasePath = document.getElementById("database-path");
     const tableCount = document.getElementById("table-count");
     const lastRefreshed = document.getElementById("last-refreshed");
+    const pythonVersion = document.getElementById("python-version");
+    const toolCount = document.getElementById("tool-count");
+    const dependencyCount = document.getElementById("dependency-count");
+    const toolList = document.getElementById("tool-list");
     const tablePreview = document.getElementById("table-preview");
     let activeRequest = 0;
 
@@ -606,12 +669,17 @@
 
     function setLoadingState() {
       tablePreview.replaceChildren(setMessage("loading", "…", "Loading database tables", "Fetching the latest preview from the server."));
+      toolList.replaceChildren(setMessage("loading", "…", "Loading startup catalog", "Reading the tools that were validated when the process started."));
       tablePreview.setAttribute("aria-busy", "true");
       setStatus("loading", "Loading…");
     }
 
     function isDatabasePayload(value) {
       return value !== null && typeof value === "object" && Array.isArray(value.tables);
+    }
+
+    function isRuntimePayload(value) {
+      return value !== null && typeof value === "object" && Array.isArray(value.tools) && Array.isArray(value.dependencies);
     }
 
     function displayColumnName(value, index) {
@@ -702,9 +770,9 @@
 
     function renderDatabase(payload) {
       const tables = payload.tables;
-      databasePath.textContent = typeof payload.database_path === "string" && payload.database_path ? payload.database_path : "Not reported";
+      databasePath.textContent = typeof payload.databasePath === "string" && payload.databasePath ? payload.databasePath : "Not reported";
       tableCount.textContent = `${tables.length} table${tables.length === 1 ? "" : "s"}`;
-      lastRefreshed.textContent = typeof payload.generated_at === "string" && payload.generated_at ? payload.generated_at : "Not reported";
+      lastRefreshed.textContent = typeof payload.generatedAt === "string" && payload.generatedAt ? payload.generatedAt : "Not reported";
       tablePreview.setAttribute("aria-busy", "false");
 
       if (tables.length === 0) {
@@ -719,29 +787,56 @@
       tablePreview.replaceChildren(grid);
     }
 
-    async function loadDatabase() {
+    function renderRuntime(payload) {
+      pythonVersion.textContent = typeof payload.pythonVersion === "string" ? payload.pythonVersion : "Not reported";
+      toolCount.textContent = `${payload.tools.length} tool${payload.tools.length === 1 ? "" : "s"}`;
+      dependencyCount.textContent = payload.dependencies.length === 0
+        ? "No declared packages"
+        : `${payload.dependencies.length} · ${payload.dependencies.join(", ")}`;
+
+      if (payload.tools.length === 0) {
+        toolList.replaceChildren(setMessage("empty", "∅", "No tools loaded", "Add one direct lower_snake_case .py file to the tools folder, then restart lite-mcp."));
+        return;
+      }
+
+      const grid = makeElement("div", "tool-grid");
+      payload.tools.forEach((tool, index) => {
+        const card = makeElement("article", "tool-card");
+        card.appendChild(makeElement("h3", "", typeof tool.name === "string" ? tool.name : `Tool ${index + 1}`));
+        card.appendChild(makeElement("p", "", typeof tool.description === "string" ? tool.description : "No description reported."));
+        card.appendChild(makeElement("div", "tool-source", typeof tool.sourceFile === "string" ? tool.sourceFile : "Unknown source"));
+        grid.appendChild(card);
+      });
+      toolList.replaceChildren(grid);
+    }
+
+    async function loadDashboard() {
       const requestId = ++activeRequest;
       refreshButton.disabled = true;
       setLoadingState();
 
       try {
-        const response = await fetch("/api/database", {
-          method: "GET",
-          headers: { Accept: "application/json" }
-        });
-        if (!response.ok) {
-          throw new Error(`Request failed with status ${response.status}.`);
+        const [databaseResponse, runtimeResponse] = await Promise.all([
+          fetch("/api/database", { method: "GET", headers: { Accept: "application/json" } }),
+          fetch("/api/runtime", { method: "GET", headers: { Accept: "application/json" } })
+        ]);
+        if (!databaseResponse.ok || !runtimeResponse.ok) {
+          throw new Error(`Request failed with status ${databaseResponse.status}/${runtimeResponse.status}.`);
         }
 
-        const payload = await response.json();
-        if (!isDatabasePayload(payload)) {
-          throw new Error("The database response had an unexpected shape.");
+        const [databasePayload, runtimePayload] = await Promise.all([
+          databaseResponse.json(),
+          runtimeResponse.json()
+        ]);
+        if (!isDatabasePayload(databasePayload) || !isRuntimePayload(runtimePayload)) {
+          throw new Error("The dashboard response had an unexpected shape.");
         }
 
         if (requestId !== activeRequest) {
           return;
         }
-        renderDatabase(payload);
+        renderDatabase(databasePayload);
+        renderRuntime(runtimePayload);
         setStatus("success", "Up to date");
       } catch (error) {
         if (requestId !== activeRequest) {
@@ -750,7 +845,11 @@
         databasePath.textContent = "Not available";
         tableCount.textContent = "—";
         lastRefreshed.textContent = "—";
+        pythonVersion.textContent = "—";
+        toolCount.textContent = "—";
+        dependencyCount.textContent = "—";
         tablePreview.replaceChildren(setMessage("error", "!", "Couldn’t load the database", "Check that the server is running, then use Refresh to try again."));
+        toolList.replaceChildren(setMessage("error", "!", "Couldn’t load the startup catalog", "Inspect the server log and retry the preview."));
         tablePreview.setAttribute("aria-busy", "false");
         setStatus("error", "Load failed");
       } finally {
@@ -761,8 +860,8 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-      refreshButton.addEventListener("click", loadDatabase);
-      loadDatabase();
+      refreshButton.addEventListener("click", loadDashboard);
+      loadDashboard();
     });
   </script>
 </body>
