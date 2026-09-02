@@ -20,6 +20,7 @@ const CORE_SUPPORT: &str = include_str!("../core/lite_mcp_runtime.py");
 const CORE_DASHBOARD: &str = include_str!("../core/lite_mcp_dashboard.py");
 const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/lite_mcp_dashboard_runner.py");
 const CORE_LOGGING: &str = include_str!("../core/lite_mcp_logging.py");
+const CORE_CLI: &str = include_str!("../core/lite_mcp_cli.py");
 const INFO_PAGE: &str = include_str!("../static/index.html");
 const DEFAULT_SQL_TOOL: &str = include_str!("../tools/execute_sql.py");
 const DASHBOARD_APP: &str = include_str!("../dashboard/app.py");
@@ -51,6 +52,7 @@ pub struct PreparedDirectories {
 #[derive(Debug, Clone)]
 pub struct PreparedRuntime {
     pub core_server: PathBuf,
+    pub cli_runner: PathBuf,
     pub dashboard_sdk: PathBuf,
     pub dashboard_runner: PathBuf,
     pub info_page: PathBuf,
@@ -147,6 +149,7 @@ pub fn prepare_runtime(
             CORE_DASHBOARD.as_bytes(),
             CORE_DASHBOARD_RUNNER.as_bytes(),
             CORE_LOGGING.as_bytes(),
+            CORE_CLI.as_bytes(),
             INFO_PAGE.as_bytes(),
         ]
         .concat(),
@@ -164,12 +167,14 @@ pub fn prepare_runtime(
     let dashboard_sdk = core_dir.join("lite_mcp_dashboard.py");
     let dashboard_runner = core_dir.join("lite_mcp_dashboard_runner.py");
     let core_logging = core_dir.join("lite_mcp_logging.py");
+    let cli_runner = core_dir.join("lite_mcp_cli.py");
     let info_page = core_dir.join("info.html");
     write_managed(&core_server, CORE_SERVER)?;
     write_managed(&core_support, CORE_SUPPORT)?;
     write_managed(&dashboard_sdk, CORE_DASHBOARD)?;
     write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
     write_managed(&core_logging, CORE_LOGGING)?;
+    write_managed(&cli_runner, CORE_CLI)?;
     write_managed(&info_page, INFO_PAGE)?;
 
     let project_toml = runtime_project_toml(catalog, dashboard)?;
@@ -185,6 +190,7 @@ pub fn prepare_runtime(
 
     Ok(PreparedRuntime {
         core_server,
+        cli_runner,
         dashboard_sdk,
         dashboard_runner,
         info_page,

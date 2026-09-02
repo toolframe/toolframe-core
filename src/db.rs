@@ -34,6 +34,14 @@ pub struct MigrationReport {
     pub current_version: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MigrationValidation {
+    pub total: usize,
+    pub current_version: u16,
+    pub pending: usize,
+    pub database_exists: bool,
+}
+
 #[derive(Debug, Clone)]
 struct Migration {
     version: u16,
@@ -48,6 +56,18 @@ struct AppliedMigration {
     version: u16,
     filename: String,
     sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DatabaseFileFingerprint {
+    path: PathBuf,
+    bytes: u64,
+    sha256: String,
+}
+
+struct DatabaseSnapshot {
+    _directory: tempfile::TempDir,
+    database: PathBuf,
 }
 
 /// Validate and atomically apply every pending migration before app startup.
@@ -84,6 +104,15 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
     })?;
     configure_connection(&connection, database_path)?;
 
+    migrate_connection(&mut connection, database_path, &migrations, true)
+}
+
+fn migrate_connection(
+    connection: &mut Connection,
+    database_path: &Path,
+    migrations: &[Migration],
+    commit: bool,
+) -> Result<MigrationReport> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| {
@@ -107,8 +136,8 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
     validate_ledger_schema(&transaction, database_path)?;
 
     let applied = load_applied(&transaction, database_path)?;
-    validate_applied_history(&migrations, &applied)?;
-    verify_sources_unchanged(&migrations)?;
+    validate_applied_history(migrations, &applied)?;
+    verify_sources_unchanged(migrations)?;
 
     let mut applied_now = 0;
     for migration in migrations.iter().skip(applied.len()) {
@@ -116,15 +145,21 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
         applied_now += 1;
     }
 
-    transaction.commit().map_err(|error| {
-        sqlite_failure(
-            "commit",
-            migrations.last(),
-            database_path,
-            &error,
-            "Restart lite-mcp; the ledger will determine whether the transaction committed.",
-        )
-    })?;
+    if commit {
+        transaction.commit().map_err(|error| {
+            sqlite_failure(
+                "commit",
+                migrations.last(),
+                database_path,
+                &error,
+                "Restart lite-mcp; the ledger will determine whether the transaction committed.",
+            )
+        })?;
+    } else {
+        transaction
+            .rollback()
+            .context("could not discard the migration validation snapshot")?;
+    }
 
     Ok(MigrationReport {
         applied_now,
@@ -134,6 +169,191 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
             .expect("migration discovery requires bootstrap")
             .version,
     })
+}
+
+/// Exercise production migration discovery, history validation, and pending
+/// application against an in-memory snapshot without changing data.db.
+pub fn validate_migrations(
+    database_path: &Path,
+    migrations_dir: &Path,
+) -> Result<MigrationValidation> {
+    let migrations = discover_migrations(migrations_dir)?;
+    let database_exists = database_path.exists();
+    let snapshot = database_exists
+        .then(|| copy_database_snapshot(database_path))
+        .transpose()?;
+    let mut connection = match &snapshot {
+        Some(snapshot) => Connection::open(&snapshot.database)
+            .context("could not open the copied database validation snapshot")?,
+        None => Connection::open_in_memory()
+            .context("could not open the in-memory migration validation database")?,
+    };
+    connection
+        .busy_timeout(BUSY_TIMEOUT)
+        .context("could not configure the in-memory migration validation database busy timeout")?;
+    configure_connection(&connection, database_path)?;
+    let report = migrate_connection(&mut connection, database_path, &migrations, false)?;
+
+    Ok(MigrationValidation {
+        total: report.total,
+        current_version: report.current_version,
+        pending: report.applied_now,
+        database_exists,
+    })
+}
+
+fn copy_database_snapshot(database_path: &Path) -> Result<DatabaseSnapshot> {
+    let stability_context = || {
+        format!(
+            "could not obtain stable database files for validation (phase=migration-validation-snapshot, path={}, retryable=true, recoveryHint=inspect file permissions, stop lite-mcp and other database writers, then retry)",
+            database_path.display()
+        )
+    };
+    let before = fingerprint_database_files(database_path).with_context(stability_context)?;
+    let directory = tempfile::Builder::new()
+        .prefix("lite-mcp-database-check-")
+        .tempdir()
+        .context("could not create a temporary database validation directory")?;
+    let filename = database_path.file_name().ok_or_else(|| {
+        anyhow!(
+            "database path {} has no filename for validation",
+            database_path.display()
+        )
+    })?;
+    let database = directory.path().join(filename);
+
+    for source in &before {
+        let destination = directory
+            .path()
+            .join(source.path.file_name().ok_or_else(|| {
+                anyhow!(
+                    "database file {} has no filename for validation",
+                    source.path.display()
+                )
+            })?);
+        copy_regular_file(&source.path, &destination).with_context(stability_context)?;
+        let copied = fingerprint_file(&destination).with_context(stability_context)?;
+        if copied.bytes != source.bytes || copied.sha256 != source.sha256 {
+            bail!(
+                "database files changed while check copied {} (phase=migration-validation-snapshot, path={}, retryable=true, recoveryHint=stop lite-mcp and other database writers, then retry)",
+                source.path.display(),
+                database_path.display()
+            );
+        }
+    }
+
+    let after = fingerprint_database_files(database_path).with_context(stability_context)?;
+    if before != after {
+        bail!(
+            "database files changed while check prepared a validation snapshot (phase=migration-validation-snapshot, path={}, retryable=true, recoveryHint=stop lite-mcp and other database writers, then retry)",
+            database_path.display()
+        );
+    }
+    Ok(DatabaseSnapshot {
+        _directory: directory,
+        database,
+    })
+}
+
+fn fingerprint_database_files(database_path: &Path) -> Result<Vec<DatabaseFileFingerprint>> {
+    let candidates = [
+        database_path.to_path_buf(),
+        database_sidecar_path(database_path, "-wal"),
+        database_sidecar_path(database_path, "-shm"),
+    ];
+    let mut files = Vec::new();
+    for (index, path) in candidates.into_iter().enumerate() {
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                bail!(
+                    "database snapshot source {} must be a regular file, not a symlink (phase=migration-validation-snapshot, retryable=false)",
+                    path.display()
+                );
+            }
+            Ok(_) => files.push(fingerprint_file(&path)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && index > 0 => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "could not inspect database snapshot source {}",
+                        path.display()
+                    )
+                });
+            }
+        }
+    }
+    Ok(files)
+}
+
+fn fingerprint_file(path: &Path) -> Result<DatabaseFileFingerprint> {
+    let mut file = fs::File::open(path)
+        .with_context(|| format!("could not read database snapshot source {}", path.display()))?;
+    let mut digest = Sha256::new();
+    let mut bytes = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("could not hash database file {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        bytes = bytes.saturating_add(read as u64);
+    }
+    Ok(DatabaseFileFingerprint {
+        path: path.to_path_buf(),
+        bytes,
+        sha256: format!("{:x}", digest.finalize()),
+    })
+}
+
+fn copy_regular_file(source: &Path, destination: &Path) -> Result<()> {
+    let mut input = fs::File::open(source).with_context(|| {
+        format!(
+            "could not open database snapshot source {}",
+            source.display()
+        )
+    })?;
+    let mut output = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .with_context(|| {
+            format!(
+                "could not create database snapshot file {}",
+                destination.display()
+            )
+        })?;
+    std::io::copy(&mut input, &mut output).with_context(|| {
+        format!(
+            "could not copy database snapshot source {}",
+            source.display()
+        )
+    })?;
+    output
+        .sync_all()
+        .with_context(|| format!("could not sync database snapshot {}", destination.display()))?;
+    Ok(())
+}
+
+fn database_sidecar_path(database_path: &Path, suffix: &str) -> PathBuf {
+    let mut path = database_path.as_os_str().to_os_string();
+    path.push(suffix);
+    PathBuf::from(path)
+}
+
+pub fn next_migration_filename(migrations_dir: &Path, description: &str) -> Result<String> {
+    let migrations = discover_migrations(migrations_dir)?;
+    let version = u16::try_from(migrations.len())
+        .context("migration sequence is too long for four-digit versions")?;
+    if version > 9999 {
+        bail!("migration sequence has exhausted four-digit versions");
+    }
+    let filename = format!("{version:04}_{description}.sql");
+    parse_filename(&filename)
+        .with_context(|| format!("invalid migration description {description:?}"))?;
+    Ok(filename)
 }
 
 fn configure_connection(connection: &Connection, database_path: &Path) -> Result<()> {
@@ -767,6 +987,101 @@ mod tests {
             .expect("apply ordered migrations");
         assert_eq!(report.applied_now, 3);
         assert_eq!(report.current_version, 2);
+    }
+
+    #[test]
+    fn validates_migrations_in_memory_without_creating_a_database_file() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let migrations = directory.path().join("migrations");
+        fs::create_dir(&migrations).expect("create migrations");
+        bootstrap(&migrations);
+        write_migration(
+            &migrations,
+            "0001_add_status.sql",
+            "ALTER TABLE example ADD COLUMN status TEXT;",
+        );
+        let configured_database = directory.path().join("data.db");
+
+        let report =
+            validate_migrations(&configured_database, &migrations).expect("validate in memory");
+
+        assert_eq!(report.total, 2);
+        assert_eq!(report.current_version, 1);
+        assert_eq!(report.pending, 2);
+        assert!(!report.database_exists);
+        assert!(!configured_database.exists());
+
+        write_migration(
+            &migrations,
+            "0002_forbidden.sql",
+            "PRAGMA user_version = 2;",
+        );
+        assert!(validate_migrations(&configured_database, &migrations).is_err());
+        assert!(!configured_database.exists());
+    }
+
+    #[test]
+    fn validates_existing_database_without_creating_or_changing_sidecars() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let migrations = directory.path().join("migrations");
+        fs::create_dir(&migrations).expect("create migrations");
+        bootstrap(&migrations);
+        let database = directory.path().join("data.db");
+        migrate(&database, &migrations).expect("apply bootstrap");
+        let original = fingerprint_database_files(&database).expect("fingerprint database");
+        assert_eq!(original.len(), 1, "test database should have no sidecars");
+
+        let report =
+            validate_migrations(&database, &migrations).expect("validate database snapshot");
+
+        assert!(report.database_exists);
+        assert_eq!(report.pending, 0);
+        assert_eq!(
+            fingerprint_database_files(&database).expect("fingerprint after validation"),
+            original
+        );
+
+        fs::write(
+            migrations.join(BOOTSTRAP_FILENAME),
+            "CREATE TABLE changed(value INTEGER);\n",
+        )
+        .expect("change applied migration");
+        assert!(validate_migrations(&database, &migrations).is_err());
+        assert_eq!(
+            fingerprint_database_files(&database).expect("fingerprint after drift check"),
+            original
+        );
+    }
+
+    #[test]
+    fn preserves_existing_wal_and_shm_files_during_validation() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let migrations = directory.path().join("migrations");
+        fs::create_dir(&migrations).expect("create migrations");
+        bootstrap(&migrations);
+        let database = directory.path().join("data.db");
+        migrate(&database, &migrations).expect("apply bootstrap");
+
+        let connection = Connection::open(&database).expect("open database keeper");
+        connection
+            .execute_batch(
+                "PRAGMA journal_mode = WAL;
+                 PRAGMA wal_autocheckpoint = 0;
+                 INSERT INTO example(value) VALUES ('in-wal');",
+            )
+            .expect("leave committed data in WAL");
+        let before = fingerprint_database_files(&database).expect("fingerprint WAL database");
+        assert_eq!(before.len(), 3, "WAL and SHM sidecars should exist");
+
+        let report = validate_migrations(&database, &migrations)
+            .expect("validate copied database with sidecars");
+
+        assert_eq!(report.pending, 0);
+        assert_eq!(
+            fingerprint_database_files(&database).expect("fingerprint WAL database after check"),
+            before
+        );
+        drop(connection);
     }
 
     #[test]

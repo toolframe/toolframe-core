@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fs,
     io::{IsTerminal, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
@@ -9,10 +10,14 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::Parser;
-use lite_mcp::{db, runtime, tools};
+use clap::{Parser, Subcommand, ValueEnum};
+use lite_mcp::{
+    db,
+    development::{self, ScaffoldKind},
+    runtime, tools,
+};
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpListener,
     process::Command,
     sync::{Mutex, oneshot},
@@ -203,99 +208,194 @@ impl FatalDiagnostic {
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+
     /// Interface to listen on. The default intentionally exposes the server to the LAN.
-    #[arg(long, env = "LITE_MCP_HOST", default_value_t = DEFAULT_HOST)]
+    #[arg(long, env = "LITE_MCP_HOST", default_value_t = DEFAULT_HOST, global = true)]
     host: IpAddr,
 
     /// Preferred port. Busy ports are skipped; 0 asks the OS for any available port.
-    #[arg(long, env = "LITE_MCP_PORT", default_value_t = 8000)]
+    #[arg(long, env = "LITE_MCP_PORT", default_value_t = 8000, global = true)]
     port: u16,
 
     /// Number of sequential ports to try before asking the OS for a free port.
-    #[arg(long, env = "LITE_MCP_PORT_SEARCH_SPAN", default_value_t = 100)]
+    #[arg(
+        long,
+        env = "LITE_MCP_PORT_SEARCH_SPAN",
+        default_value_t = 100,
+        global = true
+    )]
     port_search_span: u16,
 
     /// SQLite database path. Relative overrides are resolved from the current directory.
-    #[arg(long, env = "LITE_MCP_DB")]
+    #[arg(long, env = "LITE_MCP_DB", global = true)]
     database: Option<PathBuf>,
 
     /// Startup-only SQL migration directory.
-    #[arg(long, env = "LITE_MCP_MIGRATIONS_DIR")]
+    #[arg(long, env = "LITE_MCP_MIGRATIONS_DIR", global = true)]
     migrations_dir: Option<PathBuf>,
 
     /// Startup-only Python tool directory.
-    #[arg(long, env = "LITE_MCP_TOOLS")]
+    #[arg(long, env = "LITE_MCP_TOOLS", global = true)]
     tools_dir: Option<PathBuf>,
 
     /// Editable Streamlit dashboard directory. Source changes load on browser rerun.
-    #[arg(long, env = "LITE_MCP_DASHBOARD_DIR")]
+    #[arg(long, env = "LITE_MCP_DASHBOARD_DIR", global = true)]
     dashboard_dir: Option<PathBuf>,
 
     /// Working directory and trusted read/write area for Python tools.
-    #[arg(long, env = "LITE_MCP_WORKSPACE")]
+    #[arg(long, env = "LITE_MCP_WORKSPACE", global = true)]
     workspace_dir: Option<PathBuf>,
 
     /// Private UV project, Python installation, lock, and cache directory.
-    #[arg(long, env = "LITE_MCP_RUNTIME")]
+    #[arg(long, env = "LITE_MCP_RUNTIME", global = true)]
     runtime_dir: Option<PathBuf>,
 
     /// Structured audit and MCP JSONL directory. Relative paths resolve from the executable root.
-    #[arg(long, env = "LITE_MCP_LOGS_DIR")]
+    #[arg(long, env = "LITE_MCP_LOGS_DIR", global = true)]
     logs_dir: Option<PathBuf>,
 
     /// Number of UTC date buckets retained, including today.
-    #[arg(long, env = "LITE_MCP_LOG_RETENTION_DAYS", default_value_t = 14, value_parser = positive_u64)]
+    #[arg(long, env = "LITE_MCP_LOG_RETENTION_DAYS", default_value_t = 14, value_parser = positive_u64, global = true)]
     log_retention_days: u64,
 
     /// Combined maximum size of managed audit and MCP JSONL files.
-    #[arg(long, env = "LITE_MCP_LOG_MAX_TOTAL_MIB", default_value_t = 256, value_parser = positive_u64)]
+    #[arg(long, env = "LITE_MCP_LOG_MAX_TOTAL_MIB", default_value_t = 256, value_parser = positive_u64, global = true)]
     log_max_total_mib: u64,
 
     /// Forward routine UV and Python diagnostics to the categorized console.
-    #[arg(long, env = "LITE_MCP_VERBOSE", default_value_t = false)]
+    #[arg(long, env = "LITE_MCP_VERBOSE", default_value_t = false, global = true)]
     verbose: bool,
 
     /// Disable ANSI colors. NO_COLOR is also honored.
-    #[arg(long, env = "LITE_MCP_NO_COLOR", default_value_t = false)]
+    #[arg(
+        long,
+        env = "LITE_MCP_NO_COLOR",
+        default_value_t = false,
+        global = true
+    )]
     no_color: bool,
 
     /// UV executable. Resolution order is this override, bundled sibling, then PATH.
-    #[arg(long, env = "LITE_MCP_UV")]
+    #[arg(long, env = "LITE_MCP_UV", global = true)]
     uv_path: Option<PathBuf>,
 
     /// Resolve only from artifacts already available to UV.
-    #[arg(long, env = "LITE_MCP_OFFLINE", default_value_t = false)]
+    #[arg(long, env = "LITE_MCP_OFFLINE", default_value_t = false, global = true)]
     offline: bool,
 
     /// Concurrent tool calls. The default is 60; explicit 0 means unlimited.
-    #[arg(long, env = "LITE_MCP_MAX_CONCURRENCY", default_value_t = 60)]
+    #[arg(
+        long,
+        env = "LITE_MCP_MAX_CONCURRENCY",
+        default_value_t = 60,
+        global = true
+    )]
     max_concurrency: u32,
 
     /// Best-effort timeout for each tool call in seconds; 0 disables it.
-    #[arg(long, env = "LITE_MCP_TOOL_TIMEOUT", default_value_t = 60.0, value_parser = finite_nonnegative)]
+    #[arg(long, env = "LITE_MCP_TOOL_TIMEOUT", default_value_t = 60.0, value_parser = finite_nonnegative, global = true)]
     tool_timeout: f64,
 
     /// Maximum encoded MCP tool result size in bytes.
-    #[arg(long, env = "LITE_MCP_RESULT_LIMIT", default_value_t = 4_194_304, value_parser = positive_usize)]
+    #[arg(long, env = "LITE_MCP_RESULT_LIMIT", default_value_t = 4_194_304, value_parser = positive_usize, global = true)]
     result_limit: usize,
 
     /// Maximum time for Python, dependency resolution, and strict tool loading.
-    #[arg(long, env = "LITE_MCP_STARTUP_TIMEOUT", default_value_t = 600)]
+    #[arg(
+        long,
+        env = "LITE_MCP_STARTUP_TIMEOUT",
+        default_value_t = 600,
+        global = true
+    )]
     startup_timeout: u64,
+}
+
+#[derive(Debug, Subcommand)]
+enum CliCommand {
+    /// Run the dashboard and MCP server (the default when omitted).
+    Serve,
+    /// Validate migrations, dependencies, tools, and dashboard code without starting a server.
+    Check {
+        /// Output format for the validation report.
+        #[arg(long, value_enum, default_value_t = CheckFormat::Human)]
+        format: CheckFormat,
+    },
+    /// Invoke one startup-loaded tool locally without starting a server.
+    Invoke {
+        /// Startup catalog tool name.
+        tool: String,
+        /// JSON object containing tool arguments.
+        #[arg(long, default_value = "{}")]
+        json: String,
+    },
+    /// Create one migration, tool, or dashboard widget without overwriting files.
+    Scaffold {
+        #[command(subcommand)]
+        command: ScaffoldCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ScaffoldCommand {
+    /// Create the next numbered SQL migration.
+    Migration { description: String },
+    /// Create a PEP 723 FastMCP tool module.
+    Tool { name: String },
+    /// Create a Streamlit dashboard widget module.
+    Widget { name: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CheckFormat {
+    Human,
+    Json,
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     let console = ConsoleStyle::detect(cli.no_color);
+    let machine_errors = matches!(
+        cli.command,
+        Some(CliCommand::Check {
+            format: CheckFormat::Json
+        }) | Some(CliCommand::Invoke { .. })
+    );
     initialize_logging(console);
-    if let Err(error) = run(cli, console).await {
-        console.print(ConsoleCategory::Boot, format_launcher_error(&error));
-        std::process::exit(1);
+    match run(cli, console).await {
+        Ok(0) => {}
+        Ok(exit_code) => std::process::exit(exit_code),
+        Err(error) => {
+            let message = format_launcher_error(&error);
+            if machine_errors {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "version": 1,
+                        "ok": false,
+                        "error": { "message": message }
+                    })
+                );
+            } else {
+                console.print(ConsoleCategory::Boot, message);
+            }
+            std::process::exit(1);
+        }
     }
 }
 
-async fn run(cli: Cli, console: ConsoleStyle) -> Result<()> {
+async fn run(cli: Cli, console: ConsoleStyle) -> Result<i32> {
+    match cli.command.as_ref() {
+        None | Some(CliCommand::Serve) => run_server(cli, console).await.map(|()| 0),
+        Some(CliCommand::Check { format }) => run_check(&cli, *format).await,
+        Some(CliCommand::Invoke { tool, json }) => run_invoke(&cli, tool, json).await,
+        Some(CliCommand::Scaffold { command }) => run_scaffold(&cli, command),
+    }
+}
+
+async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     let executable_root = runtime::executable_root()?;
     let logs_dir = runtime::prepare_logs_dir(&executable_root, cli.logs_dir.as_deref())?;
     console.print(
@@ -606,6 +706,347 @@ async fn run(cli: Cli, console: ConsoleStyle) -> Result<()> {
 
     console.print(ConsoleCategory::Shutdown, "server stopped");
     Ok(())
+}
+
+struct DevelopmentRuntime {
+    paths: runtime::AppPaths,
+    migrations: db::MigrationValidation,
+    catalog: tools::ToolCatalog,
+    prepared: runtime::PreparedRuntime,
+    uv: PathBuf,
+    uv_version: String,
+    workspace: PathBuf,
+    runtime_dir: PathBuf,
+}
+
+async fn prepare_development_runtime(
+    cli: &Cli,
+    require_workspace: bool,
+) -> Result<DevelopmentRuntime> {
+    let executable_root = runtime::executable_root()?;
+    let paths = resolve_cli_paths(cli, &executable_root)?;
+    let migrations =
+        db::validate_migrations(&paths.database, &paths.migrations).with_context(|| {
+            format!(
+                "failed to validate migrations in {}",
+                paths.migrations.display()
+            )
+        })?;
+    let tools_dir = paths
+        .tools
+        .canonicalize()
+        .with_context(|| format!("could not resolve tools path {}", paths.tools.display()))?;
+    let dashboard_dir = paths.dashboard.canonicalize().with_context(|| {
+        format!(
+            "could not resolve dashboard path {}",
+            paths.dashboard.display()
+        )
+    })?;
+    let workspace = if paths.workspace.is_dir() {
+        paths.workspace.canonicalize().with_context(|| {
+            format!(
+                "could not resolve workspace path {}",
+                paths.workspace.display()
+            )
+        })?
+    } else if require_workspace {
+        bail!(
+            "workspace directory {} does not exist; create it before invoking tools",
+            paths.workspace.display()
+        );
+    } else {
+        paths.workspace.clone()
+    };
+    fs::create_dir_all(&paths.runtime).with_context(|| {
+        format!(
+            "could not create managed runtime directory {}",
+            paths.runtime.display()
+        )
+    })?;
+    let runtime_dir = paths
+        .runtime
+        .canonicalize()
+        .with_context(|| format!("could not resolve runtime path {}", paths.runtime.display()))?;
+    let catalog = tools::discover(&tools_dir)?;
+    let dashboard_manifest =
+        tools::inspect_dashboard_manifest(&dashboard_dir.join("pyproject.toml"))?;
+    let prepared = runtime::prepare_runtime(&runtime_dir, &catalog, &dashboard_manifest)?;
+    let uv = runtime::locate_uv(cli.uv_path.as_deref(), &executable_root)?;
+    let uv_version = validate_uv_version(&uv).await?;
+    Ok(DevelopmentRuntime {
+        paths,
+        migrations,
+        catalog,
+        prepared,
+        uv,
+        uv_version,
+        workspace,
+        runtime_dir,
+    })
+}
+
+async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
+    let development = prepare_development_runtime(cli, false).await?;
+    let output = run_cli_python(cli, &development, "check", None, None).await?;
+    if !output.status.success() {
+        bail!(
+            "Python preflight failed ({}): {}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout).trim(),
+            format_child_stderr(&output.stderr)
+        );
+    }
+    let python: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .context("Python preflight did not return valid JSON")?;
+    forward_child_stderr(&output.stderr)?;
+    let report = serde_json::json!({
+        "version": 1,
+        "ok": true,
+        "liteMcpVersion": env!("CARGO_PKG_VERSION"),
+        "uvVersion": development.uv_version,
+        "pythonVersion": python.get("pythonVersion"),
+        "paths": {
+            "database": development.paths.database,
+            "migrations": development.paths.migrations,
+            "tools": development.paths.tools,
+            "dashboard": development.paths.dashboard,
+            "workspace": development.paths.workspace,
+            "runtime": development.paths.runtime,
+        },
+        "migrations": {
+            "total": development.migrations.total,
+            "currentVersion": format!("{:04}", development.migrations.current_version),
+            "pending": development.migrations.pending,
+            "databaseMode": if development.migrations.database_exists {
+                "filesystem-snapshot"
+            } else {
+                "in-memory"
+            },
+        },
+        "tools": python.get("tools").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "widgets": python.get("widgets").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "dependencies": development.prepared.dependencies,
+        "startupOnly": true,
+        "listenerBound": false,
+        "databaseMutated": false,
+    });
+    match format {
+        CheckFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&report).context("could not encode check report")?
+        ),
+        CheckFormat::Human => {
+            println!("lite-mcp check passed");
+            println!(
+                "  migrations  {} through {:04} ({} pending; validated on {})",
+                development.migrations.total,
+                development.migrations.current_version,
+                development.migrations.pending,
+                if development.migrations.database_exists {
+                    "a read-only snapshot"
+                } else {
+                    "an empty in-memory database"
+                }
+            );
+            println!("  tools       {}", development.catalog.manifest.tools.len());
+            println!(
+                "  widgets     {}",
+                python
+                    .get("widgets")
+                    .and_then(serde_json::Value::as_array)
+                    .map_or(0, Vec::len)
+            );
+            println!(
+                "  runtime     Python {} / uv {}",
+                python["pythonVersion"].as_str().unwrap_or("unknown"),
+                development.uv_version
+            );
+            println!("  network     no listener bound");
+            println!("  database    configured data.db was not changed");
+        }
+    }
+    Ok(0)
+}
+
+async fn run_invoke(cli: &Cli, tool: &str, arguments: &str) -> Result<i32> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(arguments).context("--json must contain valid JSON")?;
+    if !parsed.is_object() {
+        bail!("--json must contain a JSON object");
+    }
+    let encoded = serde_json::to_vec(&parsed).context("could not encode tool arguments")?;
+    let development = prepare_development_runtime(cli, true).await?;
+    let output = run_cli_python(cli, &development, "invoke", Some(tool), Some(&encoded)).await?;
+    let stdout = String::from_utf8(output.stdout).context("tool runner output was not UTF-8")?;
+    serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .context("tool runner did not return valid JSON")?;
+    forward_child_stderr(&output.stderr)?;
+    println!("{}", stdout.trim());
+    match output.status.code() {
+        Some(code @ 0..=2) => Ok(code),
+        _ => bail!(
+            "tool runner stopped unexpectedly ({}){}",
+            output.status,
+            format_child_stderr(&output.stderr)
+        ),
+    }
+}
+
+fn run_scaffold(cli: &Cli, command: &ScaffoldCommand) -> Result<i32> {
+    let executable_root = runtime::executable_root()?;
+    let paths = resolve_cli_paths(cli, &executable_root)?;
+    let (kind, name, root) = match command {
+        ScaffoldCommand::Migration { description } => (
+            ScaffoldKind::Migration,
+            description.as_str(),
+            paths.migrations,
+        ),
+        ScaffoldCommand::Tool { name } => (ScaffoldKind::Tool, name.as_str(), paths.tools),
+        ScaffoldCommand::Widget { name } => (
+            ScaffoldKind::Widget,
+            name.as_str(),
+            paths.dashboard.join("widgets"),
+        ),
+    };
+    let destination = development::scaffold(kind, name, &root)?;
+    println!("{}", destination.display());
+    Ok(0)
+}
+
+fn resolve_cli_paths(cli: &Cli, executable_root: &Path) -> Result<runtime::AppPaths> {
+    runtime::resolve_paths(
+        executable_root,
+        cli.database.clone(),
+        cli.migrations_dir.clone(),
+        cli.tools_dir.clone(),
+        cli.dashboard_dir.clone(),
+        cli.workspace_dir.clone(),
+        cli.runtime_dir.clone(),
+    )
+}
+
+async fn run_cli_python(
+    cli: &Cli,
+    development: &DevelopmentRuntime,
+    mode: &str,
+    tool: Option<&str>,
+    stdin: Option<&[u8]>,
+) -> Result<std::process::Output> {
+    let mut command = Command::new(&development.uv);
+    command.arg("--no-config");
+    if cli.offline {
+        command.arg("--offline");
+    }
+    command
+        .arg("run")
+        .arg("--project")
+        .arg(&development.prepared.project)
+        .arg("--python")
+        .arg("3.14")
+        .arg("python")
+        .arg(&development.prepared.cli_runner)
+        .arg(mode)
+        .arg("--manifest")
+        .arg(&development.prepared.manifest)
+        .arg("--dashboard")
+        .arg(&development.paths.dashboard)
+        .arg("--workspace")
+        .arg(&development.workspace)
+        .arg("--timeout")
+        .arg(cli.tool_timeout.to_string())
+        .arg("--result-limit")
+        .arg(cli.result_limit.to_string())
+        .current_dir(if development.workspace.is_dir() {
+            &development.workspace
+        } else {
+            &development.runtime_dir
+        })
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env("UV_MANAGED_PYTHON", "1")
+        .env("UV_CACHE_DIR", development.runtime_dir.join("cache"))
+        .env(
+            "UV_PYTHON_INSTALL_DIR",
+            development.runtime_dir.join("python"),
+        )
+        .env("LITE_MCP_DB", &development.paths.database)
+        .env("LITE_MCP_MIGRATIONS_DIR", &development.paths.migrations)
+        .env("LITE_MCP_TOOLS", &development.paths.tools)
+        .env("LITE_MCP_DASHBOARD_DIR", &development.paths.dashboard)
+        .env("LITE_MCP_WORKSPACE", &development.workspace)
+        .env("LITE_MCP_RUNTIME", &development.runtime_dir)
+        .env("LITE_MCP_MANIFEST", &development.prepared.manifest)
+        .env(
+            "LITE_MCP_DEPENDENCIES_JSON",
+            serde_json::to_string(&development.prepared.dependencies)
+                .context("could not encode dependency summary")?,
+        )
+        .env("LITE_MCP_MAX_CONCURRENCY", "1")
+        .env(
+            "LITE_MCP_TOOL_TIMEOUT_SECONDS",
+            cli.tool_timeout.to_string(),
+        )
+        .env("LITE_MCP_RESULT_LIMIT_BYTES", cli.result_limit.to_string())
+        .env("LITE_MCP_VERSION", env!("CARGO_PKG_VERSION"));
+    if let Some(tool) = tool {
+        command.arg("--tool").arg(tool);
+    }
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("could not start UV at {}", development.uv.display()))?;
+    if let Some(input) = stdin {
+        let mut child_stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("could not open tool runner stdin"))?;
+        child_stdin
+            .write_all(input)
+            .await
+            .context("could not send JSON arguments to tool runner")?;
+        child_stdin
+            .shutdown()
+            .await
+            .context("could not close tool runner stdin")?;
+    }
+    time::timeout(
+        Duration::from_secs(cli.startup_timeout)
+            .saturating_add(Duration::from_secs_f64(cli.tool_timeout.max(0.0))),
+        child.wait_with_output(),
+    )
+    .await
+    .context("development command timed out")?
+    .context("could not wait for the development Python runner")
+}
+
+fn format_child_stderr(stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        String::new()
+    } else {
+        format!("\n{stderr}")
+    }
+}
+
+fn forward_child_stderr(stderr: &[u8]) -> Result<()> {
+    if stderr.is_empty() {
+        return Ok(());
+    }
+    let mut destination = std::io::stderr().lock();
+    destination
+        .write_all(stderr)
+        .context("could not forward development runner diagnostics")?;
+    destination
+        .flush()
+        .context("could not flush development runner diagnostics")
 }
 
 async fn forward_stdout(
@@ -1356,6 +1797,44 @@ mod tests {
 
         assert!(Cli::try_parse_from(["lite-mcp", "--log-retention-days", "0"]).is_err());
         assert!(Cli::try_parse_from(["lite-mcp", "--log-max-total-mib", "0"]).is_err());
+    }
+
+    #[test]
+    fn parses_development_subcommands_with_shared_flags_after_the_command() {
+        let check = Cli::try_parse_from([
+            "lite-mcp",
+            "check",
+            "--format",
+            "json",
+            "--tools-dir",
+            "custom-tools",
+        ])
+        .expect("parse check command");
+        assert!(matches!(
+            check.command,
+            Some(CliCommand::Check {
+                format: CheckFormat::Json
+            })
+        ));
+        assert_eq!(check.tools_dir, Some(PathBuf::from("custom-tools")));
+
+        let invoke = Cli::try_parse_from([
+            "lite-mcp",
+            "invoke",
+            "echo",
+            "--json",
+            r#"{"value":"ok"}"#,
+            "--tool-timeout",
+            "3",
+        ])
+        .expect("parse invoke command");
+        assert!(matches!(invoke.command, Some(CliCommand::Invoke { .. })));
+        assert_eq!(invoke.tool_timeout, 3.0);
+
+        let serve = Cli::try_parse_from(["lite-mcp", "serve", "--host", "127.0.0.1"])
+            .expect("parse explicit serve command");
+        assert!(matches!(serve.command, Some(CliCommand::Serve)));
+        assert_eq!(serve.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
     }
 
     #[test]
