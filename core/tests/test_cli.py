@@ -5,7 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -20,9 +20,12 @@ import lite_mcp_cli as cli
 
 TOOL_SOURCE = '''from fastmcp.tools import tool
 
+print("tool import noise")
+
 @tool
 def echo(value: str) -> str:
     """Return the supplied value."""
+    print("tool invocation noise")
     return value
 '''
 
@@ -63,7 +66,7 @@ class CliRunnerTests(unittest.TestCase):
         widgets.mkdir(parents=True)
         (self.dashboard / "app.py").write_text("pass\n", encoding="utf-8")
         (widgets / "card.py").write_text(
-            'TITLE = "Card"\n\ndef render(context):\n    pass\n',
+            'print("widget import noise")\n\nTITLE = "Card"\n\ndef render(context):\n    pass\n',
             encoding="utf-8",
         )
         self.workspace = self.root / "workspace"
@@ -88,9 +91,11 @@ class CliRunnerTests(unittest.TestCase):
     def test_check_loads_real_tools_and_widgets_without_touching_configured_database(self):
         configured_database = self.root / "configured.db"
         output = io.StringIO()
+        noise = io.StringIO()
         with (
             patch.dict(os.environ, {"LITE_MCP_DB": str(configured_database)}),
             redirect_stdout(output),
+            redirect_stderr(noise),
         ):
             exit_code = cli._check(self.arguments("check"))
 
@@ -99,12 +104,17 @@ class CliRunnerTests(unittest.TestCase):
         self.assertEqual(report["loadedToolCount"], 1)
         self.assertEqual(report["widgets"][0]["name"], "card")
         self.assertFalse(configured_database.exists())
+        self.assertIn("tool import noise", noise.getvalue())
+        self.assertIn("widget import noise", noise.getvalue())
+        self.assertNotIn("noise", output.getvalue())
 
     def test_invoke_returns_the_actual_fastmcp_result_encoding(self):
         output = io.StringIO()
+        noise = io.StringIO()
         with (
             patch("sys.stdin", io.StringIO('{"value":"hello"}')),
             redirect_stdout(output),
+            redirect_stderr(noise),
         ):
             exit_code = cli._invoke(self.arguments("invoke", tool="echo"))
 
@@ -113,6 +123,9 @@ class CliRunnerTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["tool"], "echo")
         self.assertIn("hello", json.dumps(report["result"]))
+        self.assertIn("tool import noise", noise.getvalue())
+        self.assertIn("tool invocation noise", noise.getvalue())
+        self.assertNotIn("noise", output.getvalue())
 
 
 if __name__ == "__main__":

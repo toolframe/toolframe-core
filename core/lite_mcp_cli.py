@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
@@ -55,18 +56,19 @@ def _check(arguments: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="lite-mcp-check-") as temporary:
         database = Path(temporary) / "data.db"
         os.environ["LITE_MCP_DB"] = os.fspath(database)
-        tools, details, _ = load_tools(arguments.manifest)
+        with redirect_stdout(sys.stderr):
+            tools, details, _ = load_tools(arguments.manifest)
 
-        import lite_mcp_dashboard as dashboard_sdk
+            import lite_mcp_dashboard as dashboard_sdk
 
-        dashboard_sdk._configure(
-            database_path=database,
-            dashboard_dir=arguments.dashboard,
-            workspace=arguments.workspace,
-            logger=logging.getLogger("lite_mcp.check"),
-            runtime={"startupOnly": True, "preflight": True},
-        )
-        widgets = dashboard_sdk.preflight_dashboard(arguments.dashboard)
+            dashboard_sdk._configure(
+                database_path=database,
+                dashboard_dir=arguments.dashboard,
+                workspace=arguments.workspace,
+                logger=logging.getLogger("lite_mcp.check"),
+                runtime={"startupOnly": True, "preflight": True},
+            )
+            widgets = dashboard_sdk.preflight_dashboard(arguments.dashboard)
         _emit(
             {
                 "pythonVersion": sys.version.split()[0],
@@ -92,18 +94,19 @@ def _invoke(arguments: argparse.Namespace) -> int:
     payload = json.load(sys.stdin)
     if not isinstance(payload, dict):
         raise ValueError("tool arguments must be a JSON object")
-    tools, _, _ = load_tools(arguments.manifest)
+    with redirect_stdout(sys.stderr):
+        tools, _, _ = load_tools(arguments.manifest)
 
-    async def invoke() -> Any:
-        mcp = FastMCP("lite-mcp-local-invoke", strict_input_validation=True)
-        for tool_object in tools:
-            mcp.add_tool(tool_object)
-        mcp.add_middleware(
-            RuntimeGuardMiddleware(1, arguments.timeout, arguments.result_limit)
-        )
-        return await mcp.call_tool(arguments.tool, payload)
+        async def invoke() -> Any:
+            mcp = FastMCP("lite-mcp-local-invoke", strict_input_validation=True)
+            for tool_object in tools:
+                mcp.add_tool(tool_object)
+            mcp.add_middleware(
+                RuntimeGuardMiddleware(1, arguments.timeout, arguments.result_limit)
+            )
+            return await mcp.call_tool(arguments.tool, payload)
 
-    result = anyio.run(invoke)
+        result = anyio.run(invoke)
     _emit(
         {
             "ok": not result.is_error,

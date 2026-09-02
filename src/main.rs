@@ -798,6 +798,7 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
     }
     let python: serde_json::Value = serde_json::from_slice(&output.stdout)
         .context("Python preflight did not return valid JSON")?;
+    forward_child_stderr(&output.stderr)?;
     let report = serde_json::json!({
         "version": 1,
         "ok": true,
@@ -817,7 +818,7 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
             "currentVersion": format!("{:04}", development.migrations.current_version),
             "pending": development.migrations.pending,
             "databaseMode": if development.migrations.database_exists {
-                "read-only-snapshot"
+                "filesystem-snapshot"
             } else {
                 "in-memory"
             },
@@ -879,6 +880,7 @@ async fn run_invoke(cli: &Cli, tool: &str, arguments: &str) -> Result<i32> {
     let stdout = String::from_utf8(output.stdout).context("tool runner output was not UTF-8")?;
     serde_json::from_str::<serde_json::Value>(stdout.trim())
         .context("tool runner did not return valid JSON")?;
+    forward_child_stderr(&output.stderr)?;
     println!("{}", stdout.trim());
     match output.status.code() {
         Some(code @ 0..=2) => Ok(code),
@@ -1032,6 +1034,19 @@ fn format_child_stderr(stderr: &[u8]) -> String {
     } else {
         format!("\n{stderr}")
     }
+}
+
+fn forward_child_stderr(stderr: &[u8]) -> Result<()> {
+    if stderr.is_empty() {
+        return Ok(());
+    }
+    let mut destination = std::io::stderr().lock();
+    destination
+        .write_all(stderr)
+        .context("could not forward development runner diagnostics")?;
+    destination
+        .flush()
+        .context("could not flush development runner diagnostics")
 }
 
 async fn forward_stdout(

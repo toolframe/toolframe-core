@@ -115,22 +115,25 @@ dashboard dependencies, or widgets:
 ./lite-mcp check --format json
 ```
 
-`check` exercises the production migration engine against an in-memory SQLite
-database, resolves the real shared UV project, strictly imports every startup
+`check` exercises the production migration engine against an isolated SQLite
+snapshot, resolves the real shared UV project, strictly imports every startup
 tool, materializes its FastMCP schema, compiles `dashboard/app.py`, and imports
 and validates every public widget. The JSON form writes a versioned object to
 stdout and emits JSON on failure, making it suitable for coding-agent gates.
 
-Preflight does not bind a port, mutate the configured `data.db`, create logs,
-or scaffold missing source directories. If the database exists, migration
-history and pending migrations are exercised against an in-memory backup
-opened from a read-only connection; a missing database uses a new in-memory
-database. Tool imports receive a separate temporary `LITE_MCP_DB` path. Check
-may provision Python and dependencies and update managed content under
-`runtime/`; imported tools and widgets remain trusted Python code and can
-perform other import-time side effects. The report includes the exact paths,
-Python and UV versions, migration range and pending count, tools, widgets, and
-merged dependencies.
+Preflight does not bind a port, mutate the configured `data.db` or its SQLite
+sidecars, create logs, or scaffold missing source directories. If the database
+exists, `data.db` and any existing `-wal`/`-shm` files are copied before SQLite
+opens the temporary snapshot; hashes and the source file set are checked before
+and after the copy. Stop the server and other database writers first: a change
+during copying fails preflight and asks the caller to retry. A missing database
+uses a new in-memory database. Tool imports receive a separate temporary
+`LITE_MCP_DB` path. Check may provision Python and dependencies and update
+managed content under `runtime/`; imported tools and widgets remain trusted
+Python code and can perform other import-time side effects. Their stdout is
+forwarded to stderr so stdout remains one JSON document. The report includes
+the exact paths, Python and UV versions, migration range and pending count,
+tools, widgets, and merged dependencies.
 
 ### Local tool invocation
 
@@ -149,7 +152,9 @@ machine-readable JSON response when one is available. Invocation starts no
 HTTP server and performs no hot reload. It strictly loads all tools once, does
 not apply migrations automatically, and does not write the server audit logs.
 The invoked tool retains its normal trusted capabilities, so a tool such as
-`execute_sql` can intentionally mutate the configured database.
+`execute_sql` can intentionally mutate the configured database. Tool import
+and invocation prints are forwarded to stderr; stdout remains the single JSON
+result.
 
 ### Safe scaffolding
 
