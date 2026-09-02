@@ -57,7 +57,13 @@ for migration_source in "$REPOSITORY_ROOT"/migrations/*.sql; do
   fi
 done
 
-mkdir -p "$PACKAGE/tools" "$PACKAGE/dashboard" "$PACKAGE/migrations" "$PACKAGE/workspace" "$PACKAGE/runtime"
+mkdir -p \
+  "$PACKAGE/tools" \
+  "$PACKAGE/dashboard" \
+  "$PACKAGE/migrations" \
+  "$PACKAGE/workspace" \
+  "$PACKAGE/runtime" \
+  "$PACKAGE/logs"
 install -m 0755 "$REPOSITORY_ROOT/target/release/lite-mcp" "$PACKAGE/lite-mcp"
 install -m 0755 "$UV_SOURCE" "$PACKAGE/uv"
 install -m 0644 "$REPOSITORY_ROOT/tools/execute_sql.py" "$PACKAGE/tools/execute_sql.py"
