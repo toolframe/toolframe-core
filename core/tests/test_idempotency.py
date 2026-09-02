@@ -163,6 +163,12 @@ class IdempotencyTests(unittest.TestCase):
                 ).fetchone()[0],
                 0,
             )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT count(*) FROM _lite_mcp_idempotency"
+                ).fetchone()[0],
+                0,
+            )
 
     def test_result_limit_cannot_exceed_durable_schema_limit(self):
         with self.assertRaisesRegex(
@@ -173,29 +179,59 @@ class IdempotencyTests(unittest.TestCase):
             )
 
     def test_callback_cannot_access_private_receipt_table(self):
-        def mutation(transaction):
-            transaction.execute(
-                "INSERT INTO business_events(value) VALUES (?)", ("rolled-back",)
-            )
-            transaction.query_all("SELECT * FROM _lite_mcp_idempotency")
-            return {"unreachable": True}
+        statements = (
+            "SELECT * FROM _lite_mcp_idempotency",
+            "DELETE FROM _lite_mcp_idempotency",
+            "UPDATE _lite_mcp_idempotency SET result_bytes = result_bytes",
+            "DROP TABLE _lite_mcp_idempotency",
+        )
+        for index, statement in enumerate(statements):
+            with self.subTest(statement=statement):
 
-        with self.assertRaises(idempotency.IdempotencyError) as raised:
-            self.store.run_once("events.create", "private-access", {}, mutation)
+                def mutation(transaction, statement=statement):
+                    transaction.execute(
+                        "INSERT INTO business_events(value) VALUES (?)",
+                        ("rolled-back",),
+                    )
+                    transaction.execute(statement)
+                    return {"unreachable": True}
 
-        self.assertEqual(raised.exception.code, "idempotency_private_table")
-        self.assertFalse(raised.exception.retryable)
+                with self.assertRaises(idempotency.IdempotencyError) as raised:
+                    self.store.run_once(
+                        "events.create", f"private-access-{index}", {}, mutation
+                    )
+
+                self.assertEqual(raised.exception.code, "idempotency_private_table")
+                self.assertFalse(raised.exception.retryable)
         with closing(sqlite3.connect(self.database_path)) as connection:
             self.assertEqual(
                 connection.execute("SELECT count(*) FROM business_events").fetchone()[0],
                 0,
             )
-            self.assertEqual(
-                connection.execute(
-                    "SELECT count(*) FROM _lite_mcp_idempotency"
-                ).fetchone()[0],
-                0,
+
+    def test_business_column_named_like_private_table_is_allowed(self):
+        with closing(sqlite3.connect(self.database_path)) as connection:
+            connection.execute(
+                'CREATE TABLE unusual_business_data (id INTEGER PRIMARY KEY, "_lite_mcp_idempotency" TEXT NOT NULL)'
             )
+            connection.commit()
+
+        def mutation(transaction):
+            transaction.execute(
+                'INSERT INTO unusual_business_data("_lite_mcp_idempotency") VALUES (?)',
+                ("business-value",),
+            )
+            row = transaction.query_one(
+                'SELECT "_lite_mcp_idempotency" FROM unusual_business_data'
+            )
+            return {"value": row["_lite_mcp_idempotency"]}
+
+        result = self.store.run_once(
+            "events.create", "private-looking-column", {}, mutation
+        )
+
+        self.assertEqual(result.value, {"value": "business-value"})
+        self.assertFalse(result.replayed)
 
     def test_wal_configuration_retries_a_busy_fresh_connection(self):
         real_connection = sqlite3.connect(self.database_path, isolation_level=None)

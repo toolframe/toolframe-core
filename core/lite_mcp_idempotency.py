@@ -63,6 +63,49 @@ _REJECTED_CODES = frozenset(
         "idempotency_result_too_large",
     }
 )
+_TABLE_IN_FIRST_ARGUMENT = frozenset(
+    value
+    for name in (
+        "SQLITE_ANALYZE",
+        "SQLITE_CREATE_TABLE",
+        "SQLITE_CREATE_TEMP_TABLE",
+        "SQLITE_CREATE_VTABLE",
+        "SQLITE_DELETE",
+        "SQLITE_DROP_TABLE",
+        "SQLITE_DROP_TEMP_TABLE",
+        "SQLITE_DROP_VTABLE",
+        "SQLITE_INSERT",
+        "SQLITE_READ",
+        "SQLITE_UPDATE",
+    )
+    if isinstance((value := getattr(sqlite3, name, None)), int)
+)
+_TABLE_IN_SECOND_ARGUMENT = frozenset(
+    value
+    for name in (
+        "SQLITE_ALTER_TABLE",
+        "SQLITE_CREATE_INDEX",
+        "SQLITE_CREATE_TEMP_INDEX",
+        "SQLITE_CREATE_TEMP_TRIGGER",
+        "SQLITE_CREATE_TRIGGER",
+        "SQLITE_DROP_INDEX",
+        "SQLITE_DROP_TEMP_INDEX",
+        "SQLITE_DROP_TEMP_TRIGGER",
+        "SQLITE_DROP_TRIGGER",
+    )
+    if isinstance((value := getattr(sqlite3, name, None)), int)
+)
+_ALWAYS_FORBIDDEN_ACTIONS = frozenset(
+    value
+    for name in (
+        "SQLITE_ATTACH",
+        "SQLITE_DETACH",
+        "SQLITE_PRAGMA",
+        "SQLITE_SAVEPOINT",
+        "SQLITE_TRANSACTION",
+    )
+    if isinstance((value := getattr(sqlite3, name, None)), int)
+)
 
 
 class IdempotencyError(RuntimeError):
@@ -175,24 +218,24 @@ class IdempotencyTransaction:
         _database_name: str | None,
         _trigger_name: str | None,
     ) -> int:
-        if any(
-            isinstance(value, str) and value.casefold() == _TABLE.casefold()
-            for value in (argument_one, argument_two)
+        table_name = (
+            argument_one
+            if action in _TABLE_IN_FIRST_ARGUMENT
+            else argument_two
+            if action in _TABLE_IN_SECOND_ARGUMENT
+            else None
+        )
+        if (
+            isinstance(table_name, str)
+            and table_name.casefold() == _TABLE.casefold()
         ):
             self._denied_private_table = True
             return sqlite3.SQLITE_DENY
-        forbidden = {
-            value
-            for value in (
-                getattr(sqlite3, "SQLITE_TRANSACTION", None),
-                getattr(sqlite3, "SQLITE_SAVEPOINT", None),
-                getattr(sqlite3, "SQLITE_ATTACH", None),
-                getattr(sqlite3, "SQLITE_DETACH", None),
-                getattr(sqlite3, "SQLITE_PRAGMA", None),
-            )
-            if isinstance(value, int)
-        }
-        return sqlite3.SQLITE_DENY if action in forbidden else sqlite3.SQLITE_OK
+        return (
+            sqlite3.SQLITE_DENY
+            if action in _ALWAYS_FORBIDDEN_ACTIONS
+            else sqlite3.SQLITE_OK
+        )
 
     def _policy_error(self) -> IdempotencyError | None:
         if not self._denied_private_table:
