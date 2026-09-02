@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import lite_mcp_idempotency as idempotency
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastmcp import FastMCP
@@ -107,20 +108,21 @@ class RuntimeGuardMiddleware(Middleware):
         ) as error:  # Keep tool failures from terminating the server.
             if isinstance(error, anyio.get_cancelled_exc_class()):
                 raise
-            lite_error = _find_lite_mcp_error(error)
-            if lite_error is not None:
+            structured_error = _find_structured_tool_error(error)
+            if structured_error is not None:
                 LOGGER.warning(
-                    "tool reported LiteMcpError code=%s retryable=%s",
-                    lite_error.code,
-                    lite_error.retryable,
+                    "tool reported structured error code=%s retryable=%s",
+                    structured_error.code,
+                    structured_error.retryable,
                     exc_info=True,
                 )
                 return error_result(
-                    lite_error.code,
-                    lite_error.message,
-                    retryable=lite_error.retryable,
-                    details=lite_error.details,
-                    exception=lite_error,
+                    structured_error.code,
+                    structured_error.message,
+                    retryable=structured_error.retryable,
+                    details=dict(structured_error.details),
+                    exception=structured_error,
+                    trace_id=getattr(structured_error, "trace_id", None),
                 )
             LOGGER.exception("unexpected tool invocation failure")
             exception_name = type(error).__name__
@@ -503,7 +505,14 @@ class McpAuditMiddleware(Middleware):
             )
         started = time.monotonic()
         try:
-            result = await call_next(context)
+            with idempotency._audit_context(
+                operationId=common.get("operationId"),
+                protocolRequestId=common.get("protocolRequestId"),
+                tool=common.get("tool"),
+                sessionId=common.get("sessionId"),
+                client=common.get("client"),
+            ):
+                result = await call_next(context)
         except BaseException as error:
             cancelled = isinstance(error, anyio.get_cancelled_exc_class())
             timed_out = isinstance(error, TimeoutError)
@@ -662,8 +671,9 @@ def error_result(
     retryable: bool,
     details: dict[str, Any] | None = None,
     exception: BaseException | None = None,
+    trace_id: str | None = None,
 ) -> ToolResult:
-    trace_id = uuid.uuid4().hex
+    trace_id = trace_id or uuid.uuid4().hex
     error_details = dict(details or {})
     if exception is not None:
         error_details.setdefault("stack", _sanitized_stack(exception))
@@ -848,6 +858,7 @@ def _build_application(
     if not ready_token:
         raise RuntimeError("LITE_MCP_READY_TOKEN is required")
 
+    idempotency._configure(database_path, audit_sink=audit_sink)
     tools, tool_details, tool_dependencies = load_tools(manifest_path)
     dependency_summary = _json_string_list("LITE_MCP_DEPENDENCIES_JSON", required=False)
     if not dependency_summary:
@@ -1742,11 +1753,13 @@ def _sanitized_stack(error: BaseException) -> list[str]:
     ]
 
 
-def _find_lite_mcp_error(error: BaseException) -> LiteMcpError | None:
+def _find_structured_tool_error(
+    error: BaseException,
+) -> LiteMcpError | idempotency.IdempotencyError | None:
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
-        if isinstance(current, LiteMcpError):
+        if isinstance(current, (LiteMcpError, idempotency.IdempotencyError)):
             return current
         seen.add(id(current))
         current = current.__cause__ or current.__context__

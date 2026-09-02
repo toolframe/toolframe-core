@@ -8,7 +8,7 @@ HTTP listener.
 
 1. Never edit, rename, or delete a migration that has run against a database.
 2. Copy the next four-digit sequence into a new direct child such as
-   `0001_add_status.sql`.
+   `0002_add_status.sql`.
 3. Put schema or data SQL in that file. The launcher supplies one transaction,
    so do not add transaction statements or connection-level configuration.
 4. Update the dashboard widget or MCP tool that uses the changed schema in the
@@ -18,7 +18,7 @@ HTTP listener.
 Example:
 
 ```sql
--- 0001_add_status.sql
+-- 0002_add_status.sql
 ALTER TABLE dashboard_example_entries
 ADD COLUMN status TEXT NOT NULL DEFAULT 'open';
 
@@ -45,3 +45,16 @@ migration.
 
 `tools/execute_sql.py` is useful for ad hoc inspection and repair, but it is not
 schema history. Durable schema changes belong here.
+
+## Built-in idempotency migration
+
+`0001_idempotency.sql` creates `_lite_mcp_idempotency`, the private receipt
+table for `lite_mcp_idempotency.run_once`. The helper, not dashboard or tool
+SQL, owns rows in this table. Each row binds a `(namespace, business_key)` to
+the canonical input SHA-256, the original operation ID, and an integrity-
+checked successful JSON result no larger than 1 MiB. Failed mutations leave no
+row because the business writes and receipt share one transaction.
+
+Never edit this migration after it has been applied. Any future receipt schema
+change must use the next migration and preserve replay of existing successful
+results.

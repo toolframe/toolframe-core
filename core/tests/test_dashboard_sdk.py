@@ -218,6 +218,37 @@ class DashboardDatabaseTests(unittest.TestCase):
             pass
         self.assertEqual(raised.exception.code, "nested_transaction")
 
+    def test_run_once_uses_durable_helper_and_rejects_transaction_nesting(self):
+        migration = (
+            REPOSITORY_ROOT / "migrations" / "0001_idempotency.sql"
+        ).read_text(encoding="utf-8")
+        with sqlite3.connect(self.database_path) as connection:
+            connection.executescript(migration)
+            connection.execute("CREATE TABLE idempotent_rows (value TEXT)")
+
+        calls = 0
+
+        def mutation(transaction):
+            nonlocal calls
+            calls += 1
+            transaction.execute(
+                "INSERT INTO idempotent_rows(value) VALUES (?)", ("once",)
+            )
+            return {"created": True}
+
+        first = self.database.run_once("dashboard.test", "key", {}, mutation)
+        replay = self.database.run_once("dashboard.test", "key", {}, mutation)
+
+        self.assertEqual(calls, 1)
+        self.assertFalse(first.replayed)
+        self.assertTrue(replay.replayed)
+        with (
+            self.database.transaction(),
+            self.assertRaises(dashboard.IdempotencyError) as raised,
+        ):
+            self.database.run_once("dashboard.test", "nested", {}, mutation)
+        self.assertEqual(raised.exception.code, "idempotency_nested")
+
     def test_constraint_and_busy_errors_are_typed_sanitized_and_logged_without_params(
         self,
     ):

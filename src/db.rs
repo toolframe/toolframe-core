@@ -1069,7 +1069,7 @@ mod tests {
     }
 
     #[test]
-    fn source_bootstrap_creates_the_default_dashboard_table() {
+    fn source_migrations_create_the_default_runtime_tables() {
         let directory = tempfile::tempdir().expect("create temp directory");
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
         let database = directory.path().join("data.db");
@@ -1084,5 +1084,13 @@ mod tests {
             )
             .expect("inspect default table");
         assert_eq!(exists, 1);
+        let idempotency_exists: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='_lite_mcp_idempotency'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect idempotency table");
+        assert_eq!(idempotency_exists, 1);
     }
 }

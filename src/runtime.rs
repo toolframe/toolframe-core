@@ -18,6 +18,7 @@ use crate::tools::{
 const CORE_SERVER: &str = include_str!("../core/server.py");
 const CORE_SUPPORT: &str = include_str!("../core/lite_mcp_runtime.py");
 const CORE_DASHBOARD: &str = include_str!("../core/lite_mcp_dashboard.py");
+const CORE_IDEMPOTENCY: &str = include_str!("../core/lite_mcp_idempotency.py");
 const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/lite_mcp_dashboard_runner.py");
 const CORE_LOGGING: &str = include_str!("../core/lite_mcp_logging.py");
 const INFO_PAGE: &str = include_str!("../static/index.html");
@@ -28,6 +29,7 @@ const DASHBOARD_COMPONENTS_INIT: &str = include_str!("../dashboard/components/__
 const DASHBOARD_WIDGETS_INIT: &str = include_str!("../dashboard/widgets/__init__.py");
 const DASHBOARD_EXAMPLE_CARD: &str = include_str!("../dashboard/widgets/example_card.py");
 const DEFAULT_BOOTSTRAP_MIGRATION: &str = include_str!("../migrations/0000_bootstrap.sql");
+const DEFAULT_IDEMPOTENCY_MIGRATION: &str = include_str!("../migrations/0001_idempotency.sql");
 const DEFAULT_MIGRATION_README: &str = include_str!("../migrations/README.md");
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -145,6 +147,7 @@ pub fn prepare_runtime(
             CORE_SERVER.as_bytes(),
             CORE_SUPPORT.as_bytes(),
             CORE_DASHBOARD.as_bytes(),
+            CORE_IDEMPOTENCY.as_bytes(),
             CORE_DASHBOARD_RUNNER.as_bytes(),
             CORE_LOGGING.as_bytes(),
             INFO_PAGE.as_bytes(),
@@ -162,12 +165,14 @@ pub fn prepare_runtime(
     let core_server = core_dir.join("server.py");
     let core_support = core_dir.join("lite_mcp_runtime.py");
     let dashboard_sdk = core_dir.join("lite_mcp_dashboard.py");
+    let idempotency = core_dir.join("lite_mcp_idempotency.py");
     let dashboard_runner = core_dir.join("lite_mcp_dashboard_runner.py");
     let core_logging = core_dir.join("lite_mcp_logging.py");
     let info_page = core_dir.join("info.html");
     write_managed(&core_server, CORE_SERVER)?;
     write_managed(&core_support, CORE_SUPPORT)?;
     write_managed(&dashboard_sdk, CORE_DASHBOARD)?;
+    write_managed(&idempotency, CORE_IDEMPOTENCY)?;
     write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
     write_managed(&core_logging, CORE_LOGGING)?;
     write_managed(&info_page, INFO_PAGE)?;
@@ -304,6 +309,7 @@ fn scaffold_migrations_if_missing(path: &Path) -> Result<bool> {
         "migrations",
         &[
             ("0000_bootstrap.sql", DEFAULT_BOOTSTRAP_MIGRATION),
+            ("0001_idempotency.sql", DEFAULT_IDEMPOTENCY_MIGRATION),
             ("README.md", DEFAULT_MIGRATION_README),
         ],
     )
@@ -641,6 +647,11 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&bootstrap).expect("read bootstrap"),
             DEFAULT_BOOTSTRAP_MIGRATION
+        );
+        assert_eq!(
+            fs::read_to_string(paths.migrations.join("0001_idempotency.sql"))
+                .expect("read idempotency migration"),
+            DEFAULT_IDEMPOTENCY_MIGRATION
         );
         assert_eq!(
             fs::read_to_string(paths.migrations.join("README.md"))

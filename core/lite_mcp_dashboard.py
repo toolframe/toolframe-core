@@ -21,7 +21,7 @@ import threading
 import time
 import traceback
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType, ModuleType, TracebackType
@@ -29,6 +29,13 @@ from typing import Any, Self
 from urllib.parse import quote
 
 import pandas as pd
+from lite_mcp_idempotency import (
+    IdempotencyError,
+    IdempotencyResult,
+    IdempotencyStore,
+    IdempotencyTransaction,
+)
+from lite_mcp_idempotency import _audit_context as _idempotency_audit_context
 
 __all__ = [
     "DashboardContext",
@@ -36,6 +43,9 @@ __all__ = [
     "DashboardDatabaseError",
     "DashboardWidget",
     "ExecuteResult",
+    "IdempotencyError",
+    "IdempotencyResult",
+    "IdempotencyTransaction",
     "discover_widgets",
     "get_context",
     "preflight_dashboard",
@@ -294,6 +304,9 @@ class DashboardDatabase:
         self.max_rows = _validate_hard_limit("max_rows", max_rows)
         self.max_bytes = _validate_hard_limit("max_bytes", max_bytes)
         self.audit_sink = audit_sink
+        self._idempotency = IdempotencyStore(
+            self.path, audit_sink=audit_sink, logger=self.logger
+        )
 
     def query(
         self,
@@ -397,6 +410,34 @@ class DashboardDatabase:
         """Return an atomic, non-nestable transaction context manager."""
 
         return _DashboardTransaction(self)
+
+    def run_once(
+        self,
+        namespace: str,
+        key: str,
+        input_value: Any,
+        mutation: Callable[[IdempotencyTransaction], Any],
+    ) -> IdempotencyResult:
+        """Run one explicitly keyed business mutation and replay its result."""
+
+        if id(self) in _active_transactions.get():
+            raise IdempotencyError(
+                "idempotency_nested",
+                "An idempotent mutation cannot start inside a dashboard transaction.",
+                recovery_hint=(
+                    "Make run_once own the complete transaction and use its callback transaction."
+                ),
+            )
+        metadata = {
+            "dashboardSessionId": None,
+            "requestId": None,
+            "sourceIp": None,
+            "userAgent": None,
+            "widget": None,
+            **_dashboard_request_metadata.get(),
+        }
+        with _idempotency_audit_context(**metadata):
+            return self._idempotency.run_once(namespace, key, input_value, mutation)
 
     def _emit_audit(
         self,
