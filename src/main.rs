@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::VecDeque,
     io::{IsTerminal, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
@@ -1024,16 +1024,10 @@ fn announce(announcement: Announcement<'_>) {
 
     if address.ip().is_unspecified()
         && let Ok(interfaces) = local_ip_address::list_afinet_netifas()
+        && let Some(ip) = preferred_lan_address(interfaces.into_iter().map(|(_, ip)| ip))
     {
-        let lan_urls = interfaces
-            .into_iter()
-            .map(|(_, ip)| ip)
-            .filter(|ip| !ip.is_loopback())
-            .map(|ip| runtime::http_origin(ip, port))
-            .collect::<BTreeSet<_>>();
-        for url in lan_urls {
-            console.print(ConsoleCategory::Network, format!("LAN        {url}/"));
-        }
+        let url = runtime::http_origin(ip, port);
+        console.print(ConsoleCategory::Network, format!("LAN        {url}/"));
     }
 
     console.print(
@@ -1048,6 +1042,50 @@ fn announce(announcement: Announcement<'_>) {
         println!("{line}");
     }
     let _ = std::io::stdout().flush();
+}
+
+fn preferred_lan_address(addresses: impl IntoIterator<Item = IpAddr>) -> Option<IpAddr> {
+    addresses
+        .into_iter()
+        .filter_map(|address| lan_address_rank(address).map(|rank| (rank, address)))
+        .min_by_key(|(rank, address)| (*rank, *address))
+        .map(|(_, address)| address)
+}
+
+fn lan_address_rank(address: IpAddr) -> Option<u8> {
+    match address {
+        IpAddr::V4(address) => {
+            let octets = address.octets();
+            let benchmark_network = octets[0] == 198 && matches!(octets[1], 18 | 19);
+            if address.is_loopback()
+                || address.is_unspecified()
+                || address.is_link_local()
+                || address.is_multicast()
+                || address.is_broadcast()
+                || octets[0] == 0
+                || benchmark_network
+            {
+                None
+            } else if address.is_private() {
+                Some(0)
+            } else {
+                Some(1)
+            }
+        }
+        IpAddr::V6(address) => {
+            if address.is_loopback()
+                || address.is_unspecified()
+                || address.is_unicast_link_local()
+                || address.is_multicast()
+            {
+                None
+            } else if address.is_unique_local() {
+                Some(2)
+            } else {
+                Some(3)
+            }
+        }
+    }
 }
 
 fn machine_stdout_lines(local_url: &str) -> [String; 2] {
@@ -1261,6 +1299,39 @@ mod tests {
         assert!(positive_usize("0").is_err());
         assert_eq!(positive_u64("14").expect("positive retention"), 14);
         assert!(positive_u64("0").is_err());
+    }
+
+    #[test]
+    fn selects_one_private_ipv4_for_the_lan_announcement() {
+        let addresses = [
+            "198.18.0.1",
+            "fdfe:dcba:9876::1",
+            "fe80::1",
+            "fe80::1bfd:500f:b70d:922b",
+            "192.168.1.154",
+        ]
+        .map(|address| address.parse::<IpAddr>().expect("valid test address"));
+
+        assert_eq!(
+            preferred_lan_address(addresses),
+            Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 154)))
+        );
+    }
+
+    #[test]
+    fn ignores_unusable_lan_announcement_addresses() {
+        let addresses = [
+            "0.0.0.0",
+            "127.0.0.1",
+            "169.254.1.2",
+            "198.18.0.1",
+            "::",
+            "::1",
+            "fe80::1",
+        ]
+        .map(|address| address.parse::<IpAddr>().expect("valid test address"));
+
+        assert_eq!(preferred_lan_address(addresses), None);
     }
 
     #[test]
