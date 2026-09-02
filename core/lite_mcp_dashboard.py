@@ -29,6 +29,7 @@ from typing import Any, Self
 from urllib.parse import quote
 
 import pandas as pd
+from lite_mcp_artifacts import ArtifactStore
 
 __all__ = [
     "DashboardContext",
@@ -151,6 +152,7 @@ class DashboardContext:
     logger: logging.Logger
     widget_id: str
     runtime: Mapping[str, Any]
+    artifacts: ArtifactStore | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1299,6 +1301,7 @@ def _configure(
     logger: logging.Logger,
     runtime: Mapping[str, Any],
     audit_sink: Any | None = None,
+    artifacts: ArtifactStore | None = None,
 ) -> DashboardContext:
     """Configure the process-global SDK before preflight and HTTP readiness."""
 
@@ -1308,6 +1311,11 @@ def _configure(
         raise RuntimeError("dashboard directory must not be a symlink")
     dashboard_path = dashboard_candidate.resolve(strict=False)
     workspace_path = Path(workspace).expanduser().resolve(strict=False)
+    if artifacts is None:
+        # The launcher prepares this directory before configuration. Creating
+        # it here preserves the standalone SDK/test configuration contract.
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        artifacts = ArtifactStore(workspace_path, audit_sink=audit_sink, logger=logger)
     frozen_runtime = _freeze(runtime)
     if not isinstance(frozen_runtime, Mapping):
         raise TypeError("runtime must be a mapping")
@@ -1317,6 +1325,7 @@ def _configure(
         logger=logger,
         widget_id="",
         runtime=frozen_runtime,
+        artifacts=artifacts,
     )
     with _configuration_lock:
         _configuration = _SdkConfiguration(dashboard_path, context)

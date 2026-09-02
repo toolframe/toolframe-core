@@ -32,6 +32,11 @@ from fastmcp.server.middleware import Middleware
 from fastmcp.tools import Tool, ToolResult
 from fastmcp.tools.function_tool import ToolMeta
 from fastmcp.utilities.lifespan import combine_lifespans
+from lite_mcp_artifacts import (
+    DEFAULT_MAX_ARTIFACT_BYTES,
+    ArtifactError,
+    configure_artifact_store,
+)
 from lite_mcp_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
 from starlette.routing import Route
 
@@ -108,19 +113,22 @@ class RuntimeGuardMiddleware(Middleware):
             if isinstance(error, anyio.get_cancelled_exc_class()):
                 raise
             lite_error = _find_lite_mcp_error(error)
-            if lite_error is not None:
+            artifact_error = _find_artifact_error(error)
+            if lite_error is not None or artifact_error is not None:
+                structured_error = lite_error or artifact_error
+                assert structured_error is not None
                 LOGGER.warning(
-                    "tool reported LiteMcpError code=%s retryable=%s",
-                    lite_error.code,
-                    lite_error.retryable,
+                    "tool reported structured error code=%s retryable=%s",
+                    structured_error.code,
+                    structured_error.retryable,
                     exc_info=True,
                 )
                 return error_result(
-                    lite_error.code,
-                    lite_error.message,
-                    retryable=lite_error.retryable,
-                    details=lite_error.details,
-                    exception=lite_error,
+                    structured_error.code,
+                    structured_error.message,
+                    retryable=structured_error.retryable,
+                    details=dict(structured_error.details),
+                    exception=structured_error,
                 )
             LOGGER.exception("unexpected tool invocation failure")
             exception_name = type(error).__name__
@@ -848,6 +856,12 @@ def _build_application(
     if not ready_token:
         raise RuntimeError("LITE_MCP_READY_TOKEN is required")
 
+    artifact_store = configure_artifact_store(
+        workspace_path,
+        max_artifact_bytes=DEFAULT_MAX_ARTIFACT_BYTES,
+        audit_sink=audit_sink,
+        logger=logging.getLogger("lite_mcp.artifacts"),
+    )
     tools, tool_details, tool_dependencies = load_tools(manifest_path)
     dependency_summary = _json_string_list("LITE_MCP_DEPENDENCIES_JSON", required=False)
     if not dependency_summary:
@@ -880,6 +894,7 @@ def _build_application(
         logger=logging.getLogger("lite_mcp.dashboard"),
         runtime=runtime_summary,
         audit_sink=audit_sink,
+        artifacts=artifact_store,
     )
     # Import-safe preflight intentionally does not render the app. Rendering is
     # session-scoped and may have database side effects.
@@ -1747,6 +1762,17 @@ def _find_lite_mcp_error(error: BaseException) -> LiteMcpError | None:
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         if isinstance(current, LiteMcpError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _find_artifact_error(error: BaseException) -> ArtifactError | None:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ArtifactError):
             return current
         seen.add(id(current))
         current = current.__cause__ or current.__context__

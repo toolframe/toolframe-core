@@ -540,6 +540,15 @@ class WidgetDiscoveryTests(unittest.TestCase):
         path.write_text(source, encoding="utf-8")
         return path
 
+    def test_configuration_exposes_managed_artifact_store(self):
+        context = dashboard.get_context()
+
+        self.assertIsNotNone(context.artifacts)
+        self.assertEqual(
+            context.artifacts.root,
+            (self.root.parent / "workspace" / "artifacts").resolve(),
+        )
+
     def test_discovery_contract_order_and_ignore_rules(self):
         self.write_widget(
             "later.py",

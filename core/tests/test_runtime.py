@@ -70,6 +70,27 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("supplied value", details[0]["description"])
         self.assertEqual(dependencies, [])
 
+    def test_tools_can_import_configured_artifact_store_at_startup(self):
+        workspace = self.root / "workspace"
+        workspace.mkdir()
+        runtime.configure_artifact_store(workspace)
+        source = '''from fastmcp.tools import tool
+from lite_mcp_artifacts import get_artifact_store
+
+STORE = get_artifact_store()
+
+@tool
+def echo(value: str) -> str:
+    """Return the supplied value."""
+    assert STORE.root.name == "artifacts"
+    return value
+'''
+        manifest_path, _ = self.write_manifest(source)
+
+        tools, _, _ = runtime.load_tools(manifest_path)
+
+        self.assertEqual([tool.name for tool in tools], ["echo"])
+
     def test_changed_source_aborts_startup(self):
         manifest_path, tool_path = self.write_manifest()
         tool_path.write_text(TOOL_SOURCE + "\n# changed\n", encoding="utf-8")
@@ -157,6 +178,25 @@ def second() -> str:
         self.assertTrue(result.is_error)
         self.assertEqual(result.structured_content["error"]["code"], "upstream_busy")
         self.assertTrue(result.structured_content["error"]["retryable"])
+
+    def test_artifact_error_preserves_structured_contract(self):
+        from lite_mcp_artifacts import ArtifactExistsError
+
+        middleware = runtime.RuntimeGuardMiddleware(0, 60, 1024)
+
+        async def call_next(_):
+            raise ArtifactExistsError(
+                "An artifact already exists.", details={"path": "report.csv"}
+            )
+
+        result = anyio.run(middleware.on_call_tool, None, call_next)
+
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["error"]["code"], "artifact_exists")
+        self.assertFalse(result.structured_content["error"]["retryable"])
+        self.assertEqual(
+            result.structured_content["error"]["details"]["path"], "report.csv"
+        )
 
     def test_fastmcp_wrapped_lite_mcp_error_preserves_contract(self):
         from fastmcp import FastMCP

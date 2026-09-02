@@ -67,6 +67,7 @@ mkdir -p \
 install -m 0755 "$REPOSITORY_ROOT/target/release/lite-mcp" "$PACKAGE/lite-mcp"
 install -m 0755 "$UV_SOURCE" "$PACKAGE/uv"
 install -m 0644 "$REPOSITORY_ROOT/tools/execute_sql.py" "$PACKAGE/tools/execute_sql.py"
+install -m 0644 "$REPOSITORY_ROOT/tools/_artifact_example.py" "$PACKAGE/tools/_artifact_example.py"
 install -m 0644 "$REPOSITORY_ROOT/README.md" "$PACKAGE/README.md"
 
 # The dashboard is intentionally editable in the one-folder distribution. Copy
