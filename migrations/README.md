@@ -39,9 +39,18 @@ of silently changing an existing database.
 Migration SQL may contain multiple statements, but must not contain `BEGIN`,
 `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PRAGMA`, `ATTACH`, or `DETACH`.
 `CREATE TRIGGER` is also prohibited because a deferred trigger body could
-bypass migration ledger protection. The launcher owns transactions and SQLite
+bypass internal table protection. The launcher owns transactions and SQLite
 configuration. Back up `data.db` before a destructive schema or data
 migration.
 
 `tools/execute_sql.py` is useful for ad hoc inspection and repair, but it is not
 schema history. Durable schema changes belong here.
+
+## Runtime-owned internal schema
+
+The launcher creates and validates `_lite_mcp_migrations` and
+`_lite_mcp_idempotency` directly at every startup. They are not user
+migrations and do not consume migration numbers. User migration SQL cannot
+read or modify either table. Do not create, alter, drop, or repair them in a
+migration; an incompatible internal schema fails startup with a recovery
+diagnostic.

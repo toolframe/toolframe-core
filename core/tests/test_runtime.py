@@ -18,6 +18,7 @@ if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
 import lite_mcp_runtime as runtime
+from lite_mcp_idempotency import IdempotencyError
 
 TOOL_SOURCE = '''from fastmcp.tools import tool
 
@@ -157,6 +158,27 @@ def second() -> str:
         self.assertTrue(result.is_error)
         self.assertEqual(result.structured_content["error"]["code"], "upstream_busy")
         self.assertTrue(result.structured_content["error"]["retryable"])
+
+    def test_idempotency_error_preserves_structured_contract(self):
+        middleware = runtime.RuntimeGuardMiddleware(0, 60, 4096)
+        error = IdempotencyError(
+            "idempotency_key_mismatch",
+            "The key was reused with different input.",
+            recovery_hint="Choose a new key.",
+        )
+
+        async def call_next(_):
+            raise error
+
+        result = anyio.run(middleware.on_call_tool, None, call_next)
+
+        self.assertTrue(result.is_error)
+        self.assertEqual(
+            result.structured_content["error"]["code"],
+            "idempotency_key_mismatch",
+        )
+        self.assertFalse(result.structured_content["error"]["retryable"])
+        self.assertEqual(result.structured_content["error"]["traceId"], error.trace_id)
 
     def test_fastmcp_wrapped_lite_mcp_error_preserves_contract(self):
         from fastmcp import FastMCP

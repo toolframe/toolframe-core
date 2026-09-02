@@ -178,8 +178,10 @@ repairs, or replaces a user-owned directory.
 `migrations/` is the source of truth for the `data.db` schema and includes an
 agent-facing [authoring reference](migrations/README.md). The default
 `0000_bootstrap.sql` creates the table used by the example dashboard widget.
-The launcher applies migrations before it binds the HTTP listener or starts
-Python, so a migration failure fails the whole application.
+The launcher also creates and validates its private migration ledger and
+idempotency receipt table as runtime-owned internal schema. These startup
+steps happen before it binds the HTTP listener or starts Python, so a migration
+or incompatible internal schema fails the whole application.
 
 To change the schema, add the next direct migration file and update the widget
 or tool that uses it in the same code change:
@@ -209,14 +211,15 @@ original file and add the next migration instead.
 Migration SQL may contain multiple schema or data statements. It must not
 contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PRAGMA`,
 `ATTACH`, `DETACH`, or `CREATE TRIGGER`; the launcher owns the transaction,
-SQLite configuration, and migration ledger protection. Migrations run only at
+SQLite configuration, and internal table protection. Migrations run only at
 process startup, so restart `lite-mcp` after adding one. Back up `data.db`
 before destructive migrations.
 
 If the entire migrations directory is absent, the launcher creates the
 bootstrap and reference without overwriting anything. An existing empty or
 incomplete directory is user-owned and fails validation rather than being
-silently repaired.
+silently repaired. Runtime-owned internal tables do not consume user migration
+numbers and are created or validated for both new and existing databases.
 
 ## Dashboard
 
@@ -235,11 +238,12 @@ public widget is compiled, imported, and contract-checked at startup, even if
 the custom `app.py` does not render it. Use a private name such as `_draft.py`
 for an unfinished widget.
 
-The supported agent-facing API is the public `lite_mcp_dashboard` module. It
-provides `DashboardContext`, `DashboardDatabaseError`, `get_context()`, and the
-widget discovery/render helpers. `DashboardContext` exposes only the stable
-`db`, `workspace`, `logger`, `widget_id`, and read-only runtime summary; widget
-code should not depend on FastAPI, FastMCP, or Streamlit internals.
+The supported agent-facing APIs are the public `lite_mcp_dashboard` and
+`lite_mcp_idempotency` modules. They provide `DashboardContext`, database and
+idempotency errors/results, `get_context()`, `run_once()`, and the widget
+discovery/render helpers. `DashboardContext` exposes only the stable `db`,
+`workspace`, `logger`, `widget_id`, and read-only runtime summary; widget code
+should not depend on FastAPI, FastMCP, or Streamlit internals.
 
 Dashboard Python is trusted application code, not a security sandbox. A
 database helper makes correct, parameterized access easy, but it cannot stop a
@@ -323,6 +327,73 @@ automatic write retries are not supported. The helper configures WAL,
 foreign-key enforcement, and a bounded busy timeout for concurrent LAN
 sessions.
 
+### Explicit durable idempotency
+
+Use `context.db.run_once(namespace, key, input, mutation)` when a dashboard
+action may be repeated after a browser, MCP, or network retry. The caller owns
+the business key; the callback receives the only transaction in which its
+business writes may run:
+
+```python
+def create_expense(transaction):
+    cursor = transaction.execute(
+        "INSERT INTO expenses(category, amount) VALUES (?, ?)",
+        (category, amount),
+    )
+    return {"expense_id": cursor.lastrowid, "category": category, "amount": amount}
+
+outcome = context.db.run_once(
+    "expenses.create",
+    request_id,
+    {"category": category, "amount": amount},
+    create_expense,
+)
+expense = outcome.value
+```
+
+MCP tools use the same contract via
+`from lite_mcp_idempotency import run_once`; see the complete
+[`examples/idempotent_create_entry.py`](examples/idempotent_create_entry.py)
+reference. `run_once` returns `IdempotencyResult(value, replayed,
+operation_id, original_operation_id)`. Both the first caller and replays get
+the value decoded from the durable JSON bytes, so their value shape is the
+same.
+
+Namespaces are 1–128 bytes of lowercase ASCII letters, digits, `.`, `_`, `:`,
+or `-`; keys are caller-chosen, trimmed UTF-8 strings up to 512 bytes. Input is
+canonical JSON and its SHA-256 fingerprint is stored with the key. Reusing the
+same namespace/key with different input raises nonretryable
+`idempotency_key_mismatch`; it never runs the new callback. Input and result
+JSON are each capped at 1 MiB, must use string object keys and finite numbers,
+and cannot contain custom Python objects or binary values.
+
+The helper first checks for an existing result, then uses `BEGIN IMMEDIATE`
+and checks again before running a new callback. Concurrent first calls for the
+same key therefore produce one mutation and one replay. SQLite still has one
+writer, so unrelated new mutations may wait up to the five-second busy
+timeout. The helper does not retry arbitrary SQL.
+
+The business writes and successful result receipt commit in the same SQLite
+transaction. Callback exceptions, invalid/oversized results, and commit
+failures roll back both and leave the key unclaimed. A crash before commit
+does the same; a retry after a commit replays the stored result. Do not call
+`run_once` inside `context.db.transaction()` or nest it in another `run_once`;
+put the complete business mutation in its callback instead.
+
+The launcher owns `_lite_mcp_idempotency` and validates its exact schema at
+every startup. User migrations and `run_once` callback SQL cannot read, alter,
+or write that table; only the helper inserts receipts after the business
+callback succeeds. Configure result limits at or below the table's fixed
+1 MiB durable ceiling.
+
+`IdempotencyError` has `code`, `message`, `retryable`, `trace_id`, `details`,
+and a recovery hint. MCP middleware converts it to the normal structured tool
+error contract. Busy and transient storage failures are retryable; key/input
+mismatches, validation failures, result limits, constraints, and corrupt
+stored receipts are not. Audit records include start/completion, replay
+status, the idempotency transaction ID, and the current MCP operation or
+dashboard request correlation fields.
+
 Query results are limited to 10,000 rows and 10 MiB. A result over either limit
 raises `ResultTooLarge`; it is never silently truncated. There is no automatic
 query cache, so a successful write followed by rerun sees shared data. A
@@ -384,9 +455,11 @@ base64-encoded. There is no additional redaction, so SQL, parameters,
 payloads, results, and secrets may appear in these files. Treat `logs/` as
 sensitive and restrict access to trusted operators.
 
-Dashboard audit coverage is guaranteed for `context.db.execute()` and
-`context.db.transaction()`: mutation starts/completions, rejected mutations,
-transaction begin/commit/rollback, and transaction statements are recorded.
+Dashboard audit coverage is guaranteed for `context.db.execute()`,
+`context.db.transaction()`, and `context.db.run_once()`: mutation
+starts/completions, rejected mutations, idempotent creation/replay/failure,
+transaction begin/commit/rollback, and regular transaction statements are
+recorded.
 Standalone reads are not audited. A widget that opens `sqlite3` directly
 bypasses this audit contract. JSONL and SQLite cannot be committed atomically;
 a database commit can therefore be followed by a missing completion record if
@@ -492,6 +565,11 @@ Invocation failures do not stop the app. They produce MCP `isError: true`
 results with `{code, message, retryable, details, traceId}`. Unexpected
 exceptions include sanitized stack locations for the agent and a full
 traceback in server logs without locals or environment dumps.
+
+For business mutations, prefer the explicit `lite_mcp_idempotency.run_once`
+helper documented above. It protects a caller-chosen operation from MCP
+transport retries without applying an automatic retry policy to arbitrary
+tool SQL.
 
 ### SQL reference tool
 

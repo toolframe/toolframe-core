@@ -18,6 +18,7 @@ use crate::tools::{
 const CORE_SERVER: &str = include_str!("../core/server.py");
 const CORE_SUPPORT: &str = include_str!("../core/lite_mcp_runtime.py");
 const CORE_DASHBOARD: &str = include_str!("../core/lite_mcp_dashboard.py");
+const CORE_IDEMPOTENCY: &str = include_str!("../core/lite_mcp_idempotency.py");
 const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/lite_mcp_dashboard_runner.py");
 const CORE_LOGGING: &str = include_str!("../core/lite_mcp_logging.py");
 const CORE_CLI: &str = include_str!("../core/lite_mcp_cli.py");
@@ -147,6 +148,7 @@ pub fn prepare_runtime(
             CORE_SERVER.as_bytes(),
             CORE_SUPPORT.as_bytes(),
             CORE_DASHBOARD.as_bytes(),
+            CORE_IDEMPOTENCY.as_bytes(),
             CORE_DASHBOARD_RUNNER.as_bytes(),
             CORE_LOGGING.as_bytes(),
             CORE_CLI.as_bytes(),
@@ -165,6 +167,7 @@ pub fn prepare_runtime(
     let core_server = core_dir.join("server.py");
     let core_support = core_dir.join("lite_mcp_runtime.py");
     let dashboard_sdk = core_dir.join("lite_mcp_dashboard.py");
+    let idempotency = core_dir.join("lite_mcp_idempotency.py");
     let dashboard_runner = core_dir.join("lite_mcp_dashboard_runner.py");
     let core_logging = core_dir.join("lite_mcp_logging.py");
     let cli_runner = core_dir.join("lite_mcp_cli.py");
@@ -172,6 +175,7 @@ pub fn prepare_runtime(
     write_managed(&core_server, CORE_SERVER)?;
     write_managed(&core_support, CORE_SUPPORT)?;
     write_managed(&dashboard_sdk, CORE_DASHBOARD)?;
+    write_managed(&idempotency, CORE_IDEMPOTENCY)?;
     write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
     write_managed(&core_logging, CORE_LOGGING)?;
     write_managed(&cli_runner, CORE_CLI)?;
