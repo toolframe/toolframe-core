@@ -19,11 +19,13 @@ const CORE_SERVER: &str = include_str!("../core/server.py");
 const CORE_SUPPORT: &str = include_str!("../core/lite_mcp_runtime.py");
 const CORE_DASHBOARD: &str = include_str!("../core/lite_mcp_dashboard.py");
 const CORE_IDEMPOTENCY: &str = include_str!("../core/lite_mcp_idempotency.py");
+const CORE_ARTIFACTS: &str = include_str!("../core/lite_mcp_artifacts.py");
 const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/lite_mcp_dashboard_runner.py");
 const CORE_LOGGING: &str = include_str!("../core/lite_mcp_logging.py");
 const CORE_CLI: &str = include_str!("../core/lite_mcp_cli.py");
 const INFO_PAGE: &str = include_str!("../static/index.html");
 const DEFAULT_SQL_TOOL: &str = include_str!("../tools/execute_sql.py");
+const ARTIFACT_TOOL_EXAMPLE: &str = include_str!("../tools/_artifact_example.py");
 const DASHBOARD_APP: &str = include_str!("../dashboard/app.py");
 const DASHBOARD_PROJECT: &str = include_str!("../dashboard/pyproject.toml");
 const DASHBOARD_COMPONENTS_INIT: &str = include_str!("../dashboard/components/__init__.py");
@@ -127,6 +129,24 @@ pub fn prepare_directories(paths: &AppPaths) -> Result<PreparedDirectories> {
             .with_context(|| format!("could not write {}", destination.display()))?;
         file.sync_all()
             .with_context(|| format!("could not sync {}", destination.display()))?;
+
+        let example_destination = paths.tools.join("_artifact_example.py");
+        let mut example_file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&example_destination)
+            .with_context(|| {
+                format!(
+                    "could not scaffold the artifact tool example at {}",
+                    example_destination.display()
+                )
+            })?;
+        example_file
+            .write_all(ARTIFACT_TOOL_EXAMPLE.as_bytes())
+            .with_context(|| format!("could not write {}", example_destination.display()))?;
+        example_file
+            .sync_all()
+            .with_context(|| format!("could not sync {}", example_destination.display()))?;
     }
 
     let dashboard_scaffolded = scaffold_dashboard_if_missing(&paths.dashboard)?;
@@ -149,6 +169,7 @@ pub fn prepare_runtime(
             CORE_SUPPORT.as_bytes(),
             CORE_DASHBOARD.as_bytes(),
             CORE_IDEMPOTENCY.as_bytes(),
+            CORE_ARTIFACTS.as_bytes(),
             CORE_DASHBOARD_RUNNER.as_bytes(),
             CORE_LOGGING.as_bytes(),
             CORE_CLI.as_bytes(),
@@ -168,6 +189,7 @@ pub fn prepare_runtime(
     let core_support = core_dir.join("lite_mcp_runtime.py");
     let dashboard_sdk = core_dir.join("lite_mcp_dashboard.py");
     let idempotency = core_dir.join("lite_mcp_idempotency.py");
+    let artifacts_sdk = core_dir.join("lite_mcp_artifacts.py");
     let dashboard_runner = core_dir.join("lite_mcp_dashboard_runner.py");
     let core_logging = core_dir.join("lite_mcp_logging.py");
     let cli_runner = core_dir.join("lite_mcp_cli.py");
@@ -176,6 +198,7 @@ pub fn prepare_runtime(
     write_managed(&core_support, CORE_SUPPORT)?;
     write_managed(&dashboard_sdk, CORE_DASHBOARD)?;
     write_managed(&idempotency, CORE_IDEMPOTENCY)?;
+    write_managed(&artifacts_sdk, CORE_ARTIFACTS)?;
     write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
     write_managed(&core_logging, CORE_LOGGING)?;
     write_managed(&cli_runner, CORE_CLI)?;
@@ -525,7 +548,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scaffolds_sql_only_when_creating_a_new_tools_directory() {
+    fn materializes_both_tool_support_modules_in_the_managed_runtime() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let runtime = directory.path().join("runtime");
+        let catalog = ToolCatalog {
+            manifest: crate::tools::ToolManifest {
+                version: 1,
+                python_version: "3.14.0",
+                tools_dir: directory.path().join("tools"),
+                tools: Vec::new(),
+            },
+            dependencies: Vec::new(),
+        };
+        let dashboard = DashboardManifest {
+            requires_python: ">=3.14,<3.15".to_owned(),
+            dependencies: Vec::new(),
+        };
+
+        let prepared = prepare_runtime(&runtime, &catalog, &dashboard).expect("prepare runtime");
+        let core = prepared
+            .core_server
+            .parent()
+            .expect("managed core directory");
+
+        assert_eq!(
+            fs::read_to_string(core.join("lite_mcp_idempotency.py"))
+                .expect("read idempotency support"),
+            CORE_IDEMPOTENCY
+        );
+        assert_eq!(
+            fs::read_to_string(core.join("lite_mcp_artifacts.py")).expect("read artifact support"),
+            CORE_ARTIFACTS
+        );
+    }
+
+    #[test]
+    fn scaffolds_default_tools_only_when_creating_a_new_tools_directory() {
         let directory = tempfile::tempdir().expect("create temp directory");
         let paths = AppPaths {
             database: directory.path().join("data.db"),
@@ -541,8 +599,14 @@ mod tests {
         assert!(prepared.dashboard_scaffolded);
         assert!(prepared.migrations_scaffolded);
         let sql = paths.tools.join("execute_sql.py");
+        let artifact_example = paths.tools.join("_artifact_example.py");
         assert!(sql.is_file());
+        assert_eq!(
+            fs::read_to_string(&artifact_example).expect("read artifact example"),
+            ARTIFACT_TOOL_EXAMPLE
+        );
         fs::write(&sql, "# user-owned\n").expect("replace scaffold as user");
+        fs::remove_file(&artifact_example).expect("remove private example");
 
         let prepared = prepare_directories(&paths).expect("prepare existing directories");
         assert!(!prepared.tools_scaffolded);
@@ -551,6 +615,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(sql).expect("read user tool"),
             "# user-owned\n"
+        );
+        assert!(
+            !artifact_example.exists(),
+            "existing tools directory must not be repaired"
         );
     }
 

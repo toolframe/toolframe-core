@@ -33,6 +33,11 @@ from fastmcp.server.middleware import Middleware
 from fastmcp.tools import Tool, ToolResult
 from fastmcp.tools.function_tool import ToolMeta
 from fastmcp.utilities.lifespan import combine_lifespans
+from lite_mcp_artifacts import (
+    DEFAULT_MAX_ARTIFACT_BYTES,
+    ArtifactError,
+    configure_artifact_store,
+)
 from lite_mcp_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
 from starlette.routing import Route
 
@@ -859,6 +864,12 @@ def _build_application(
         raise RuntimeError("LITE_MCP_READY_TOKEN is required")
 
     idempotency._configure(database_path, audit_sink=audit_sink)
+    artifact_store = configure_artifact_store(
+        workspace_path,
+        max_artifact_bytes=DEFAULT_MAX_ARTIFACT_BYTES,
+        audit_sink=audit_sink,
+        logger=logging.getLogger("lite_mcp.artifacts"),
+    )
     tools, tool_details, tool_dependencies = load_tools(manifest_path)
     dependency_summary = _json_string_list("LITE_MCP_DEPENDENCIES_JSON", required=False)
     if not dependency_summary:
@@ -891,6 +902,7 @@ def _build_application(
         logger=logging.getLogger("lite_mcp.dashboard"),
         runtime=runtime_summary,
         audit_sink=audit_sink,
+        artifacts=artifact_store,
     )
     # Import-safe preflight intentionally does not render the app. Rendering is
     # session-scoped and may have database side effects.
@@ -1755,11 +1767,14 @@ def _sanitized_stack(error: BaseException) -> list[str]:
 
 def _find_structured_tool_error(
     error: BaseException,
-) -> LiteMcpError | idempotency.IdempotencyError | None:
+) -> LiteMcpError | idempotency.IdempotencyError | ArtifactError | None:
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
-        if isinstance(current, (LiteMcpError, idempotency.IdempotencyError)):
+        if isinstance(
+            current,
+            (LiteMcpError, idempotency.IdempotencyError, ArtifactError),
+        ):
             return current
         seen.add(id(current))
         current = current.__cause__ or current.__context__

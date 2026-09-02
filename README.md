@@ -43,8 +43,10 @@ lite-mcp/
 │   ├── 0000_bootstrap.sql
 │   └── README.md
 ├── tools/
-│   └── execute_sql.py
+│   ├── execute_sql.py
+│   └── _artifact_example.py    # ignored, copyable tool reference
 ├── workspace/
+│   └── artifacts/              # managed local exchange layer
 ├── logs/                       # runtime audit and MCP JSONL files
 └── runtime/
 ```
@@ -238,12 +240,13 @@ public widget is compiled, imported, and contract-checked at startup, even if
 the custom `app.py` does not render it. Use a private name such as `_draft.py`
 for an unfinished widget.
 
-The supported agent-facing APIs are the public `lite_mcp_dashboard` and
-`lite_mcp_idempotency` modules. They provide `DashboardContext`, database and
-idempotency errors/results, `get_context()`, `run_once()`, and the widget
+The supported agent-facing APIs are the public `lite_mcp_dashboard`,
+`lite_mcp_idempotency`, and `lite_mcp_artifacts` modules. They provide
+`DashboardContext`, database, idempotency, and artifact errors/results,
+`get_context()`, `run_once()`, `get_artifact_store()`, and the widget
 discovery/render helpers. `DashboardContext` exposes only the stable `db`,
-`workspace`, `logger`, `widget_id`, and read-only runtime summary; widget code
-should not depend on FastAPI, FastMCP, or Streamlit internals.
+`artifacts`, `workspace`, `logger`, `widget_id`, and read-only runtime summary;
+widget code should not depend on FastAPI, FastMCP, or Streamlit internals.
 
 Dashboard Python is trusted application code, not a security sandbox. A
 database helper makes correct, parameterized access easy, but it cannot stop a
@@ -419,6 +422,116 @@ displays caught widget errors. Its updates use an `id` plus version or
 `updated_at` check; a stale update reports a conflict and asks the user to
 refresh instead of silently overwriting another LAN session.
 
+## Managed artifacts
+
+`workspace/artifacts/` is the supported local exchange layer for dashboard
+uploads/downloads and agent-authored MCP tools. It is an in-process Python API,
+not a browser file server: there is deliberately no `/api/artifacts` route and
+no unauthenticated URL that serves arbitrary workspace files.
+
+Dashboard widgets use the store supplied in their context. This upload and
+download pattern keeps browser bytes inside Streamlit while the managed store
+owns the local path and integrity metadata:
+
+```python
+import streamlit as st
+
+from lite_mcp_dashboard import get_context
+
+context = get_context()
+uploaded = st.file_uploader("Upload a CSV", type=["csv"])
+if uploaded is not None and st.button("Save upload"):
+    artifact = context.artifacts.write(
+        f"uploads/{uploaded.name}",
+        uploaded,
+        mime_type=uploaded.type or "text/csv",
+    )
+    st.success(f"Saved {artifact.path}")
+
+report = context.artifacts.get("reports/latest.csv")
+st.download_button(
+    "Download report",
+    data=context.artifacts.read(report.path),
+    file_name="latest.csv",
+    mime=report.mime_type,
+)
+```
+
+Paths are normalized POSIX-style paths relative to `workspace/artifacts/`.
+Empty, absolute, backslash, dot, parent-traversal, overlong, reserved, and
+symlinked paths are rejected. Artifact writes are create-once: an existing
+managed path or unmanaged filesystem entry raises `ArtifactExistsError` and is
+never replaced. Choose a unique path (for example a timestamp or domain ID)
+instead of retrying the same collision.
+
+`write(path, bytes_or_binary_stream, mime_type=...)` streams up to 25 MiB into
+a same-directory temporary, syncs it, and publishes the content without
+replacement so readers never observe partial bytes. Metadata is then published
+through a separate no-replace link. Both directories are synced; an open or
+sync failure is a typed, audited storage failure rather than a best-effort
+success. `write_text(...)` is the UTF-8-oriented convenience method.
+
+`read(path)` and `read_by_id(id)` verify byte size and SHA-256 before returning
+bytes. `get`, `get_by_id`, and `list(prefix=..., limit=...)` also stream and
+verify the complete SHA-256 before returning immutable `Artifact` metadata.
+List results are sorted by path. List limits must be between 1 and 10,000 and
+default to 1,000; a result over its limit raises `ArtifactLimitError` rather
+than truncating. The private metadata directory has a hard 10,000-entry scan
+cap, including ignored private entries, so listing and path lookup cannot turn
+into an unbounded directory scan. Narrow prefixes and limits bound content
+verification work but do not bypass that index-wide safety cap.
+
+Each artifact reference contains `artifactId`, `path`, `mimeType`, `byteSize`,
+`sha256`, and a UTC `createdAt`. Versioned JSON metadata is stored under the
+reserved `workspace/artifacts/.lite-mcp/` directory. Content remains at its
+reported relative path. Direct edits are unsupported: missing, altered,
+duplicated, malformed, or symlinked content/metadata fails closed with
+`ArtifactIntegrityError` instead of being silently trusted.
+
+Content and JSON metadata cannot be published as one filesystem transaction.
+If the process or metadata publication fails after content becomes visible,
+lite-mcp deliberately leaves that exact path as unmanaged content. It does not
+unlink the name because another local process may already have replaced it.
+The typed error includes a recovery hint: inspect or move the orphan aside
+manually, then retry with a new path. A later create reports an unmanaged
+collision, and listing does not expose the orphan as a valid artifact. If both
+files were published but directory durability could not be confirmed, the
+write still fails closed; use `get()` or `read()` to verify what survived
+before deciding on recovery.
+
+Startup-loaded tools use the standalone support module, which is configured
+before tool imports:
+
+```python
+from lite_mcp_artifacts import get_artifact_store
+
+store = get_artifact_store()
+artifact = store.write_text(
+    "reports/sales-20260902.csv",
+    csv_text,
+    mime_type="text/csv",
+)
+return {"artifact": artifact.to_reference()}
+```
+
+Returning the small reference avoids the MCP result-size cap; a later local
+tool or dashboard operation can use the path or stable ID to retrieve the
+verified bytes. `tools/_artifact_example.py` is a complete copyable example.
+Its leading underscore keeps it out of the startup catalog; copy it to
+`tools/export_report.py` to publish it. The launcher creates this reference
+only with a brand-new tools directory and never repairs or overwrites an
+existing one.
+
+Failures are typed subclasses of `ArtifactError` with `code`, `message`,
+`retryable`, and read-only `details`. Path, caller metadata, not-found,
+collision, limit, integrity, and storage errors have distinct codes. Uncaught
+artifact failures from MCP tools automatically use the normal structured MCP
+error result.
+Managed write starts, rejections, and completions are synchronous audit events;
+an audit-start failure prevents the filesystem mutation. As with database
+commits, local filesystem publication and the completion JSONL record cannot
+be one transaction.
+
 ## Structured logging and audit
 
 The runtime writes two synchronous UTF-8 JSONL streams under `logs/`, one file
@@ -433,7 +546,7 @@ logs/
 `mcp-*` contains valid MCP transport and protocol messages in both directions,
 including server-to-client wire responses, tool calls, notifications,
 arguments, and normalized results. `audit-*`
-contains dashboard mutations and transaction events, malformed or rejected
+contains dashboard/database and managed-artifact mutations, malformed or rejected
 MCP requests, Host/Origin rejections, retention and tail recovery, and Python
 runtime start/stop/fatal events. Rust migration, UV, and bootstrap diagnostics
 remain console-only. A process-exclusive `logs/.lite-mcp.lock` prevents two
@@ -459,11 +572,12 @@ Dashboard audit coverage is guaranteed for `context.db.execute()`,
 `context.db.transaction()`, and `context.db.run_once()`: mutation
 starts/completions, rejected mutations, idempotent creation/replay/failure,
 transaction begin/commit/rollback, and regular transaction statements are
-recorded.
-Standalone reads are not audited. A widget that opens `sqlite3` directly
-bypasses this audit contract. JSONL and SQLite cannot be committed atomically;
-a database commit can therefore be followed by a missing completion record if
-the writer fails.
+recorded. Managed artifact writes likewise record starts, rejections, and
+completions. Standalone database and artifact reads are not audited. A widget
+that opens `sqlite3` or writes workspace files directly bypasses this audit
+contract. JSONL and SQLite/filesystem mutations cannot be committed atomically;
+a successful mutation can therefore be followed by a missing completion record
+if the writer fails.
 
 The runtime keeps the configured number of UTC date buckets including today
 (14 by default), deletes old `audit`/`mcp` files as date pairs, and enforces a
@@ -600,7 +714,9 @@ database receives the same ordered change and drift remains detectable.
 | `/mcp` | Unauthenticated FastMCP Streamable HTTP endpoint |
 
 The `/api/database` and `/api/runtime` routes remain available for diagnostics
-and compatibility. Host and browser Origin headers are restricted to
+and compatibility. Managed artifacts have no HTTP route and are available only
+to trusted dashboard/tool Python through `lite_mcp_artifacts`. Host and browser
+Origin headers are restricted to
 localhost, the selected bind address, and detected local interfaces. This
 reduces DNS-rebinding exposure but is not authentication or a code sandbox.
 

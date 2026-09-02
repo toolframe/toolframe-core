@@ -14,7 +14,11 @@ from typing import Any
 
 import anyio
 from fastmcp import FastMCP
-
+from lite_mcp_artifacts import (
+    DEFAULT_MAX_ARTIFACT_BYTES,
+    configure_artifact_store,
+)
+from lite_mcp_idempotency import _configure as _configure_idempotency
 from lite_mcp_runtime import RuntimeGuardMiddleware, _pydantic_json, load_tools
 
 
@@ -51,12 +55,28 @@ def _require_python() -> None:
         )
 
 
+def _configure_tool_support(database: Path, workspace: Path) -> Any:
+    """Configure startup-loaded tool helpers before importing user tools."""
+
+    _configure_idempotency(database)
+    return configure_artifact_store(
+        workspace,
+        max_artifact_bytes=DEFAULT_MAX_ARTIFACT_BYTES,
+        logger=logging.getLogger("lite_mcp.artifacts"),
+    )
+
+
 def _check(arguments: argparse.Namespace) -> int:
     _require_python()
     with tempfile.TemporaryDirectory(prefix="lite-mcp-check-") as temporary:
-        database = Path(temporary) / "data.db"
+        temporary_root = Path(temporary)
+        database = temporary_root / "data.db"
+        workspace = temporary_root / "workspace"
+        workspace.mkdir()
         os.environ["LITE_MCP_DB"] = os.fspath(database)
+        os.environ["LITE_MCP_WORKSPACE"] = os.fspath(workspace)
         with redirect_stdout(sys.stderr):
+            artifact_store = _configure_tool_support(database, workspace)
             tools, details, _ = load_tools(arguments.manifest)
 
             import lite_mcp_dashboard as dashboard_sdk
@@ -64,9 +84,10 @@ def _check(arguments: argparse.Namespace) -> int:
             dashboard_sdk._configure(
                 database_path=database,
                 dashboard_dir=arguments.dashboard,
-                workspace=arguments.workspace,
+                workspace=workspace,
                 logger=logging.getLogger("lite_mcp.check"),
                 runtime={"startupOnly": True, "preflight": True},
+                artifacts=artifact_store,
             )
             widgets = dashboard_sdk.preflight_dashboard(arguments.dashboard)
         _emit(
@@ -95,6 +116,8 @@ def _invoke(arguments: argparse.Namespace) -> int:
     if not isinstance(payload, dict):
         raise ValueError("tool arguments must be a JSON object")
     with redirect_stdout(sys.stderr):
+        database = Path(os.environ["LITE_MCP_DB"])
+        _configure_tool_support(database, arguments.workspace)
         tools, _, _ = load_tools(arguments.manifest)
 
         async def invoke() -> Any:

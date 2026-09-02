@@ -233,8 +233,7 @@ class IdempotencyTransaction:
             else None
         )
         if (
-            isinstance(table_name, str)
-            and table_name.casefold() == _TABLE.casefold()
+            isinstance(table_name, str) and table_name.casefold() == _TABLE.casefold()
         ) or (
             action == _REINDEX_ACTION
             and isinstance(argument_one, str)
@@ -356,7 +355,9 @@ class IdempotencyStore:
         except BaseException as error:
             if isinstance(error, (KeyboardInterrupt, SystemExit)):
                 raise
-            retryable = error.retryable if isinstance(error, IdempotencyError) else False
+            retryable = (
+                error.retryable if isinstance(error, IdempotencyError) else False
+            )
             outcome = (
                 "rejected"
                 if isinstance(error, IdempotencyError) and error.code in _REJECTED_CODES
