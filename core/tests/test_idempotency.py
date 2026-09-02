@@ -183,6 +183,7 @@ class IdempotencyTests(unittest.TestCase):
             "SELECT * FROM _lite_mcp_idempotency",
             "DELETE FROM _lite_mcp_idempotency",
             "UPDATE _lite_mcp_idempotency SET result_bytes = result_bytes",
+            "REINDEX _lite_mcp_idempotency",
             "DROP TABLE _lite_mcp_idempotency",
         )
         for index, statement in enumerate(statements):
@@ -231,6 +232,31 @@ class IdempotencyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.value, {"value": "business-value"})
+        self.assertFalse(result.replayed)
+
+    def test_business_table_reindex_is_allowed(self):
+        with closing(sqlite3.connect(self.database_path)) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE reindexable_business_data (value TEXT NOT NULL);
+                CREATE INDEX reindexable_business_value_idx
+                ON reindexable_business_data(value);
+                """
+            )
+            connection.commit()
+
+        def mutation(transaction):
+            transaction.execute("REINDEX reindexable_business_data")
+            transaction.execute(
+                "INSERT INTO reindexable_business_data(value) VALUES (?)", ("kept",)
+            )
+            return {"reindexed": True}
+
+        result = self.store.run_once(
+            "events.create", "business-reindex", {}, mutation
+        )
+
+        self.assertEqual(result.value, {"reindexed": True})
         self.assertFalse(result.replayed)
 
     def test_wal_configuration_retries_a_busy_fresh_connection(self):

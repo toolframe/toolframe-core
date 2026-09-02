@@ -106,6 +106,7 @@ _ALWAYS_FORBIDDEN_ACTIONS = frozenset(
     )
     if isinstance((value := getattr(sqlite3, name, None)), int)
 )
+_REINDEX_ACTION = getattr(sqlite3, "SQLITE_REINDEX", -1)
 
 
 class IdempotencyError(RuntimeError):
@@ -149,6 +150,12 @@ class IdempotencyTransaction:
         self._connection = connection
         self._open = True
         self._denied_private_table = False
+        private_indexes = connection.execute(
+            f'PRAGMA index_list("{_TABLE}")'
+        ).fetchall()
+        self._private_reindex_targets = frozenset(
+            {_TABLE.casefold(), *(str(row[1]).casefold() for row in private_indexes)}
+        )
         connection.set_authorizer(self._authorize)
 
     def execute(
@@ -228,6 +235,10 @@ class IdempotencyTransaction:
         if (
             isinstance(table_name, str)
             and table_name.casefold() == _TABLE.casefold()
+        ) or (
+            action == _REINDEX_ACTION
+            and isinstance(argument_one, str)
+            and argument_one.casefold() in self._private_reindex_targets
         ):
             self._denied_private_table = True
             return sqlite3.SQLITE_DENY
