@@ -27,6 +27,7 @@ from typing import Any, BinaryIO
 
 __all__ = [
     "DEFAULT_MAX_ARTIFACT_BYTES",
+    "MAX_METADATA_ENTRIES",
     "Artifact",
     "ArtifactError",
     "ArtifactExistsError",
@@ -45,6 +46,7 @@ __all__ = [
 DEFAULT_MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
 DEFAULT_LIST_LIMIT = 1_000
 MAX_LIST_LIMIT = 10_000
+MAX_METADATA_ENTRIES = 10_000
 MAX_PATH_BYTES = 1_024
 MAX_MIME_TYPE_BYTES = 255
 MAX_METADATA_BYTES = 4 * 1024
@@ -152,6 +154,7 @@ class ArtifactStore:
         workspace: Path,
         *,
         max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+        max_metadata_entries: int = MAX_METADATA_ENTRIES,
         audit_sink: Any | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -161,6 +164,12 @@ class ArtifactStore:
             or max_artifact_bytes <= 0
         ):
             raise ValueError("max_artifact_bytes must be a positive integer")
+        if (
+            isinstance(max_metadata_entries, bool)
+            or not isinstance(max_metadata_entries, int)
+            or max_metadata_entries <= 0
+        ):
+            raise ValueError("max_metadata_entries must be a positive integer")
         workspace_candidate = Path(workspace).expanduser().absolute()
         if workspace_candidate.is_symlink():
             raise ArtifactStorageError(
@@ -184,6 +193,7 @@ class ArtifactStore:
         self.root = workspace_root / "artifacts"
         self._metadata_root = self.root / _METADATA_DIRECTORY
         self.max_artifact_bytes = max_artifact_bytes
+        self.max_metadata_entries = max_metadata_entries
         self.audit_sink = audit_sink
         self.logger = logger or _LOGGER
         self._lock = threading.RLock()
@@ -239,6 +249,26 @@ class ArtifactStore:
                 durationMs=_duration_ms(started_at),
             )
             raise
+        except Exception as error:
+            typed_error = ArtifactStorageError(
+                "The artifact write failed unexpectedly.",
+                details={
+                    "path": normalized,
+                    "exceptionType": type(error).__name__,
+                    "recoveryHint": "Inspect the server log before retrying with a new path.",
+                },
+            )
+            self._emit_audit(
+                "artifact_write_rejected",
+                level="ERROR",
+                outcome="failed",
+                payload={"path": normalized, "code": typed_error.code},
+                operationId=operation_id,
+                method="write",
+                retryable=typed_error.retryable,
+                durationMs=_duration_ms(started_at),
+            )
+            raise typed_error from error
         self._emit_audit(
             "artifact_write_completed",
             outcome="success",
@@ -260,13 +290,17 @@ class ArtifactStore:
         """Encode and create one text artifact."""
 
         if not isinstance(text, str):
-            raise TypeError("text must be a string")
+            raise ArtifactMetadataError("Artifact text must be a string.")
         try:
             payload = text.encode(encoding)
-        except (LookupError, UnicodeError) as error:
-            raise ArtifactStorageError(
+        except Exception as error:
+            raise ArtifactMetadataError(
                 "The text artifact could not be encoded.",
-                details={"encoding": encoding},
+                details={
+                    "encoding": encoding,
+                    "exceptionType": type(error).__name__,
+                    "recoveryHint": "Use a valid encoding and encodable text.",
+                },
             ) from error
         return self.write(path, payload, mime_type=mime_type)
 
@@ -286,20 +320,20 @@ class ArtifactStore:
             return self._read_locked(artifact)
 
     def get(self, path: str) -> Artifact:
-        """Return metadata for an artifact path without loading its content."""
+        """Return metadata after verifying an artifact path and content hash."""
 
         normalized, _ = _normalize_path(path)
         with self._lock:
             artifact = self._find_by_path_locked(normalized)
-            self._validate_content_stat(artifact)
+            self._verify_content_locked(artifact, capture=False)
             return artifact
 
     def get_by_id(self, artifact_id: str) -> Artifact:
-        """Return metadata for a stable artifact ID."""
+        """Return metadata after verifying a stable ID and content hash."""
 
         with self._lock:
             artifact = self._find_by_id_locked(_normalize_artifact_id(artifact_id))
-            self._validate_content_stat(artifact)
+            self._verify_content_locked(artifact, capture=False)
             return artifact
 
     def list(
@@ -340,7 +374,7 @@ class ArtifactStore:
                     details={"matchedItems": len(artifacts), "limit": limit},
                 )
             for artifact in artifacts:
-                self._validate_content_stat(artifact)
+                self._verify_content_locked(artifact, capture=False)
             return tuple(artifacts)
 
     def _prepare_directories(self) -> None:
@@ -375,13 +409,21 @@ class ArtifactStore:
         data: bytes | bytearray | memoryview | BinaryIO,
         mime_type: str,
     ) -> Artifact:
-        existing = self._find_optional_by_path_locked(normalized)
-        if existing is not None:
+        metadata_records = self._load_all_metadata_locked(require_capacity=True)
+        matches = [item for item in metadata_records if item.path == normalized]
+        if len(matches) > 1:
+            raise ArtifactIntegrityError(
+                "Multiple metadata records claim the same artifact path.",
+                details={"path": normalized},
+            )
+        if matches:
             raise ArtifactExistsError(
                 "A managed artifact already uses this path.",
-                details={"path": normalized, "artifactId": existing.artifact_id},
+                details={
+                    "path": normalized,
+                    "artifactId": matches[0].artifact_id,
+                },
             )
-
         parent = self._ensure_parent_directories(parts[:-1])
         target = parent / parts[-1]
         if os.path.lexists(target):
@@ -392,7 +434,10 @@ class ArtifactStore:
                 )
             raise ArtifactExistsError(
                 "The artifact path is already occupied by unmanaged content.",
-                details={"path": normalized},
+                details={
+                    "path": normalized,
+                    "recoveryHint": "Inspect or move the existing path aside manually; lite-mcp never deletes unknown workspace files.",
+                },
             )
 
         artifact_id = uuid.uuid4().hex
@@ -400,6 +445,7 @@ class ArtifactStore:
         content_temp = parent / f".lite-mcp-{artifact_id}.tmp"
         metadata_temp = self._metadata_root / f".{artifact_id}.tmp"
         content_published = False
+        metadata_published = False
         try:
             byte_size, digest = self._write_content_temp(content_temp, data)
             artifact = Artifact(
@@ -419,8 +465,9 @@ class ArtifactStore:
                     details={"path": normalized},
                 ) from error
             content_published = True
-            os.unlink(content_temp)
             os.link(metadata_temp, metadata_target, follow_symlinks=False)
+            metadata_published = True
+            os.unlink(content_temp)
             os.unlink(metadata_temp)
             _sync_directory(parent)
             _sync_directory(self._metadata_root)
@@ -428,24 +475,42 @@ class ArtifactStore:
         except ArtifactError:
             raise
         except OSError as error:
+            if content_published and not metadata_published:
+                message = "Artifact content was published, but its metadata was not."
+                recovery_hint = (
+                    f"The unmanaged path {normalized!r} was left in place to avoid deleting a concurrently replaced file. "
+                    "Inspect or move it aside manually, then retry with a new path."
+                )
+            elif metadata_published:
+                message = (
+                    "The artifact was published, but durability could not be confirmed."
+                )
+                recovery_hint = "Verify the artifact with get() or read() before deciding whether to retry; create-once paths are never overwritten."
+            else:
+                message = "The artifact could not be published."
+                recovery_hint = (
+                    "Inspect the server log and local directory before retrying."
+                )
             raise ArtifactStorageError(
-                "The artifact could not be written atomically.",
-                details={"path": normalized},
+                message,
+                details={
+                    "path": normalized,
+                    "contentPublished": content_published,
+                    "metadataPublished": metadata_published,
+                    "exceptionType": type(error).__name__,
+                    "recoveryHint": recovery_hint,
+                },
             ) from error
         finally:
+            # Only remove private temporaries whose names this operation owns.
+            # Never unlink ``target`` here: another process may have replaced
+            # that directory entry after our no-replace publication.
             for temporary in (content_temp, metadata_temp):
                 try:
                     temporary.unlink(missing_ok=True)
                 except OSError:
                     self.logger.warning(
                         "could not remove artifact temporary %s", temporary
-                    )
-            if content_published and not metadata_target.exists():
-                try:
-                    target.unlink(missing_ok=True)
-                except OSError:
-                    self.logger.error(
-                        "could not roll back unindexed artifact %s", target
                     )
 
     def _write_content_temp(
@@ -469,7 +534,7 @@ class ArtifactStore:
             with temporary.open("xb", buffering=0) as destination:
                 while True:
                     chunk = source.read(_COPY_CHUNK_BYTES)
-                    if chunk in (b"", None):
+                    if chunk == b"":
                         break
                     if not isinstance(chunk, (bytes, bytearray, memoryview)):
                         raise ArtifactMetadataError(
@@ -486,14 +551,23 @@ class ArtifactStore:
                             },
                         )
                     digest.update(chunk_bytes)
-                    destination.write(chunk_bytes)
+                    remaining = memoryview(chunk_bytes)
+                    while remaining:
+                        written = destination.write(remaining)
+                        if written is None or written <= 0:
+                            raise OSError("artifact temporary write made no progress")
+                        remaining = remaining[written:]
                 destination.flush()
                 os.fsync(destination.fileno())
         except ArtifactError:
             raise
-        except (OSError, ValueError) as error:
+        except Exception as error:
             raise ArtifactStorageError(
-                "The artifact source could not be copied to local storage."
+                "The artifact source could not be copied to local storage.",
+                details={
+                    "exceptionType": type(error).__name__,
+                    "recoveryHint": "Check that the stream returns binary data and remains readable, then retry with a new path.",
+                },
             ) from error
         return byte_size, digest.hexdigest()
 
@@ -546,26 +620,64 @@ class ArtifactStore:
         return current
 
     def _read_locked(self, artifact: Artifact) -> bytes:
+        payload = self._verify_content_locked(artifact, capture=True)
+        assert payload is not None
+        return payload
+
+    def _verify_content_locked(
+        self, artifact: Artifact, *, capture: bool
+    ) -> bytes | None:
         _, parts = _normalize_path(artifact.path)
         target = self._checked_existing_path(parts, artifact.path)
-        self._validate_content_stat(artifact, target=target)
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags = (
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
+        digest = hashlib.sha256()
+        actual_size = 0
+        captured = bytearray() if capture else None
         try:
             descriptor = os.open(target, flags)
             with os.fdopen(descriptor, "rb") as source:
-                payload = source.read(self.max_artifact_bytes + 1)
+                opened_metadata = os.fstat(source.fileno())
+                if not stat.S_ISREG(opened_metadata.st_mode):
+                    raise ArtifactIntegrityError(
+                        "Managed artifact content is not a regular file.",
+                        details={"path": artifact.path},
+                    )
+                while True:
+                    chunk = source.read(_COPY_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    actual_size += len(chunk)
+                    if actual_size > self.max_artifact_bytes:
+                        raise ArtifactIntegrityError(
+                            "Managed artifact content exceeds the configured byte limit.",
+                            details={
+                                "path": artifact.path,
+                                "actualBytes": actual_size,
+                                "limitBytes": self.max_artifact_bytes,
+                            },
+                        )
+                    digest.update(chunk)
+                    if captured is not None:
+                        captured.extend(chunk)
         except FileNotFoundError as error:
             raise ArtifactIntegrityError(
                 "Managed artifact content is missing.",
                 details={"path": artifact.path, "artifactId": artifact.artifact_id},
             ) from error
-        except OSError as error:
+        except ArtifactError:
+            raise
+        except Exception as error:
             raise ArtifactStorageError(
                 "Managed artifact content could not be read.",
-                details={"path": artifact.path},
+                details={
+                    "path": artifact.path,
+                    "exceptionType": type(error).__name__,
+                    "recoveryHint": "Inspect the local file and server log before retrying.",
+                },
             ) from error
-        actual_size = len(payload)
-        actual_sha256 = hashlib.sha256(payload).hexdigest()
+        actual_sha256 = digest.hexdigest()
         if (
             actual_size > self.max_artifact_bytes
             or actual_size != artifact.byte_size
@@ -582,31 +694,7 @@ class ArtifactStore:
                     "actualSha256": actual_sha256,
                 },
             )
-        return payload
-
-    def _validate_content_stat(
-        self, artifact: Artifact, *, target: Path | None = None
-    ) -> None:
-        if target is None:
-            _, parts = _normalize_path(artifact.path)
-            target = self._checked_existing_path(parts, artifact.path)
-        try:
-            metadata = target.stat(follow_symlinks=False)
-        except OSError as error:
-            raise ArtifactStorageError(
-                "Managed artifact content could not be inspected.",
-                details={"path": artifact.path},
-            ) from error
-        if metadata.st_size != artifact.byte_size:
-            raise ArtifactIntegrityError(
-                "Managed artifact size does not match its metadata.",
-                details={
-                    "path": artifact.path,
-                    "artifactId": artifact.artifact_id,
-                    "expectedBytes": artifact.byte_size,
-                    "actualBytes": metadata.st_size,
-                },
-            )
+        return bytes(captured) if captured is not None else None
 
     def _checked_existing_path(self, parts: tuple[str, ...], normalized: str) -> Path:
         current = self.root
@@ -664,35 +752,77 @@ class ArtifactStore:
 
     def _find_by_id_locked(self, artifact_id: str) -> Artifact:
         metadata_path = self._metadata_root / f"{artifact_id}.json"
-        if metadata_path.is_symlink():
-            raise ArtifactIntegrityError(
-                "Artifact metadata must not be a symlink.",
-                details={"artifactId": artifact_id},
-            )
-        if not metadata_path.is_file():
+        try:
+            metadata = metadata_path.lstat()
+        except FileNotFoundError as error:
             raise ArtifactNotFoundError(
                 "No managed artifact uses this ID.",
+                details={"artifactId": artifact_id},
+            ) from error
+        except OSError as error:
+            raise ArtifactStorageError(
+                "Artifact metadata could not be inspected.",
+                details={"artifactId": artifact_id},
+            ) from error
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise ArtifactIntegrityError(
+                "Artifact metadata must be a regular non-symlink file.",
                 details={"artifactId": artifact_id},
             )
         return self._load_metadata(metadata_path)
 
-    def _load_all_metadata_locked(self) -> list[Artifact]:
+    def _load_all_metadata_locked(
+        self, *, require_capacity: bool = False
+    ) -> list[Artifact]:
         try:
-            paths = sorted(self._metadata_root.iterdir(), key=lambda path: path.name)
+            paths: list[Path] = []
+            with os.scandir(self._metadata_root) as entries:
+                for entry in entries:
+                    if len(paths) >= self.max_metadata_entries:
+                        raise ArtifactLimitError(
+                            "The artifact metadata scan exceeds the configured entry limit.",
+                            details={
+                                "entryLimit": self.max_metadata_entries,
+                                "recoveryHint": "Move old managed artifacts and metadata out of this workspace before listing or creating more.",
+                            },
+                        )
+                    paths.append(Path(entry.path))
+            paths.sort(key=lambda path: path.name)
+            if require_capacity and len(paths) >= self.max_metadata_entries:
+                raise ArtifactLimitError(
+                    "The managed artifact metadata entry limit has been reached.",
+                    details={
+                        "entryLimit": self.max_metadata_entries,
+                        "recoveryHint": "Move old managed artifacts and metadata out of this workspace before creating more.",
+                    },
+                )
+        except ArtifactError:
+            raise
         except OSError as error:
             raise ArtifactStorageError(
-                "The artifact metadata index could not be listed."
+                "The artifact metadata index could not be listed.",
+                details={
+                    "exceptionType": type(error).__name__,
+                    "recoveryHint": "Inspect the metadata directory and server log before retrying.",
+                },
             ) from error
         artifacts: list[Artifact] = []
         for path in paths:
-            if path.name.startswith("."):
-                continue
-            if path.is_symlink():
+            try:
+                metadata = path.lstat()
+            except OSError as error:
+                raise ArtifactStorageError(
+                    "An artifact metadata entry could not be inspected.",
+                    details={"metadataFile": path.name},
+                ) from error
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
                 raise ArtifactIntegrityError(
-                    "Artifact metadata must not be a symlink.",
+                    "Artifact metadata entries must be regular non-symlink files.",
                     details={"metadataFile": path.name},
                 )
-            if not path.is_file() or not path.name.endswith(".json"):
+            if path.name.startswith("."):
+                continue
+            if not path.name.endswith(".json"):
                 raise ArtifactIntegrityError(
                     "The artifact metadata directory contains an unsupported entry.",
                     details={"metadataFile": path.name},
@@ -702,9 +832,16 @@ class ArtifactStore:
 
     def _load_metadata(self, path: Path) -> Artifact:
         try:
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+            )
             descriptor = os.open(path, flags)
             with os.fdopen(descriptor, "rb") as metadata_file:
+                opened_metadata = os.fstat(metadata_file.fileno())
+                if not stat.S_ISREG(opened_metadata.st_mode):
+                    raise ValueError("metadata must be a regular file")
                 encoded = metadata_file.read(MAX_METADATA_BYTES + 1)
             if len(encoded) > MAX_METADATA_BYTES:
                 raise ValueError("metadata exceeds byte limit")
@@ -872,14 +1009,9 @@ def _parse_datetime(value: Any) -> datetime:
 
 def _sync_directory(path: Path) -> None:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError:
-        return
+    descriptor = os.open(path, flags)
     try:
         os.fsync(descriptor)
-    except OSError:
-        pass
     finally:
         os.close(descriptor)
 

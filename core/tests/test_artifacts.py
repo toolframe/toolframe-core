@@ -187,6 +187,21 @@ class ArtifactStoreTests(unittest.TestCase):
 
         self.assertEqual(captured.exception.code, "artifact_integrity_error")
 
+    def test_same_size_tampering_is_detected_by_all_metadata_lookups(self):
+        artifact = self.store.write("data.bin", b"original")
+        (self.workspace / "artifacts" / "data.bin").write_bytes(b"modified")
+
+        for operation in (
+            lambda: self.store.get("data.bin"),
+            lambda: self.store.get_by_id(artifact.artifact_id),
+            self.store.list,
+        ):
+            with (
+                self.subTest(operation=operation),
+                self.assertRaises(artifacts.ArtifactIntegrityError),
+            ):
+                operation()
+
     def test_metadata_lookup_detects_size_mismatch(self):
         self.store.write("data.bin", b"original")
         (self.workspace / "artifacts" / "data.bin").write_bytes(b"short")
@@ -210,6 +225,18 @@ class ArtifactStoreTests(unittest.TestCase):
         with self.assertRaises(artifacts.ArtifactIntegrityError):
             self.store.list()
 
+    def test_non_regular_metadata_entry_is_integrity_error_not_not_found(self):
+        artifact_id = "c" * 32
+        metadata_path = (
+            self.workspace / "artifacts" / ".lite-mcp" / f"{artifact_id}.json"
+        )
+        metadata_path.mkdir()
+
+        with self.assertRaises(artifacts.ArtifactIntegrityError):
+            self.store.get_by_id(artifact_id)
+        with self.assertRaises(artifacts.ArtifactIntegrityError):
+            self.store.list()
+
     def test_oversized_metadata_fails_closed_without_unbounded_read(self):
         metadata_root = self.workspace / "artifacts" / ".lite-mcp"
         (metadata_root / f"{'b' * 32}.json").write_bytes(
@@ -219,7 +246,7 @@ class ArtifactStoreTests(unittest.TestCase):
         with self.assertRaises(artifacts.ArtifactIntegrityError):
             self.store.list()
 
-    def test_metadata_publish_failure_rolls_back_content(self):
+    def test_metadata_publish_failure_retains_fail_closed_orphan_with_hint(self):
         real_link = os.link
         calls = 0
 
@@ -232,12 +259,118 @@ class ArtifactStoreTests(unittest.TestCase):
 
         with (
             patch("lite_mcp_artifacts.os.link", side_effect=fail_second_link),
-            self.assertRaises(artifacts.ArtifactStorageError),
+            self.assertRaises(artifacts.ArtifactStorageError) as captured,
         ):
             self.store.write("rollback.bin", b"content")
 
-        self.assertFalse((self.workspace / "artifacts" / "rollback.bin").exists())
+        orphan = self.workspace / "artifacts" / "rollback.bin"
+        self.assertEqual(orphan.read_bytes(), b"content")
+        self.assertTrue(captured.exception.details["contentPublished"])
+        self.assertFalse(captured.exception.details["metadataPublished"])
+        self.assertIn("left in place", captured.exception.details["recoveryHint"])
         self.assertEqual(self.store.list(), ())
+        with self.assertRaises(artifacts.ArtifactExistsError) as collision:
+            self.store.write("rollback.bin", b"retry")
+        self.assertIn("never deletes", collision.exception.details["recoveryHint"])
+
+    def test_metadata_failure_never_unlinks_concurrently_replaced_path(self):
+        real_link = os.link
+        published = self.workspace / "artifacts" / "race-replaced.bin"
+        calls = 0
+
+        def replace_before_metadata_failure(source, destination, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return real_link(source, destination, **kwargs)
+            published.unlink()
+            published.write_bytes(b"concurrent")
+            raise OSError("metadata publish failed after replacement")
+
+        with (
+            patch(
+                "lite_mcp_artifacts.os.link",
+                side_effect=replace_before_metadata_failure,
+            ),
+            self.assertRaises(artifacts.ArtifactStorageError),
+        ):
+            self.store.write("race-replaced.bin", b"original")
+
+        self.assertEqual(published.read_bytes(), b"concurrent")
+
+    def test_directory_sync_failure_is_typed_and_audited(self):
+        with (
+            patch("lite_mcp_artifacts._sync_directory", side_effect=OSError("fsync")),
+            self.assertRaises(artifacts.ArtifactStorageError) as captured,
+        ):
+            self.store.write("uncertain.bin", b"content")
+
+        self.assertTrue(captured.exception.details["metadataPublished"])
+        self.assertIn("durability", captured.exception.message)
+        self.assertEqual(
+            [event["event"] for event in self.sink.events],
+            ["artifact_write_started", "artifact_write_rejected"],
+        )
+        self.assertEqual(self.store.read("uncertain.bin"), b"content")
+
+    def test_directory_sync_helper_propagates_open_and_fsync_failures(self):
+        with (
+            patch("lite_mcp_artifacts.os.open", side_effect=OSError("open")),
+            self.assertRaises(OSError),
+        ):
+            artifacts._sync_directory(self.workspace)
+
+        with (
+            patch("lite_mcp_artifacts.os.open", return_value=99),
+            patch("lite_mcp_artifacts.os.fsync", side_effect=OSError("fsync")),
+            patch("lite_mcp_artifacts.os.close") as close,
+            self.assertRaises(OSError),
+        ):
+            artifacts._sync_directory(self.workspace)
+        close.assert_called_once_with(99)
+
+    def test_custom_stream_failure_is_typed_and_closes_audit_operation(self):
+        class BrokenStream:
+            def read(self, _size):
+                raise RuntimeError("source failed")
+
+        with self.assertRaises(artifacts.ArtifactStorageError) as captured:
+            self.store.write("broken.bin", BrokenStream())
+
+        self.assertEqual(captured.exception.details["exceptionType"], "RuntimeError")
+        self.assertEqual(
+            [event["event"] for event in self.sink.events],
+            ["artifact_write_started", "artifact_write_rejected"],
+        )
+        self.assertEqual(
+            self.sink.events[0]["operationId"], self.sink.events[1]["operationId"]
+        )
+
+    def test_write_text_encoding_failure_is_typed_before_write_starts(self):
+        with self.assertRaises(artifacts.ArtifactMetadataError) as captured:
+            self.store.write_text("text.txt", "text", encoding="not-a-codec")
+
+        self.assertEqual(captured.exception.details["encoding"], "not-a-codec")
+        self.assertEqual(self.sink.events, [])
+
+    def test_metadata_scan_has_hard_entry_bound(self):
+        store = artifacts.ArtifactStore(
+            self.workspace,
+            max_artifact_bytes=32,
+            max_metadata_entries=2,
+        )
+        store.write("one.txt", b"one")
+        store.write("two.txt", b"two")
+        self.assertEqual(len(store.list()), 2)
+        with self.assertRaises(artifacts.ArtifactLimitError):
+            store.write("three.txt", b"three")
+
+        metadata_root = self.workspace / "artifacts" / ".lite-mcp"
+        (metadata_root / ".extra").write_bytes(b"reserved entry")
+        with self.assertRaises(artifacts.ArtifactLimitError) as captured:
+            store.list()
+
+        self.assertEqual(captured.exception.details["entryLimit"], 2)
 
     def test_audit_start_failure_prevents_mutation(self):
         store = artifacts.ArtifactStore(

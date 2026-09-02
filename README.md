@@ -318,13 +318,21 @@ never replaced. Choose a unique path (for example a timestamp or domain ID)
 instead of retrying the same collision.
 
 `write(path, bytes_or_binary_stream, mime_type=...)` streams up to 25 MiB into
-a same-directory temporary, syncs it, and publishes it without replacement so
-readers never observe partial content. `write_text(...)` is the UTF-8-oriented
-convenience method. `read(path)` and `read_by_id(id)` verify byte size and
-SHA-256 before returning bytes. `get`, `get_by_id`, and `list(prefix=...,
-limit=...)` return immutable `Artifact` metadata sorted by path; list limits
-must be between 1 and 10,000 and default to 1,000. A listing over its limit
-raises `ArtifactLimitError`; results are never silently truncated.
+a same-directory temporary, syncs it, and publishes the content without
+replacement so readers never observe partial bytes. Metadata is then published
+through a separate no-replace link. Both directories are synced; an open or
+sync failure is a typed, audited storage failure rather than a best-effort
+success. `write_text(...)` is the UTF-8-oriented convenience method.
+
+`read(path)` and `read_by_id(id)` verify byte size and SHA-256 before returning
+bytes. `get`, `get_by_id`, and `list(prefix=..., limit=...)` also stream and
+verify the complete SHA-256 before returning immutable `Artifact` metadata.
+List results are sorted by path. List limits must be between 1 and 10,000 and
+default to 1,000; a result over its limit raises `ArtifactLimitError` rather
+than truncating. The private metadata directory has a hard 10,000-entry scan
+cap, including ignored private entries, so listing and path lookup cannot turn
+into an unbounded directory scan. Narrow prefixes and limits bound content
+verification work but do not bypass that index-wide safety cap.
 
 Each artifact reference contains `artifactId`, `path`, `mimeType`, `byteSize`,
 `sha256`, and a UTC `createdAt`. Versioned JSON metadata is stored under the
@@ -332,6 +340,17 @@ reserved `workspace/artifacts/.lite-mcp/` directory. Content remains at its
 reported relative path. Direct edits are unsupported: missing, altered,
 duplicated, malformed, or symlinked content/metadata fails closed with
 `ArtifactIntegrityError` instead of being silently trusted.
+
+Content and JSON metadata cannot be published as one filesystem transaction.
+If the process or metadata publication fails after content becomes visible,
+lite-mcp deliberately leaves that exact path as unmanaged content. It does not
+unlink the name because another local process may already have replaced it.
+The typed error includes a recovery hint: inspect or move the orphan aside
+manually, then retry with a new path. A later create reports an unmanaged
+collision, and listing does not expose the orphan as a valid artifact. If both
+files were published but directory durability could not be confirmed, the
+write still fails closed; use `get()` or `read()` to verify what survived
+before deciding on recovery.
 
 Startup-loaded tools use the standalone support module, which is configured
 before tool imports:
@@ -358,8 +377,9 @@ existing one.
 
 Failures are typed subclasses of `ArtifactError` with `code`, `message`,
 `retryable`, and read-only `details`. Path, caller metadata, not-found,
-collision, limit, integrity, and storage errors have distinct codes. Uncaught artifact failures
-from MCP tools automatically use the normal structured MCP error result.
+collision, limit, integrity, and storage errors have distinct codes. Uncaught
+artifact failures from MCP tools automatically use the normal structured MCP
+error result.
 Managed write starts, rejections, and completions are synchronous audit events;
 an audit-start failure prevents the filesystem mutation. As with database
 commits, local filesystem publication and the completion JSONL record cannot
