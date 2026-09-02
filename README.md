@@ -27,7 +27,8 @@ UV_BIN=/path/to/uv ./scripts/package.sh
 ./dist/lite-mcp/lite-mcp
 ```
 
-The package contains the complete editable dashboard scaffold:
+The package contains the complete editable dashboard scaffold and the
+`lite-mcp-business-app` coding-agent handbook shipped beside the binary:
 
 ```text
 lite-mcp/
@@ -42,6 +43,11 @@ lite-mcp/
 ├── migrations/
 │   ├── 0000_bootstrap.sql
 │   └── README.md
+├── examples/
+│   └── idempotent_create_entry.py # MCP mutation reference
+├── skills/
+│   └── lite-mcp-business-app/
+│       └── SKILL.md                 # business-first coding handbook
 ├── tools/
 │   ├── execute_sql.py
 │   └── _artifact_example.py    # ignored, copyable tool reference
@@ -52,11 +58,34 @@ lite-mcp/
 ```
 
 The packaging script refuses to overwrite an existing `dist/lite-mcp` and
-copies the editable dashboard and migration source. Dashboard `__pycache__`,
-`.pyc`, and `.pyo` files are excluded. It does not alter the source tree. At
-runtime, a missing entire `dashboard/` or `migrations/` directory is created
-from the embedded scaffold. Existing directories and files are never
-overwritten, completed, or automatically upgraded.
+copies the editable dashboard, migration, and skill source. Dashboard and
+skill `__pycache__`, `.pyc`, and `.pyo` files are excluded. It does not alter
+the source tree. At runtime, a missing entire `dashboard/` or `migrations/`
+directory is created from the embedded scaffold. Existing directories and
+files are never overwritten, completed, or automatically upgraded.
+
+### Bundled coding-agent skill
+
+[`skills/lite-mcp-business-app`](skills/lite-mcp-business-app/SKILL.md) guides a
+coding agent with filesystem access to develop, doctor, or operate a
+nontechnical owner's app. It is a coding-agent handbook shipped beside the
+binary, not an MCP service: it is not automatically served over MCP or
+installed into an agent. The owner must point their coding-agent client at the
+skill or install it there. Peer runtime agents connect to the tested LAN URL
+ending in `/mcp`, such as `http://192.168.1.20:8000/mcp`.
+
+A nontechnical owner can hand the editable folder to a coding agent with a
+business request such as:
+
+```text
+Use skills/lite-mcp-business-app/SKILL.md. Turn this folder into a visitor
+register for reception, leave the app context/domain handbook behind, and show
+me how a trusted peer agent and a person use it.
+```
+
+The coding agent needs filesystem access to develop the folder. A peer runtime
+agent needs only the printed LAN `/mcp` URL and the business tools that the
+coding agent publishes.
 
 On first online launch, UV downloads Python 3.14 and the pinned core,
 dashboard, and tool dependencies into `runtime/`; no system Python is

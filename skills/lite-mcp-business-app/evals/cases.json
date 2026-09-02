@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "skill": "lite-mcp-business-app",
+  "routing": {
+    "should_activate": [
+      {
+        "id": "route-positive-01",
+        "prompt": "I have the lite-mcp folder but I am not technical. Build me a LAN dashboard where scheduled agents claim pending work, read my instructions, report progress, and leave results for review."
+      },
+      {
+        "id": "route-positive-02",
+        "prompt": "Turn this editable lite-mcp binary folder into a small inventory approval app. Add the SQLite migrations, MCP tools, dashboard widgets, and a handbook for the next agent."
+      },
+      {
+        "id": "route-positive-03",
+        "prompt": "Doctor this lite-mcp business app: check fails after I added 0003 and the dashboard no longer starts. Explain it without asking me to debug Python."
+      },
+      {
+        "id": "route-positive-04",
+        "prompt": "Is lite-mcp still the right fit for this local office workflow, or has it grown into something that needs a dedicated app?"
+      },
+      {
+        "id": "route-positive-05",
+        "prompt": "Add another business state and review action to my existing lite-mcp app, update its domain docs, and prove peer agents can still use /mcp."
+      },
+      {
+        "id": "route-positive-06",
+        "prompt": "Help a peer Codex on my LAN use the job tools from this lite-mcp app, and make the dashboard clear enough for a nontechnical reviewer."
+      }
+    ],
+    "should_not_activate": [
+      {
+        "id": "route-negative-01",
+        "prompt": "Build a generic FastMCP server with OAuth and deploy it to Kubernetes.",
+        "reason": "Generic public-service development is outside the editable lite-mcp business-app boundary."
+      },
+      {
+        "id": "route-negative-02",
+        "prompt": "Make this standalone Streamlit chart look better and add Plotly.",
+        "reason": "Standalone frontend work does not involve a lite-mcp business app."
+      },
+      {
+        "id": "route-negative-03",
+        "prompt": "Normalize this PostgreSQL schema for a multi-tenant SaaS product.",
+        "reason": "Database design alone and a different deployment model should not route here."
+      },
+      {
+        "id": "route-negative-04",
+        "prompt": "Why does uv download Python instead of using my system interpreter?",
+        "reason": "A runtime support question alone belongs to ordinary repository diagnostics."
+      },
+      {
+        "id": "route-negative-05",
+        "prompt": "Create an Agent Skill for our release process.",
+        "reason": "Skill authoring should route to the skill-creation capability."
+      },
+      {
+        "id": "route-negative-06",
+        "prompt": "Review the changes on this branch against the issue specification.",
+        "reason": "Branch review should route to code review."
+      }
+    ]
+  },
+  "progressive_reads": [
+    {
+      "id": "read-build-job-desk",
+      "prompt": "Build the scheduled-agent job desk in my lite-mcp folder.",
+      "expected": [
+        "references/development-handbook.md",
+        "references/job-domain-model.md",
+        "references/operations-handbook.md",
+        "assets/APP_CONTEXT.template.md",
+        "assets/DOMAIN_MODEL.template.md"
+      ],
+      "forbidden": [
+        "references/product-decisions.md"
+      ]
+    },
+    {
+      "id": "read-doctor",
+      "prompt": "Doctor why this lite-mcp dashboard fails startup after a widget edit.",
+      "expected": [
+        "references/operations-handbook.md"
+      ],
+      "forbidden": [
+        "references/job-domain-model.md",
+        "references/product-decisions.md"
+      ]
+    },
+    {
+      "id": "read-fit-check",
+      "prompt": "Can lite-mcp safely be the public customer portal for this workflow?",
+      "expected": [
+        "references/operations-handbook.md"
+      ],
+      "forbidden": [
+        "references/job-domain-model.md"
+      ]
+    },
+    {
+      "id": "read-custom-business-app",
+      "prompt": "Create a local equipment checkout app in lite-mcp; it has no worker queue.",
+      "expected": [
+        "references/development-handbook.md",
+        "references/operations-handbook.md",
+        "assets/APP_CONTEXT.template.md",
+        "assets/DOMAIN_MODEL.template.md"
+      ],
+      "forbidden": [
+        "references/job-domain-model.md",
+        "references/product-decisions.md"
+      ]
+    },
+    {
+      "id": "read-maintain-skill",
+      "prompt": "Review why the lite-mcp-business-app handbook chose these Job states before changing the skill.",
+      "expected": [
+        "references/product-decisions.md",
+        "evals/cases.json"
+      ],
+      "forbidden": []
+    }
+  ],
+  "end_to_end": [
+    {
+      "id": "e2e-scheduled-job-desk",
+      "prompt": "In a fresh editable lite-mcp distribution, build a scheduled-agent work desk for a nontechnical owner. A peer agent claims due work, reads an immutable instruction context, records progress, submits a result, and waits for human review.",
+      "assertions": [
+        "The agent identifies scheduling as external and lite-mcp as the durable LAN handoff layer.",
+        "APP_CONTEXT.md and DOMAIN_MODEL.md are created or reconciled before implementation completes.",
+        "The Job FSM, transition guards, leases, attempts, context versions, results, reviews, and events are explicit.",
+        "Applied migration history is preserved and schema changes use the next contiguous migration.",
+        "Business MCP tools are named and narrow; retriable mutations are idempotent and stale leases are rejected.",
+        "Dashboard writes use parameterized supported helpers and expose actionable errors.",
+        "The full create-to-review loop is verified through check, invoke or MCP, and the dashboard.",
+        "LAN connection instructions use the tested printed LAN address and /mcp.",
+        "The completion report states limitations and any escalation trigger."
+      ]
+    },
+    {
+      "id": "e2e-non-queue-app",
+      "prompt": "Build a tiny LAN-only visitor log in lite-mcp for one receptionist. It needs data entry, a daily dashboard, and a peer agent tool for summaries, but no job queue.",
+      "assertions": [
+        "The agent uses the business-first workflow without forcing the canonical Job domain onto the app.",
+        "The schema, tools, widget, and local docs use visitor-log language.",
+        "The agent still applies migration, parameterization, validation, check, startup, LAN, and escalation rules."
+      ]
+    },
+    {
+      "id": "e2e-doctor",
+      "prompt": "The app stopped starting after a new tool and migration. Diagnose and repair it without losing my data.",
+      "assertions": [
+        "The agent starts with non-mutating inspection and check --format json.",
+        "It preserves applied migrations and user data, backs up before a necessary data repair, and fixes the reported source instead of bypassing startup validation.",
+        "It classifies retryability and verifies startup, health, dashboard, and MCP after repair.",
+        "It keeps the repair scoped to the diagnosed failure and does not enter the Develop workflow or redesign the business domain."
+      ]
+    }
+  ]
+}

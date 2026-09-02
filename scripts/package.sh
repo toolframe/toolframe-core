@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 UV_SOURCE="${UV_BIN:-$(command -v uv || true)}"
 DESTINATION="$REPOSITORY_ROOT/dist/lite-mcp"
+SKILL_SOURCE="$REPOSITORY_ROOT/skills/lite-mcp-business-app"
 STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/lite-mcp-package.XXXXXX")"
 
 cleanup() {
@@ -27,6 +28,24 @@ IFS=. read -r UV_MAJOR UV_MINOR UV_PATCH_REST <<<"$UV_VERSION"
 UV_PATCH="${UV_PATCH_REST%%[^0-9]*}"
 if (( UV_MAJOR == 0 && (UV_MINOR < 12 || (UV_MINOR == 12 && UV_PATCH < 8)) )); then
   echo "error: uv 0.12.8 or newer is required to provision final Python 3.14 (found $UV_VERSION)" >&2
+  exit 1
+fi
+
+if [[ ! -d "$SKILL_SOURCE" || -L "$SKILL_SOURCE" ]]; then
+  echo "error: business-app skill must be a regular directory at $SKILL_SOURCE" >&2
+  exit 1
+fi
+if [[ ! -f "$SKILL_SOURCE/SKILL.md" || -L "$SKILL_SOURCE/SKILL.md" ]]; then
+  echo "error: business-app skill SKILL.md must be a regular non-symlink file at $SKILL_SOURCE/SKILL.md" >&2
+  exit 1
+fi
+SKILL_SYMLINK="$(find -P "$SKILL_SOURCE" -type l -print -quit)"
+if [[ -n "$SKILL_SYMLINK" ]]; then
+  echo "error: business-app skill contains a symlink: $SKILL_SYMLINK" >&2
+  exit 1
+fi
+if [[ ! -f "$REPOSITORY_ROOT/examples/idempotent_create_entry.py" || -L "$REPOSITORY_ROOT/examples/idempotent_create_entry.py" ]]; then
+  echo "error: idempotency reference must be a regular non-symlink file at $REPOSITORY_ROOT/examples/idempotent_create_entry.py" >&2
   exit 1
 fi
 
@@ -60,7 +79,9 @@ done
 mkdir -p \
   "$PACKAGE/tools" \
   "$PACKAGE/dashboard" \
+  "$PACKAGE/examples" \
   "$PACKAGE/migrations" \
+  "$PACKAGE/skills/lite-mcp-business-app" \
   "$PACKAGE/workspace" \
   "$PACKAGE/runtime" \
   "$PACKAGE/logs"
@@ -68,6 +89,7 @@ install -m 0755 "$REPOSITORY_ROOT/target/release/lite-mcp" "$PACKAGE/lite-mcp"
 install -m 0755 "$UV_SOURCE" "$PACKAGE/uv"
 install -m 0644 "$REPOSITORY_ROOT/tools/execute_sql.py" "$PACKAGE/tools/execute_sql.py"
 install -m 0644 "$REPOSITORY_ROOT/tools/_artifact_example.py" "$PACKAGE/tools/_artifact_example.py"
+install -m 0644 "$REPOSITORY_ROOT/examples/idempotent_create_entry.py" "$PACKAGE/examples/idempotent_create_entry.py"
 install -m 0644 "$REPOSITORY_ROOT/README.md" "$PACKAGE/README.md"
 
 # The dashboard is intentionally editable in the one-folder distribution. Copy
@@ -79,6 +101,25 @@ install -m 0644 "$REPOSITORY_ROOT/README.md" "$PACKAGE/README.md"
     -type f ! -name '*.pyc' ! -name '*.pyo' -print0 |
     while IFS= read -r -d '' relative_path; do
       destination_path="$PACKAGE/dashboard/$relative_path"
+      mkdir -p "$(dirname "$destination_path")"
+      cp -p "$relative_path" "$destination_path"
+    done
+)
+
+# The business-app skill is a coding-agent handbook shipped beside the binary.
+# Copy its complete regular-file source while excluding interpreter caches and
+# bytecode; symlinks anywhere in the source were rejected before the build.
+(
+  cd "$SKILL_SOURCE"
+  find -P . -type d -name '__pycache__' -prune -o -type d -print0 |
+    while IFS= read -r -d '' relative_path; do
+      destination_path="$PACKAGE/skills/lite-mcp-business-app/$relative_path"
+      mkdir -p "$destination_path"
+    done
+  find -P . -type d -name '__pycache__' -prune -o \
+    -type f ! -name '*.pyc' ! -name '*.pyo' -print0 |
+    while IFS= read -r -d '' relative_path; do
+      destination_path="$PACKAGE/skills/lite-mcp-business-app/$relative_path"
       mkdir -p "$(dirname "$destination_path")"
       cp -p "$relative_path" "$destination_path"
     done
