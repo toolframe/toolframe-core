@@ -3,7 +3,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -82,17 +82,7 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
             "Inspect the SQLite runtime configuration.",
         )
     })?;
-    connection
-        .execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
-        .map_err(|error| {
-            sqlite_failure(
-                "configure",
-                None,
-                database_path,
-                &error,
-                "Ensure data.db is writable and not held by an incompatible process.",
-            )
-        })?;
+    configure_connection(&connection, database_path)?;
 
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -144,6 +134,40 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
             .expect("migration discovery requires bootstrap")
             .version,
     })
+}
+
+fn configure_connection(connection: &Connection, database_path: &Path) -> Result<()> {
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|error| {
+            sqlite_failure(
+                "configure",
+                None,
+                database_path,
+                &error,
+                "Ensure data.db is writable and not held by an incompatible process.",
+            )
+        })?;
+
+    let started = Instant::now();
+    loop {
+        match connection.execute_batch("PRAGMA journal_mode = WAL;") {
+            Ok(()) => return Ok(()),
+            Err(error) if is_busy_or_locked(&error) && started.elapsed() < BUSY_TIMEOUT => {
+                let remaining = BUSY_TIMEOUT.saturating_sub(started.elapsed());
+                std::thread::sleep(remaining.min(Duration::from_millis(10)));
+            }
+            Err(error) => {
+                return Err(sqlite_failure(
+                    "configure",
+                    None,
+                    database_path,
+                    &error,
+                    "Ensure data.db is writable and not held by an incompatible process.",
+                ));
+            }
+        }
+    }
 }
 
 fn discover_migrations(directory: &Path) -> Result<Vec<Migration>> {
@@ -649,6 +673,13 @@ fn sqlite_error_code(error: &SqliteError) -> Option<ErrorCode> {
         }
         _ => None,
     }
+}
+
+fn is_busy_or_locked(error: &SqliteError) -> bool {
+    matches!(
+        sqlite_error_code(error),
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
 }
 
 fn sqlite_error_summary(error: &SqliteError) -> String {
