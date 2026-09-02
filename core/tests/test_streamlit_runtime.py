@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import anyio
@@ -37,6 +38,392 @@ class ServerEntrypointTests(unittest.TestCase):
         self.assertEqual(kwargs["fd"], 17)
         self.assertEqual(kwargs["workers"], 1)
         self.assertEqual(kwargs["ws_max_size"], 25 * 1024 * 1024)
+        self.assertIsNone(kwargs["log_config"])
+        self.assertFalse(kwargs["access_log"])
+
+    def test_diagnostics_replace_third_party_rich_handlers(self):
+        fastmcp_logger = runtime_server.logging.getLogger("fastmcp")
+        child_logger = runtime_server.logging.getLogger("fastmcp.server.server")
+        fastmcp_logger.addHandler(runtime_server.logging.NullHandler())
+        child_logger.addHandler(runtime_server.logging.NullHandler())
+        fastmcp_logger.propagate = False
+
+        runtime_server._configure_diagnostics()
+
+        self.assertEqual(fastmcp_logger.handlers, [])
+        self.assertTrue(fastmcp_logger.propagate)
+        self.assertEqual(fastmcp_logger.level, runtime_server.logging.NOTSET)
+        self.assertEqual(child_logger.handlers, [])
+        self.assertTrue(child_logger.propagate)
+
+
+class FakeAuditSink:
+    def __init__(self, failure=None):
+        self.events = []
+        self.failure = failure
+
+    def emit(self, channel, event, level="INFO", payload=None, **fields):
+        if self.failure is not None:
+            raise self.failure
+        record = {
+            "channel": channel,
+            "event": event,
+            "level": level,
+            "payload": payload,
+            **fields,
+        }
+        self.events.append(record)
+        return record
+
+
+class FakeFatalReporter:
+    def __init__(self):
+        self.failures = []
+
+    def logging_failure(self, error):
+        self.failures.append(error)
+        return True
+
+
+class McpAuditTests(unittest.TestCase):
+    def test_component_results_use_public_mcp_models_for_audit_serialization(self):
+        def echo(value: str) -> str:
+            """Return the supplied value."""
+
+            return value
+
+        component = runtime.Tool.from_function(echo)
+        sink = FakeAuditSink()
+        middleware = runtime.McpAuditMiddleware(sink, FakeFatalReporter())
+        context = SimpleNamespace(
+            method="tools/list",
+            type="request",
+            source="client",
+            message={"method": "tools/list"},
+            fastmcp_context=None,
+        )
+
+        async def call_next(_):
+            return [component]
+
+        result = anyio.run(middleware.on_message, context, call_next)
+
+        self.assertEqual(result, [component])
+        self.assertEqual(
+            [event["event"] for event in sink.events],
+            ["mcp_message_received", "mcp_message_completed"],
+        )
+        normalized = sink.events[-1]["payload"]["result"]
+        self.assertEqual(normalized[0]["name"], "echo")
+        self.assertNotIn("fn", normalized[0])
+        self.assertEqual(sink.events[0]["direction"], "client_to_server")
+        self.assertEqual(sink.events[-1]["direction"], "server_to_client")
+        json.dumps(normalized)
+
+    def test_transport_records_socket_peer_and_selected_headers(self):
+        sink = FakeAuditSink()
+        fatal = FakeFatalReporter()
+
+        async def downstream(scope, receive, send):
+            await receive()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = runtime.McpTransportMiddleware(downstream, sink, fatal)
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"{}", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        async def invoke():
+            await middleware(
+                {
+                    "type": "http",
+                    "path": "/mcp",
+                    "method": "POST",
+                    "client": ("192.168.1.55", 54321),
+                    "headers": [
+                        (b"user-agent", b"test-client/1"),
+                        (b"x-forwarded-for", b"203.0.113.5"),
+                        (b"mcp-session-id", b"wire-session"),
+                    ],
+                },
+                receive,
+                send,
+            )
+
+        anyio.run(invoke)
+        event = sink.events[0]
+        self.assertEqual(event["channel"], "mcp")
+        self.assertEqual(event["sourceIp"], "192.168.1.55")
+        self.assertEqual(event["sourcePort"], 54321)
+        self.assertEqual(event["sessionId"], "wire-session")
+        self.assertEqual(event["userAgent"], "test-client/1")
+        self.assertEqual(event["httpMethod"], "POST")
+        self.assertEqual(event["path"], "/mcp")
+        self.assertEqual(event["statusCode"], 200)
+        self.assertNotIn("203.0.113.5", json.dumps(event))
+
+    def test_transport_correlates_response_session_client_and_wire_message(self):
+        sink = FakeAuditSink()
+        fatal = FakeFatalReporter()
+
+        async def downstream(scope, receive, send):
+            await receive()
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        (b"content-type", b"text/event-stream"),
+                        (b"mcp-session-id", b"new-session"),
+                    ],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b'event: message\ndata: {"jsonrpc":"2.0","id":"init-1","result":{}}\n\n',
+                }
+            )
+
+        middleware = runtime.McpTransportMiddleware(downstream, sink, fatal)
+        request_body = (
+            b'{"jsonrpc":"2.0","id":"init-1","method":"initialize",'
+            b'"params":{"clientInfo":{"name":"agent","version":"1.2"}}}'
+        )
+        observed_before_send = []
+
+        async def invoke():
+            async def receive():
+                return {
+                    "type": "http.request",
+                    "body": request_body,
+                    "more_body": False,
+                }
+
+            async def send(message):
+                if message["type"] == "http.response.body":
+                    observed_before_send.append(sink.events[-1]["event"])
+
+            await middleware(
+                {
+                    "type": "http",
+                    "path": "/mcp",
+                    "method": "POST",
+                    "client": ("192.168.1.77", 50000),
+                    "headers": [],
+                },
+                receive,
+                send,
+            )
+
+        anyio.run(invoke)
+        wire, transport = sink.events
+        self.assertEqual(observed_before_send, ["mcp_wire_message"])
+        self.assertEqual(wire["event"], "mcp_wire_message")
+        self.assertEqual(wire["direction"], "server_to_client")
+        self.assertEqual(wire["protocolRequestId"], "init-1")
+        self.assertEqual(wire["sessionId"], "new-session")
+        self.assertEqual(wire["client"]["name"], "agent")
+        self.assertEqual(wire["client"]["version"], "1.2")
+        self.assertEqual(wire["sourceIp"], "192.168.1.77")
+        self.assertEqual(transport["event"], "mcp_transport_completed")
+        self.assertEqual(transport["sessionId"], "new-session")
+        self.assertEqual(transport["client"]["name"], "agent")
+
+    def test_transport_routes_malformed_request_to_audit_only(self):
+        sink = FakeAuditSink()
+        fatal = FakeFatalReporter()
+
+        async def downstream(scope, receive, send):
+            await receive()
+            await send({"type": "http.response.start", "status": 400, "headers": []})
+            await send({"type": "http.response.body", "body": b"bad"})
+
+        middleware = runtime.McpTransportMiddleware(downstream, sink, fatal)
+
+        async def invoke():
+            async def receive():
+                return {
+                    "type": "http.request",
+                    "body": b"not-json",
+                    "more_body": False,
+                }
+
+            async def send(_):
+                pass
+
+            await middleware(
+                {
+                    "type": "http",
+                    "path": "/mcp",
+                    "method": "POST",
+                    "headers": [],
+                },
+                receive,
+                send,
+            )
+
+        anyio.run(invoke)
+        self.assertEqual(len(sink.events), 1)
+        self.assertEqual(sink.events[0]["channel"], "audit")
+        self.assertEqual(sink.events[0]["outcome"], "rejected")
+        body = sink.events[0]["payload"]["requestBody"]
+        self.assertEqual(body["preview"], "not-json")
+        self.assertEqual(body["originalBytes"], 8)
+        self.assertFalse(body["truncated"])
+
+    def test_wire_log_failure_prevents_response_body_send_and_reports_fatal(self):
+        error = runtime.StructuredLogError("disk full")
+        sink = FakeAuditSink(error)
+        fatal = FakeFatalReporter()
+        sent = []
+
+        async def downstream(scope, receive, send):
+            await receive()
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b'{"jsonrpc":"2.0","id":1,"result":{}}',
+                }
+            )
+
+        middleware = runtime.McpTransportMiddleware(downstream, sink, fatal)
+
+        async def invoke():
+            async def receive():
+                return {"type": "http.request", "body": b"{}", "more_body": False}
+
+            async def send(message):
+                sent.append(message["type"])
+
+            await middleware(
+                {
+                    "type": "http",
+                    "path": "/mcp",
+                    "method": "POST",
+                    "headers": [],
+                },
+                receive,
+                send,
+            )
+
+        with self.assertRaises(runtime.StructuredLogError):
+            anyio.run(invoke)
+        self.assertEqual(sent, ["http.response.start"])
+        self.assertEqual(fatal.failures, [error])
+
+    def test_transport_capture_is_bounded_for_large_malformed_body(self):
+        capture = runtime._BoundedBodyCapture()
+        capture.add(b"a" * (1024 * 1024))
+
+        payload = capture.payload()
+
+        self.assertTrue(payload["truncated"])
+        self.assertEqual(payload["originalBytes"], 1024 * 1024)
+        self.assertLess(len(payload["preview"]), 17 * 1024)
+
+    def test_fastmcp_message_taxonomy_and_final_tool_error(self):
+        sink = FakeAuditSink()
+        fatal = FakeFatalReporter()
+        middleware = runtime.McpAuditMiddleware(sink, fatal)
+        context = SimpleNamespace(
+            method="tools/call",
+            type="request",
+            source="client",
+            message=SimpleNamespace(name="echo", arguments={"value": "x"}),
+            fastmcp_context=None,
+        )
+
+        async def call_next(_):
+            return {
+                "structuredContent": {
+                    "error": {"code": "tool_timeout", "retryable": True}
+                }
+            }
+
+        result = anyio.run(middleware.on_message, context, call_next)
+        self.assertIn("structuredContent", result)
+        self.assertEqual(
+            [event["event"] for event in sink.events],
+            ["mcp_message_started", "mcp_message_completed"],
+        )
+        self.assertEqual(sink.events[-1]["outcome"], "timeout")
+        self.assertTrue(sink.events[-1]["retryable"])
+        self.assertEqual(sink.events[-1]["tool"], "echo")
+        self.assertEqual(sink.events[0]["direction"], "client_to_server")
+        self.assertEqual(sink.events[-1]["direction"], "server_to_client")
+
+    def test_is_error_result_is_failed_without_structured_error(self):
+        outcome, retryable = runtime._mcp_result_outcome({"isError": True})
+
+        self.assertEqual(outcome, "failed")
+        self.assertIsNone(retryable)
+
+    def test_initialize_uses_message_client_info_before_session_commit(self):
+        client_info = SimpleNamespace(name="agent-client", version="2.0")
+        context = SimpleNamespace(
+            method="initialize",
+            type="request",
+            source="client",
+            message=SimpleNamespace(params=SimpleNamespace(client_info=client_info)),
+            fastmcp_context=None,
+        )
+
+        fields = runtime._mcp_context_fields(context, "operation")
+
+        self.assertEqual(fields["client"]["name"], "agent-client")
+        self.assertEqual(fields["client"]["version"], "2.0")
+        self.assertFalse(fields["client"]["verified"])
+
+    def test_notification_emits_one_event(self):
+        sink = FakeAuditSink()
+        middleware = runtime.McpAuditMiddleware(sink, FakeFatalReporter())
+        context = SimpleNamespace(
+            method="notifications/initialized",
+            type="notification",
+            source="client",
+            message={"method": "notifications/initialized"},
+            fastmcp_context=None,
+        )
+
+        async def call_next(_):
+            return None
+
+        anyio.run(middleware.on_message, context, call_next)
+        self.assertEqual(
+            [event["event"] for event in sink.events], ["mcp_notification"]
+        )
+
+    def test_structured_writer_failure_reports_fatal_without_recursing(self):
+        error = runtime.StructuredLogError("disk full")
+        fatal = FakeFatalReporter()
+        middleware = runtime.McpAuditMiddleware(FakeAuditSink(error), fatal)
+        context = SimpleNamespace(
+            method="tools/list",
+            type="request",
+            source="client",
+            message={},
+            fastmcp_context=None,
+        )
+
+        async def call_next(_):
+            return []
+
+        with self.assertRaises(runtime.StructuredLogError):
+            anyio.run(middleware.on_message, context, call_next)
+        self.assertEqual(fatal.failures, [error])
 
 
 class HostOriginMiddlewareTests(unittest.TestCase):
@@ -203,6 +590,21 @@ class StreamlitConfigurationTests(unittest.TestCase):
 
 
 class DashboardFatalReporterTests(unittest.TestCase):
+    def test_generic_fatal_reporter_is_injectable_and_first_wins(self):
+        killed = []
+        reporter = runtime.FatalShutdownReporter(
+            killer=lambda process, sig: killed.append((process, sig))
+        )
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            self.assertTrue(reporter.report({"phase": "test", "retryable": False}))
+            self.assertTrue(reporter.report({"phase": "second"}))
+
+        self.assertTrue(reporter.reported)
+        self.assertEqual(len(stderr.getvalue().splitlines()), 1)
+        self.assertEqual(killed, [(os.getpid(), signal.SIGTERM)])
+
     def test_emits_one_sentinel_then_signals_graceful_shutdown(self):
         with tempfile.TemporaryDirectory() as directory:
             dashboard = Path(directory)

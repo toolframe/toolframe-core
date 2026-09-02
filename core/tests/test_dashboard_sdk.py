@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -15,6 +16,27 @@ if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
 import lite_mcp_dashboard as dashboard
+
+
+class FakeAuditSink:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, channel, event, level="INFO", payload=None, **fields):
+        record = {
+            "channel": channel,
+            "event": event,
+            "level": level,
+            "payload": payload,
+            **fields,
+        }
+        self.events.append(record)
+        return record
+
+
+class FailingAuditSink:
+    def emit(self, channel, event, level="INFO", payload=None, **fields):
+        raise RuntimeError("audit unavailable")
 
 
 class DashboardDatabaseTests(unittest.TestCase):
@@ -292,6 +314,202 @@ class DashboardDatabaseTests(unittest.TestCase):
             self.database.execute("CREATE TABLE single_connection (value INTEGER)")
 
         connect.assert_called_once_with(read_only=False)
+
+
+class DashboardAuditTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.database_path = Path(self.temporary_directory.name) / "data.db"
+        sqlite3.connect(self.database_path).close()
+        self.sink = FakeAuditSink()
+        self.database = dashboard.DashboardDatabase(
+            self.database_path, audit_sink=self.sink
+        )
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def test_execute_audits_correlated_start_and_post_commit_completion(self):
+        self.database.execute(
+            "CREATE TABLE audited (id INTEGER PRIMARY KEY, value TEXT)"
+        )
+        result = self.database.execute(
+            "INSERT INTO audited(value) VALUES (?) RETURNING id, value", ("one",)
+        )
+
+        start, completion = self.sink.events[-2:]
+        self.assertEqual(start["event"], "dashboard_mutation_started")
+        self.assertEqual(completion["event"], "dashboard_mutation_completed")
+        self.assertEqual(start["operationId"], completion["operationId"])
+        self.assertEqual(start["payload"]["parameters"], ["one"])
+        self.assertIsNone(start["sourceIp"])
+        self.assertIsNone(start["widget"])
+        self.assertEqual(completion["outcome"], "success")
+        self.assertEqual(completion["payload"]["affectedRows"], 1)
+        self.assertEqual(completion["payload"]["lastInsertRowId"], 1)
+        self.assertEqual(completion["payload"]["rows"], [{"id": 1, "value": "one"}])
+        self.assertEqual(result.affected_rows, 1)
+
+    def test_execute_rejections_and_query_write_attempt_are_audited(self):
+        for sql in ("SELECT 1", "PRAGMA user_version = 2", "SELECT 1; SELECT 2"):
+            with self.subTest(sql=sql):
+                before = len(self.sink.events)
+                with self.assertRaises(dashboard.DashboardDatabaseError):
+                    self.database.execute(sql)
+                start, completion = self.sink.events[before:]
+                self.assertEqual(start["event"], "dashboard_mutation_started")
+                self.assertEqual(completion["outcome"], "rejected")
+                self.assertEqual(start["operationId"], completion["operationId"])
+
+        self.database.execute("CREATE TABLE query_guard (value INTEGER)")
+        before = len(self.sink.events)
+        with self.assertRaises(dashboard.DashboardDatabaseError):
+            self.database.query("INSERT INTO query_guard(value) VALUES (1)")
+        self.assertEqual(len(self.sink.events), before + 1)
+        self.assertEqual(self.sink.events[-1]["event"], "dashboard_mutation_rejected")
+        self.assertEqual(self.sink.events[-1]["outcome"], "rejected")
+
+        before = len(self.sink.events)
+        self.database.query("SELECT COUNT(*) AS count FROM query_guard")
+        self.assertEqual(len(self.sink.events), before)
+
+    def test_trigger_writes_stay_on_the_originating_statement(self):
+        self.database.execute("CREATE TABLE source_rows (value INTEGER)")
+        self.database.execute("CREATE TABLE audit_rows (value INTEGER)")
+        self.database.execute(
+            """
+            CREATE TRIGGER audit_insert AFTER INSERT ON source_rows BEGIN
+                INSERT INTO audit_rows(value) VALUES (NEW.value);
+            END
+            """
+        )
+        self.sink.events.clear()
+
+        self.database.execute("INSERT INTO source_rows(value) VALUES (?)", (4,))
+
+        self.assertEqual(len(self.sink.events), 2)
+        self.assertTrue(self.sink.events[-1]["payload"]["triggeredWrites"])
+
+    def test_transaction_audits_all_statements_and_commit_in_order(self):
+        self.database.execute("CREATE TABLE ledger (value INTEGER)")
+        self.sink.events.clear()
+
+        with self.database.transaction() as transaction:
+            transaction.execute("INSERT INTO ledger(value) VALUES (?)", (1,))
+            transaction.query("SELECT value FROM ledger")
+
+        self.assertEqual(
+            [event["event"] for event in self.sink.events],
+            [
+                "dashboard_transaction_started",
+                "dashboard_transaction_statement_started",
+                "dashboard_transaction_statement_completed",
+                "dashboard_transaction_statement_started",
+                "dashboard_transaction_statement_completed",
+                "dashboard_transaction_committed",
+            ],
+        )
+        transaction_ids = {event["transactionId"] for event in self.sink.events}
+        self.assertEqual(len(transaction_ids), 1)
+        self.assertEqual(
+            self.sink.events[0]["operationId"],
+            self.sink.events[-1]["operationId"],
+        )
+
+    def test_transaction_failure_records_statement_and_rollback(self):
+        self.database.execute("CREATE TABLE unique_rows (value INTEGER UNIQUE)")
+        self.sink.events.clear()
+
+        with (
+            self.assertRaises(dashboard.DashboardDatabaseError),
+            self.database.transaction() as transaction,
+        ):
+            transaction.execute("INSERT INTO unique_rows(value) VALUES (1)")
+            transaction.execute("INSERT INTO unique_rows(value) VALUES (1)")
+
+        self.assertEqual(self.sink.events[-2]["outcome"], "failed")
+        self.assertEqual(
+            self.sink.events[-1]["event"], "dashboard_transaction_rolled_back"
+        )
+        self.assertEqual(self.sink.events[-1]["outcome"], "failed")
+        self.assertGreaterEqual(self.sink.events[-1]["durationMs"], 0)
+        count = self.database.query("SELECT COUNT(*) AS count FROM unique_rows").iloc[
+            0
+        ]["count"]
+        self.assertEqual(count, 0)
+
+    def test_caller_exception_cancels_and_rolls_back_transaction(self):
+        self.database.execute("CREATE TABLE cancelled_rows (value INTEGER)")
+        self.sink.events.clear()
+
+        with (
+            self.assertRaisesRegex(RuntimeError, "caller stopped"),
+            self.database.transaction() as transaction,
+        ):
+            transaction.execute("INSERT INTO cancelled_rows(value) VALUES (1)")
+            raise RuntimeError("caller stopped")
+
+        completion = self.sink.events[-1]
+        self.assertEqual(completion["event"], "dashboard_transaction_rolled_back")
+        self.assertEqual(completion["outcome"], "cancelled")
+        self.assertGreaterEqual(completion["durationMs"], 0)
+
+    def test_start_audit_failure_prevents_sql_execution(self):
+        database = dashboard.DashboardDatabase(
+            self.database_path, audit_sink=FailingAuditSink()
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "audit unavailable"):
+            database.execute("CREATE TABLE must_not_exist (value INTEGER)")
+
+        connection = sqlite3.connect(self.database_path)
+        try:
+            tables = connection.execute(
+                "SELECT name FROM sqlite_schema WHERE name = 'must_not_exist'"
+            ).fetchall()
+        finally:
+            connection.close()
+        self.assertEqual(tables, [])
+
+    def test_render_uses_public_streamlit_metadata_and_widget_identity(self):
+        module = ModuleType("audited_widget")
+        module.render = lambda context: context.db.execute(
+            "CREATE TABLE rendered (value INTEGER)"
+        )
+        widget = dashboard.DashboardWidget(
+            widget_id="identity",
+            title="Identity",
+            order=1,
+            path=Path("identity.py"),
+            module_name="audited_widget",
+            module=module,
+        )
+        context = dashboard.DashboardContext(
+            db=self.database,
+            workspace=self.database_path.parent,
+            logger=logging.getLogger("dashboard-audit-render"),
+            widget_id="",
+            runtime={},
+        )
+        streamlit = SimpleNamespace(
+            session_state={},
+            context=SimpleNamespace(
+                ip_address="192.168.1.42",
+                headers={"User-Agent": "dashboard-test-client"},
+            ),
+        )
+
+        with patch.dict(sys.modules, {"streamlit": streamlit}):
+            dashboard.render_widget(widget, context)
+
+        start, completion = self.sink.events
+        for event in (start, completion):
+            self.assertEqual(event["widget"], "identity")
+            self.assertEqual(event["sourceIp"], "192.168.1.42")
+            self.assertEqual(event["userAgent"], "dashboard-test-client")
+            self.assertTrue(event["dashboardSessionId"])
+            self.assertTrue(event["requestId"])
+        self.assertEqual(start["dashboardSessionId"], completion["dashboardSessionId"])
 
 
 class WidgetDiscoveryTests(unittest.TestCase):

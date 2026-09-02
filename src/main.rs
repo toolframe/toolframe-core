@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, VecDeque},
-    io::Write,
+    io::{IsTerminal, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     process::Stdio,
@@ -18,7 +18,11 @@ use tokio::{
     sync::{Mutex, oneshot},
     time,
 };
-use tracing::{info, warn};
+use tracing::{Event, Subscriber, info, warn};
+use tracing_subscriber::{
+    fmt::{FmtContext, FormatEvent, FormatFields, format::Writer},
+    registry::LookupSpan,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
@@ -26,6 +30,114 @@ const READY_SENTINEL: &str = "LITE_MCP_READY";
 const FATAL_SENTINEL: &str = "LITE_MCP_FATAL ";
 const STDERR_HISTORY_LINES: usize = 80;
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+const MINIMUM_UV_VERSION: (u64, u64, u64) = (0, 12, 8);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConsoleCategory {
+    Boot,
+    Uv,
+    Db,
+    Python,
+    Dashboard,
+    Mcp,
+    Network,
+    Security,
+    Shutdown,
+}
+
+impl ConsoleCategory {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Boot => "BOOT",
+            Self::Uv => "UV",
+            Self::Db => "DB",
+            Self::Python => "PYTHON",
+            Self::Dashboard => "DASHBOARD",
+            Self::Mcp => "MCP",
+            Self::Network => "NETWORK",
+            Self::Security => "SECURITY",
+            Self::Shutdown => "SHUTDOWN",
+        }
+    }
+
+    const fn ansi(self) -> &'static str {
+        match self {
+            Self::Boot | Self::Network => "36",
+            Self::Uv => "34",
+            Self::Db => "35",
+            Self::Python => "37",
+            Self::Dashboard => "32",
+            Self::Mcp => "33",
+            Self::Security => "31",
+            Self::Shutdown => "90",
+        }
+    }
+
+    fn from_tracing_target(target: &str) -> Self {
+        match target {
+            "lite_mcp::uv" => Self::Uv,
+            "lite_mcp::db" => Self::Db,
+            "lite_mcp::python" => Self::Python,
+            "lite_mcp::dashboard" => Self::Dashboard,
+            "lite_mcp::mcp" => Self::Mcp,
+            "lite_mcp::network" => Self::Network,
+            "lite_mcp::security" => Self::Security,
+            "lite_mcp::shutdown" => Self::Shutdown,
+            _ => Self::Boot,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ConsoleStyle {
+    color: bool,
+}
+
+impl ConsoleStyle {
+    fn detect(no_color: bool) -> Self {
+        Self {
+            color: !no_color
+                && std::env::var_os("NO_COLOR").is_none()
+                && std::io::stderr().is_terminal(),
+        }
+    }
+
+    fn format(self, category: ConsoleCategory, message: &str) -> String {
+        format_console_line(category, message, self.color, &local_timestamp())
+    }
+
+    fn print(self, category: ConsoleCategory, message: impl AsRef<str>) {
+        eprintln!("{}", self.format(category, message.as_ref()));
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TracingConsoleFormatter {
+    style: ConsoleStyle,
+}
+
+impl<S, N> FormatEvent<S, N> for TracingConsoleFormatter
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+    N: for<'writer> FormatFields<'writer> + 'static,
+{
+    fn format_event(
+        &self,
+        context: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> std::fmt::Result {
+        let prefix = self.style.format(
+            ConsoleCategory::from_tracing_target(event.metadata().target()),
+            event.metadata().level().as_str(),
+        );
+        write!(writer, "{prefix} ")?;
+        context
+            .field_format()
+            .format_fields(writer.by_ref(), event)?;
+        writeln!(writer)
+    }
+}
 
 #[derive(Debug, Default)]
 struct StderrState {
@@ -51,7 +163,7 @@ impl FatalDiagnostic {
             FatalPayload::Json(payload) => payload,
             FatalPayload::Malformed(error) => {
                 return format!(
-                    "malformed dashboard fatal sentinel: {error}; raw line: {}",
+                    "malformed runtime fatal sentinel: {error}; raw line: {}",
                     self.raw_line
                 );
             }
@@ -84,7 +196,7 @@ impl FatalDiagnostic {
         let message = field("message")
             .map(str::to_owned)
             .unwrap_or_else(|| payload.to_string());
-        format!("dashboard fatal error{context}: {message}")
+        format!("runtime fatal error{context}: {message}")
     }
 }
 
@@ -127,6 +239,26 @@ struct Cli {
     #[arg(long, env = "LITE_MCP_RUNTIME")]
     runtime_dir: Option<PathBuf>,
 
+    /// Structured audit and MCP JSONL directory. Relative paths resolve from the executable root.
+    #[arg(long, env = "LITE_MCP_LOGS_DIR")]
+    logs_dir: Option<PathBuf>,
+
+    /// Number of UTC date buckets retained, including today.
+    #[arg(long, env = "LITE_MCP_LOG_RETENTION_DAYS", default_value_t = 14, value_parser = positive_u64)]
+    log_retention_days: u64,
+
+    /// Combined maximum size of managed audit and MCP JSONL files.
+    #[arg(long, env = "LITE_MCP_LOG_MAX_TOTAL_MIB", default_value_t = 256, value_parser = positive_u64)]
+    log_max_total_mib: u64,
+
+    /// Forward routine UV and Python diagnostics to the categorized console.
+    #[arg(long, env = "LITE_MCP_VERBOSE", default_value_t = false)]
+    verbose: bool,
+
+    /// Disable ANSI colors. NO_COLOR is also honored.
+    #[arg(long, env = "LITE_MCP_NO_COLOR", default_value_t = false)]
+    no_color: bool,
+
     /// UV executable. Resolution order is this override, bundled sibling, then PATH.
     #[arg(long, env = "LITE_MCP_UV")]
     uv_path: Option<PathBuf>,
@@ -153,14 +285,23 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    initialize_logging();
+async fn main() {
     let cli = Cli::parse();
-    run(cli).await
+    let console = ConsoleStyle::detect(cli.no_color);
+    initialize_logging(console);
+    if let Err(error) = run(cli, console).await {
+        console.print(ConsoleCategory::Boot, format_launcher_error(&error));
+        std::process::exit(1);
+    }
 }
 
-async fn run(cli: Cli) -> Result<()> {
+async fn run(cli: Cli, console: ConsoleStyle) -> Result<()> {
     let executable_root = runtime::executable_root()?;
+    let logs_dir = runtime::prepare_logs_dir(&executable_root, cli.logs_dir.as_deref())?;
+    console.print(
+        ConsoleCategory::Boot,
+        format!("lite-mcp {} starting", env!("CARGO_PKG_VERSION")),
+    );
     let paths = runtime::resolve_paths(
         &executable_root,
         cli.database,
@@ -172,13 +313,13 @@ async fn run(cli: Cli) -> Result<()> {
     )?;
     let directories = runtime::prepare_directories(&paths)?;
     if directories.tools_scaffolded {
-        info!(path = %paths.tools.display(), "created tools directory and SQL reference tool");
+        info!(target: "lite_mcp::python", path = %paths.tools.display(), "created tools directory and SQL reference tool");
     }
     if directories.dashboard_scaffolded {
-        info!(path = %paths.dashboard.display(), "created editable Streamlit dashboard scaffold");
+        info!(target: "lite_mcp::dashboard", path = %paths.dashboard.display(), "created editable Streamlit dashboard scaffold");
     }
     if directories.migrations_scaffolded {
-        info!(path = %paths.migrations.display(), "created editable SQL migration scaffold");
+        info!(target: "lite_mcp::db", path = %paths.migrations.display(), "created editable SQL migration scaffold");
     }
 
     let migration_report = db::migrate(&paths.database, &paths.migrations).with_context(|| {
@@ -188,6 +329,13 @@ async fn run(cli: Cli) -> Result<()> {
             paths.migrations.display()
         )
     })?;
+    console.print(
+        ConsoleCategory::Db,
+        format!(
+            "migrations ready at version {:04}",
+            migration_report.current_version
+        ),
+    );
     let database = paths.database.canonicalize().with_context(|| {
         format!(
             "could not resolve database path {}",
@@ -228,6 +376,11 @@ async fn run(cli: Cli) -> Result<()> {
         format_startup_dependency_context(&catalog, &dashboard_manifest, &dashboard_manifest_path);
     let prepared = runtime::prepare_runtime(&runtime_dir, &catalog, &dashboard_manifest)?;
     let uv = runtime::locate_uv(cli.uv_path.as_deref(), &executable_root)?;
+    let uv_version = validate_uv_version(&uv).await?;
+    console.print(
+        ConsoleCategory::Uv,
+        format!("runtime prepared with {} (uv {uv_version})", uv.display()),
+    );
 
     let listener = bind_available(cli.host, cli.port, cli.port_search_span).await?;
     let address = listener
@@ -254,6 +407,7 @@ async fn run(cli: Cli) -> Result<()> {
     let ready_line = format!("{READY_SENTINEL} {ready_token}");
 
     let mut command = Command::new(&uv);
+    let (python_log_level, uvicorn_log_level) = child_log_levels(cli.verbose);
     command.arg("--no-config");
     if cli.offline {
         command.arg("--offline");
@@ -280,6 +434,17 @@ async fn run(cli: Cli) -> Result<()> {
         .env("LITE_MCP_DASHBOARD_DIR", &dashboard_dir)
         .env("LITE_MCP_WORKSPACE", &workspace)
         .env("LITE_MCP_RUNTIME", &runtime_dir)
+        .env("LITE_MCP_LOGS_DIR", &logs_dir)
+        .env(
+            "LITE_MCP_LOG_RETENTION_DAYS",
+            cli.log_retention_days.to_string(),
+        )
+        .env(
+            "LITE_MCP_LOG_MAX_TOTAL_MIB",
+            cli.log_max_total_mib.to_string(),
+        )
+        .env("LITE_MCP_LOG_LEVEL", python_log_level)
+        .env("LITE_MCP_UVICORN_LOG_LEVEL", uvicorn_log_level)
         .env("LITE_MCP_MANIFEST", &prepared.manifest)
         .env("LITE_MCP_INFO_PAGE", &prepared.info_page)
         .env("LITE_MCP_DASHBOARD_RUNNER", &prepared.dashboard_runner)
@@ -328,8 +493,21 @@ async fn run(cli: Cli) -> Result<()> {
 
     let stderr_state = Arc::new(Mutex::new(StderrState::default()));
     let (ready_sender, mut ready_receiver) = oneshot::channel();
-    tokio::spawn(forward_stdout(stdout, ready_sender, ready_line));
-    let mut stderr_task = tokio::spawn(forward_stderr(stderr, Arc::clone(&stderr_state)));
+    tokio::spawn(forward_stdout(
+        stdout,
+        ready_sender,
+        ready_line,
+        Arc::clone(&stderr_state),
+        console,
+        cli.verbose,
+    ));
+    let mut stderr_task = tokio::spawn(forward_stderr(
+        stderr,
+        Arc::clone(&stderr_state),
+        console,
+        cli.verbose,
+    ));
+    console.print(ConsoleCategory::Python, "waiting for runtime readiness");
 
     let mut wait = Box::pin(child.wait());
     let mut deadline = Box::pin(time::sleep(Duration::from_secs(cli.startup_timeout)));
@@ -380,15 +558,19 @@ async fn run(cli: Cli) -> Result<()> {
         }
     }
 
-    announce(
+    announce(Announcement {
         address,
-        &database,
-        &migrations_dir,
-        migration_report,
-        &tools_dir,
-        &dashboard_dir,
-        catalog.manifest.tools.len(),
-    );
+        database: &database,
+        migrations_dir: &migrations_dir,
+        migrations: migration_report,
+        tools_dir: &tools_dir,
+        dashboard_dir: &dashboard_dir,
+        tool_count: catalog.manifest.tools.len(),
+        logs_dir: &logs_dir,
+        retention_days: cli.log_retention_days,
+        max_total_mib: cli.log_max_total_mib,
+        console,
+    });
 
     let (status, shutdown_requested) = tokio::select! {
         status = &mut wait => {
@@ -396,12 +578,12 @@ async fn run(cli: Cli) -> Result<()> {
             (status, false)
         }
         _ = shutdown_signal() => {
-            info!("shutdown requested; stopping Python runtime");
+            console.print(ConsoleCategory::Shutdown, "shutdown requested; stopping Python runtime");
             terminate_process_group(child_pid, libc::SIGTERM);
             let status = match time::timeout(Duration::from_secs(5), &mut wait).await {
                 Ok(status) => status.context("could not wait for the Python runtime during shutdown")?,
                 Err(_) => {
-                    warn!("Python runtime did not stop in 5 seconds; forcing termination");
+                    warn!(target: "lite_mcp::shutdown", "Python runtime did not stop in 5 seconds; forcing termination");
                     terminate_process_group(child_pid, libc::SIGKILL);
                     wait.await.context("could not wait for the Python runtime after forced shutdown")?
                 }
@@ -422,7 +604,7 @@ async fn run(cli: Cli) -> Result<()> {
         bail!("Python runtime stopped unexpectedly ({status}){diagnostics}");
     }
 
-    info!("server stopped");
+    console.print(ConsoleCategory::Shutdown, "server stopped");
     Ok(())
 }
 
@@ -430,6 +612,9 @@ async fn forward_stdout(
     stdout: tokio::process::ChildStdout,
     ready_sender: oneshot::Sender<()>,
     ready_line: String,
+    diagnostics: Arc<Mutex<StderrState>>,
+    console: ConsoleStyle,
+    verbose: bool,
 ) {
     let mut lines = BufReader::new(stdout).lines();
     let mut ready_sender = Some(ready_sender);
@@ -439,16 +624,41 @@ async fn forward_stdout(
                 let _ = sender.send(());
             }
         } else {
-            println!("{line}");
+            let classified = classify_child_line(&line);
+            if verbose || classified.visible {
+                console.print(classified.category, child_console_message(&line));
+            }
+            let mut diagnostics = diagnostics.lock().await;
+            diagnostics.history.push_back(line);
+            while diagnostics.history.len() > STDERR_HISTORY_LINES {
+                diagnostics.history.pop_front();
+            }
         }
     }
 }
 
-async fn forward_stderr(stderr: tokio::process::ChildStderr, state: Arc<Mutex<StderrState>>) {
+async fn forward_stderr(
+    stderr: tokio::process::ChildStderr,
+    state: Arc<Mutex<StderrState>>,
+    console: ConsoleStyle,
+    verbose: bool,
+) {
     let mut lines = BufReader::new(stderr).lines();
+    let mut error_block = false;
     while let Ok(Some(line)) = lines.next_line().await {
-        eprintln!("{line}");
         let fatal = parse_fatal_sentinel(&line);
+        let classified = classify_child_line(&line);
+        if classified.error {
+            error_block = true;
+        } else if error_block && is_routine_info(&line) {
+            error_block = false;
+        }
+        // The fatal sentinel is an internal child/launcher protocol. The
+        // launcher renders its parsed summary once instead of exposing raw
+        // JSON as a second diagnostic line.
+        if fatal.is_none() && (verbose || classified.visible || error_block) {
+            console.print(classified.category, child_console_message(&line));
+        }
         let mut state = state.lock().await;
         if state.fatal.is_none()
             && let Some(fatal) = fatal
@@ -460,6 +670,150 @@ async fn forward_stderr(stderr: tokio::process::ChildStderr, state: Arc<Mutex<St
             state.history.pop_front();
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClassifiedLine {
+    category: ConsoleCategory,
+    visible: bool,
+    error: bool,
+}
+
+fn classify_child_line(line: &str) -> ClassifiedLine {
+    let lower = line.to_ascii_lowercase();
+    let concise_uv_phase = is_concise_uv_phase(&lower);
+    let category = if lower.contains("uv ")
+        || lower.starts_with("using cpython")
+        || lower.starts_with("creating virtual environment")
+        || lower.starts_with("downloading ")
+        || lower.starts_with("downloaded ")
+        || lower.starts_with("resolved ")
+        || lower.starts_with("installed ")
+    {
+        ConsoleCategory::Uv
+    } else if lower.starts_with("[dashboard]")
+        || lower.contains("streamlit")
+        || lower.contains("dashboard")
+    {
+        ConsoleCategory::Dashboard
+    } else if lower.starts_with("[mcp]")
+        || lower.contains("mcp.server")
+        || lower.contains("fastmcp")
+        || lower.contains("/mcp")
+    {
+        ConsoleCategory::Mcp
+    } else {
+        ConsoleCategory::Python
+    };
+    let error = line.starts_with(FATAL_SENTINEL)
+        || lower.contains("traceback")
+        || lower.contains(" error")
+        || lower.starts_with("error")
+        || lower.contains("critical")
+        || lower.contains("exception");
+    let warning = lower.contains("warning") || lower.starts_with("warn");
+    ClassifiedLine {
+        category,
+        visible: error || warning || concise_uv_phase,
+        error,
+    }
+}
+
+fn child_console_message(line: &str) -> &str {
+    for prefix in ["[PYTHON] ", "[DASHBOARD] ", "[MCP] "] {
+        if let Some(message) = line.strip_prefix(prefix) {
+            return message;
+        }
+    }
+    line
+}
+
+fn is_concise_uv_phase(lower: &str) -> bool {
+    lower.starts_with("using cpython")
+        || lower.starts_with("creating virtual environment")
+        || lower.starts_with("downloading cpython")
+        || lower.starts_with("downloaded cpython")
+        || (lower.starts_with("resolved ") && lower.contains("package"))
+        || (lower.starts_with("installed ") && lower.contains("package"))
+}
+
+fn child_log_levels(verbose: bool) -> (&'static str, &'static str) {
+    if verbose {
+        ("DEBUG", "debug")
+    } else {
+        ("WARNING", "warning")
+    }
+}
+
+async fn validate_uv_version(path: &Path) -> Result<String> {
+    let output = time::timeout(
+        Duration::from_secs(5),
+        Command::new(path)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .output(),
+    )
+    .await
+    .with_context(|| format!("timed out checking UV version at {}", path.display()))?
+    .with_context(|| format!("could not run {} --version", path.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "{} --version failed ({}): {}",
+            path.display(),
+            output.status,
+            stderr.trim()
+        );
+    }
+    let stdout = String::from_utf8(output.stdout).context("UV version output was not UTF-8")?;
+    let (display, parsed) = parse_uv_version(&stdout)?;
+    if parsed < MINIMUM_UV_VERSION {
+        bail!(
+            "UV {display} is too old; lite-mcp requires UV {}.{}.{} or newer",
+            MINIMUM_UV_VERSION.0,
+            MINIMUM_UV_VERSION.1,
+            MINIMUM_UV_VERSION.2
+        );
+    }
+    Ok(display)
+}
+
+fn parse_uv_version(output: &str) -> Result<(String, (u64, u64, u64))> {
+    let mut parts = output.split_whitespace();
+    if parts.next() != Some("uv") {
+        bail!("unexpected UV version output: {}", output.trim());
+    }
+    let display = parts
+        .next()
+        .ok_or_else(|| anyhow!("UV version output did not include a version"))?;
+    let components = display
+        .split('.')
+        .take(3)
+        .map(|component| {
+            let digits = component
+                .chars()
+                .take_while(|character| character.is_ascii_digit())
+                .collect::<String>();
+            if digits.is_empty() {
+                bail!("invalid UV version component {component:?}");
+            }
+            digits
+                .parse::<u64>()
+                .with_context(|| format!("invalid UV version component {component:?}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if components.len() != 3 {
+        bail!("UV version must contain major, minor, and patch components");
+    }
+    Ok((
+        display.to_owned(),
+        (components[0], components[1], components[2]),
+    ))
+}
+
+fn is_routine_info(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains(" info ") || lower.starts_with("info:")
 }
 
 fn parse_fatal_sentinel(line: &str) -> Option<FatalDiagnostic> {
@@ -481,6 +835,10 @@ fn format_fatal_context(fatal: Option<&FatalDiagnostic>) -> String {
         .unwrap_or_default()
 }
 
+fn format_launcher_error(error: &anyhow::Error) -> String {
+    format!("fatal: {error:#}")
+}
+
 async fn stderr_snapshot(state: &Mutex<StderrState>) -> (Option<FatalDiagnostic>, String) {
     let state = state.lock().await;
     let diagnostics = if state.history.is_empty() {
@@ -499,7 +857,7 @@ async fn drain_stderr_task(task: &mut tokio::task::JoinHandle<()>) {
         .await
         .is_err()
     {
-        warn!("timed out while draining Python stderr; preserving collected diagnostics");
+        warn!(target: "lite_mcp::python", "timed out while draining Python stderr; preserving collected diagnostics");
         task.abort();
         let _ = task.await;
     }
@@ -524,7 +882,7 @@ async fn bind_available(
         match TcpListener::bind(address).await {
             Ok(listener) => {
                 if offset > 0 {
-                    warn!(
+                    warn!(target: "lite_mcp::network",
                         preferred_port,
                         selected_port = port,
                         "preferred port was busy"
@@ -537,7 +895,7 @@ async fn bind_available(
         }
     }
 
-    warn!(
+    warn!(target: "lite_mcp::network",
         preferred_port,
         search_span, "configured port range was busy; asking the OS for a free port"
     );
@@ -576,7 +934,7 @@ fn terminate_process_group(pid: u32, signal: i32) {
         if result < 0 {
             let error = std::io::Error::last_os_error();
             if error.raw_os_error() != Some(libc::ESRCH) {
-                warn!(%error, pid, signal, "could not signal Python process group");
+                warn!(target: "lite_mcp::shutdown", %error, pid, signal, "could not signal Python process group");
             }
         }
     }
@@ -585,15 +943,34 @@ fn terminate_process_group(pid: u32, signal: i32) {
 #[cfg(not(unix))]
 fn terminate_process_group(_: u32, _: i32) {}
 
-fn announce(
+struct Announcement<'a> {
     address: SocketAddr,
-    database: &Path,
-    migrations_dir: &Path,
+    database: &'a Path,
+    migrations_dir: &'a Path,
     migrations: db::MigrationReport,
-    tools_dir: &Path,
-    dashboard_dir: &Path,
+    tools_dir: &'a Path,
+    dashboard_dir: &'a Path,
     tool_count: usize,
-) {
+    logs_dir: &'a Path,
+    retention_days: u64,
+    max_total_mib: u64,
+    console: ConsoleStyle,
+}
+
+fn announce(announcement: Announcement<'_>) {
+    let Announcement {
+        address,
+        database,
+        migrations_dir,
+        migrations,
+        tools_dir,
+        dashboard_dir,
+        tool_count,
+        logs_dir,
+        retention_days,
+        max_total_mib,
+        console,
+    } = announcement;
     let port = address.port();
     let primary_ip = match address.ip() {
         IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -602,20 +979,48 @@ fn announce(
     };
     let local_url = runtime::http_origin(primary_ip, port);
 
-    println!("lite-mcp {} is ready", env!("CARGO_PKG_VERSION"));
-    println!("Dashboard: {local_url}/ (Streamlit)");
-    println!("Info:      {local_url}/info");
-    println!("MCP:       {local_url}/mcp");
-    println!("Database:  {}", database.display());
-    println!(
-        "Migrations: {} (current {:04}; {} applied this start; {} total)",
-        migrations_dir.display(),
-        migrations.current_version,
-        migrations.applied_now,
-        migrations.total
+    console.print(
+        ConsoleCategory::Boot,
+        format!("lite-mcp {} is ready", env!("CARGO_PKG_VERSION")),
     );
-    println!("Tools:     {} ({tool_count} loaded)", tools_dir.display());
-    println!("Dashboard files: {}", dashboard_dir.display());
+    console.print(
+        ConsoleCategory::Dashboard,
+        format!("Dashboard  {local_url}/ (Streamlit)"),
+    );
+    console.print(
+        ConsoleCategory::Boot,
+        format!("Info       {local_url}/info"),
+    );
+    console.print(ConsoleCategory::Mcp, format!("MCP        {local_url}/mcp"));
+    console.print(
+        ConsoleCategory::Db,
+        format!("Database   {}", database.display()),
+    );
+    console.print(
+        ConsoleCategory::Db,
+        format!(
+            "Migrations {} (current {:04}; {} applied this start; {} total)",
+            migrations_dir.display(),
+            migrations.current_version,
+            migrations.applied_now,
+            migrations.total
+        ),
+    );
+    console.print(
+        ConsoleCategory::Python,
+        format!("Tools      {} ({tool_count} loaded)", tools_dir.display()),
+    );
+    console.print(
+        ConsoleCategory::Dashboard,
+        format!("Files      {}", dashboard_dir.display()),
+    );
+    console.print(
+        ConsoleCategory::Security,
+        format!(
+            "JSONL logs {} ({retention_days} UTC days; {max_total_mib} MiB combined cap)",
+            logs_dir.display()
+        ),
+    );
 
     if address.ip().is_unspecified()
         && let Ok(interfaces) = local_ip_address::list_afinet_netifas()
@@ -623,20 +1028,33 @@ fn announce(
         let lan_urls = interfaces
             .into_iter()
             .map(|(_, ip)| ip)
-            .filter(|ip| ip.is_ipv4() && !ip.is_loopback())
+            .filter(|ip| !ip.is_loopback())
             .map(|ip| runtime::http_origin(ip, port))
             .collect::<BTreeSet<_>>();
         for url in lan_urls {
-            println!("LAN:       {url}/");
+            console.print(ConsoleCategory::Network, format!("LAN        {url}/"));
         }
     }
 
-    println!(
-        "WARNING: no authentication; every LAN client can view Dashboard data, submit Dashboard writes, call trusted Python tools, and modify data."
+    console.print(
+        ConsoleCategory::Security,
+        "WARNING no authentication: LAN clients can read and mutate data and call trusted tools",
     );
-    println!("LITE_MCP_URL={local_url}");
-    println!("LITE_MCP_MCP_URL={local_url}/mcp");
+    console.print(
+        ConsoleCategory::Security,
+        "WARNING JSONL logs can contain unredacted SQL, parameters, payloads, results, and secrets",
+    );
+    for line in machine_stdout_lines(&local_url) {
+        println!("{line}");
+    }
     let _ = std::io::stdout().flush();
+}
+
+fn machine_stdout_lines(local_url: &str) -> [String; 2] {
+    [
+        format!("LITE_MCP_URL={local_url}"),
+        format!("LITE_MCP_MCP_URL={local_url}/mcp"),
+    ]
 }
 
 fn format_startup_dependency_context(
@@ -682,14 +1100,70 @@ fn format_startup_dependency_context(
     format!("{dashboard_declaration}\nStartup tool declarations:\n{tool_declarations}")
 }
 
-fn initialize_logging() {
+fn initialize_logging(style: ConsoleStyle) {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "lite_mcp=info".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .event_format(TracingConsoleFormatter { style })
+                .with_ansi(false),
+        )
         .init();
+}
+
+fn format_console_line(
+    category: ConsoleCategory,
+    message: &str,
+    color: bool,
+    timestamp: &str,
+) -> String {
+    if color {
+        format!(
+            "{timestamp} \x1b[{}m[{}]\x1b[0m {message}",
+            category.ansi(),
+            category.label()
+        )
+    } else {
+        format!("{timestamp} [{}] {message}", category.label())
+    }
+}
+
+#[cfg(unix)]
+fn local_timestamp() -> String {
+    let mut now = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
+    // SAFETY: now points to writable storage and a null timezone is supported.
+    unsafe { libc::gettimeofday(&mut now, std::ptr::null_mut()) };
+    let seconds = now.tv_sec;
+    let mut local: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: pointers are valid and localtime_r writes only to local.
+    unsafe { libc::localtime_r(&seconds, &mut local) };
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        local.tm_hour,
+        local.tm_min,
+        local.tm_sec,
+        now.tv_usec / 1_000
+    )
+}
+
+#[cfg(not(unix))]
+fn local_timestamp() -> String {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        (elapsed.as_secs() / 3600) % 24,
+        (elapsed.as_secs() / 60) % 60,
+        elapsed.as_secs() % 60,
+        elapsed.subsec_millis()
+    )
 }
 
 async fn shutdown_signal() {
@@ -700,7 +1174,7 @@ async fn shutdown_signal() {
         let mut terminate = match signal(SignalKind::terminate()) {
             Ok(signal) => signal,
             Err(error) => {
-                warn!(%error, "could not install SIGTERM handler");
+                warn!(target: "lite_mcp::shutdown", %error, "could not install SIGTERM handler");
                 let _ = tokio::signal::ctrl_c().await;
                 return;
             }
@@ -708,7 +1182,7 @@ async fn shutdown_signal() {
         tokio::select! {
             result = tokio::signal::ctrl_c() => {
                 if let Err(error) = result {
-                    warn!(%error, "Ctrl-C handler failed");
+                    warn!(target: "lite_mcp::shutdown", %error, "Ctrl-C handler failed");
                 }
             }
             _ = terminate.recv() => {}
@@ -717,7 +1191,7 @@ async fn shutdown_signal() {
 
     #[cfg(not(unix))]
     if let Err(error) = tokio::signal::ctrl_c().await {
-        warn!(%error, "Ctrl-C handler failed");
+        warn!(target: "lite_mcp::shutdown", %error, "Ctrl-C handler failed");
     }
 }
 
@@ -738,6 +1212,17 @@ fn positive_usize(value: &str) -> std::result::Result<usize, String> {
         Ok(value)
     } else {
         Err("must be greater than zero".to_owned())
+    }
+}
+
+fn positive_u64(value: &str) -> std::result::Result<u64, String> {
+    let value: u64 = value
+        .parse()
+        .map_err(|_| "must be a positive integer".to_owned())?;
+    if value == 0 {
+        Err("must be greater than zero".to_owned())
+    } else {
+        Ok(value)
     }
 }
 
@@ -774,6 +1259,140 @@ mod tests {
         assert!(finite_nonnegative("NaN").is_err());
         assert_eq!(positive_usize("1").expect("positive cap"), 1);
         assert!(positive_usize("0").is_err());
+        assert_eq!(positive_u64("14").expect("positive retention"), 14);
+        assert!(positive_u64("0").is_err());
+    }
+
+    #[test]
+    fn parses_logging_cli_settings_and_flags() {
+        let cli = Cli::try_parse_from([
+            "lite-mcp",
+            "--logs-dir",
+            "relative-logs",
+            "--log-retention-days",
+            "7",
+            "--log-max-total-mib",
+            "64",
+            "--verbose",
+            "--no-color",
+        ])
+        .expect("parse logging arguments");
+        assert_eq!(cli.logs_dir, Some(PathBuf::from("relative-logs")));
+        assert_eq!(cli.log_retention_days, 7);
+        assert_eq!(cli.log_max_total_mib, 64);
+        assert!(cli.verbose);
+        assert!(cli.no_color);
+
+        assert!(Cli::try_parse_from(["lite-mcp", "--log-retention-days", "0"]).is_err());
+        assert!(Cli::try_parse_from(["lite-mcp", "--log-max-total-mib", "0"]).is_err());
+    }
+
+    #[test]
+    fn formats_categorized_console_lines_with_optional_color() {
+        assert_eq!(
+            format_console_line(
+                ConsoleCategory::Mcp,
+                "request complete",
+                false,
+                "12:34:56.789"
+            ),
+            "12:34:56.789 [MCP] request complete"
+        );
+        let colored =
+            format_console_line(ConsoleCategory::Security, "warning", true, "12:34:56.789");
+        assert!(colored.contains("\x1b[31m[SECURITY]\x1b[0m"));
+        assert!(colored.ends_with(" warning"));
+        assert_eq!(
+            ConsoleCategory::from_tracing_target("lite_mcp::network"),
+            ConsoleCategory::Network
+        );
+        assert_eq!(
+            ConsoleCategory::from_tracing_target("lite_mcp::shutdown"),
+            ConsoleCategory::Shutdown
+        );
+        assert_eq!(
+            ConsoleCategory::from_tracing_target("third_party"),
+            ConsoleCategory::Boot
+        );
+    }
+
+    #[test]
+    fn classifies_child_sources_and_suppresses_routine_info() {
+        let mcp = classify_child_line("2026-09-02 INFO mcp.server session started");
+        assert_eq!(mcp.category, ConsoleCategory::Mcp);
+        assert!(!mcp.visible);
+        assert_eq!(
+            classify_child_line("[MCP] ERROR mcp.shared request failed").category,
+            ConsoleCategory::Mcp
+        );
+        assert_eq!(
+            child_console_message("[DASHBOARD] ERROR streamlit render failed"),
+            "ERROR streamlit render failed"
+        );
+
+        let uv = classify_child_line("Downloading streamlit (10 MiB)");
+        assert_eq!(uv.category, ConsoleCategory::Uv);
+        assert!(!uv.visible);
+
+        for phase in [
+            "Using CPython 3.14.7",
+            "Creating virtual environment at: .venv",
+            "Downloading cpython-3.14.7-macos-aarch64-none",
+            "Downloaded cpython-3.14.7-macos-aarch64-none",
+            "Resolved 90 packages in 120ms",
+            "Installed 90 packages in 237ms",
+        ] {
+            let classified = classify_child_line(phase);
+            assert_eq!(classified.category, ConsoleCategory::Uv, "{phase}");
+            assert!(classified.visible, "{phase}");
+        }
+
+        assert!(!classify_child_line("Downloaded pygments").visible);
+
+        let failure = classify_child_line("Traceback (most recent call last):");
+        assert_eq!(failure.category, ConsoleCategory::Python);
+        assert!(failure.visible);
+        assert!(failure.error);
+    }
+
+    #[test]
+    fn verbose_controls_python_emission_levels() {
+        assert_eq!(child_log_levels(false), ("WARNING", "warning"));
+        assert_eq!(child_log_levels(true), ("DEBUG", "debug"));
+    }
+
+    #[test]
+    fn parses_uv_semantic_versions_for_runtime_minimum_check() {
+        assert_eq!(
+            parse_uv_version("uv 0.12.8 (abcdef 2026-08-01)").expect("parse version"),
+            ("0.12.8".to_owned(), (0, 12, 8))
+        );
+        assert_eq!(
+            parse_uv_version("uv 1.0.0\n").expect("parse major version"),
+            ("1.0.0".to_owned(), (1, 0, 0))
+        );
+        assert!(parse_uv_version("uv unknown").is_err());
+        assert!(parse_uv_version("not-uv 0.12.8").is_err());
+    }
+
+    #[test]
+    fn launcher_errors_preserve_the_full_anyhow_chain() {
+        let error = anyhow!("root cause").context("startup failed");
+        assert_eq!(
+            format_launcher_error(&error),
+            "fatal: startup failed: root cause"
+        );
+    }
+
+    #[test]
+    fn ready_stdout_contract_contains_only_machine_assignments() {
+        assert_eq!(
+            machine_stdout_lines("http://127.0.0.1:8000"),
+            [
+                "LITE_MCP_URL=http://127.0.0.1:8000".to_owned(),
+                "LITE_MCP_MCP_URL=http://127.0.0.1:8000/mcp".to_owned(),
+            ]
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import inspect
@@ -13,6 +14,7 @@ import signal
 import sqlite3
 import sys
 import threading
+import time
 import traceback
 import types
 import uuid
@@ -22,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastmcp import FastMCP
 from fastmcp.decorators import get_fastmcp_meta
@@ -30,6 +32,7 @@ from fastmcp.server.middleware import Middleware
 from fastmcp.tools import Tool, ToolResult
 from fastmcp.tools.function_tool import ToolMeta
 from fastmcp.utilities.lifespan import combine_lifespans
+from lite_mcp_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
 from starlette.routing import Route
 
 LOGGER = logging.getLogger("lite_mcp.runtime")
@@ -199,11 +202,18 @@ class HostOriginMiddleware:
     """Validate Host and browser Origin headers for HTTP and WebSocket routes."""
 
     def __init__(
-        self, app: Any, allowed_hosts: list[str], allowed_origins: list[str]
+        self,
+        app: Any,
+        allowed_hosts: list[str],
+        allowed_origins: list[str],
+        audit_sink: StructuredLogs | None = None,
+        fatal_reporter: FatalShutdownReporter | None = None,
     ) -> None:
         self.app = app
         self.allowed_hosts = {host.casefold() for host in allowed_hosts}
         self.allowed_origins = {origin.casefold() for origin in allowed_origins}
+        self.audit_sink = audit_sink
+        self.fatal_reporter = fatal_reporter
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         scope_type = scope.get("type")
@@ -217,6 +227,7 @@ class HostOriginMiddleware:
         }
         host = _host_without_port(headers.get("host", "")).casefold()
         if not host or host not in self.allowed_hosts:
+            self._audit_rejection(scope, headers, "host_rejected", host=host or None)
             if scope_type == "websocket":
                 await send(
                     {
@@ -233,6 +244,7 @@ class HostOriginMiddleware:
 
         origin = headers.get("origin")
         if origin is not None and origin.casefold() not in self.allowed_origins:
+            self._audit_rejection(scope, headers, "origin_rejected", origin=origin)
             if scope_type == "websocket":
                 await send(
                     {
@@ -249,12 +261,303 @@ class HostOriginMiddleware:
 
         await self.app(scope, receive, send)
 
+    def _audit_rejection(
+        self,
+        scope: dict[str, Any],
+        headers: dict[str, str],
+        event: str,
+        **fields: Any,
+    ) -> None:
+        if self.audit_sink is None:
+            return
+        try:
+            self.audit_sink.emit(
+                "audit",
+                event,
+                level="WARNING",
+                outcome="rejected",
+                payload={"path": scope.get("path"), **fields},
+                **_transport_fields(scope, headers),
+            )
+        except StructuredLogError as error:
+            if self.fatal_reporter is not None:
+                self.fatal_reporter.logging_failure(error)
+            raise
+
+
+class FatalShutdownReporter:
+    """Emit the first fatal sentinel without depending on structured logging."""
+
+    def __init__(self, *, killer: Any = os.kill) -> None:
+        self._killer = killer
+        self._lock = threading.Lock()
+        self._reported = False
+
+    @property
+    def reported(self) -> bool:
+        with self._lock:
+            return self._reported
+
+    def report(self, payload: dict[str, Any]) -> bool:
+        with self._lock:
+            if self._reported:
+                return True
+            self._reported = True
+        print(
+            f"{FATAL_SENTINEL} "
+            + json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+            file=sys.stderr,
+            flush=True,
+        )
+        sys.stderr.flush()
+        self._killer(os.getpid(), signal.SIGTERM)
+        return True
+
+    def logging_failure(self, error: BaseException) -> bool:
+        return self.report(
+            {
+                "traceId": uuid.uuid4().hex,
+                "phase": "structured-logging",
+                "exceptionType": type(error).__name__,
+                "message": _safe_single_line(str(error), limit=1024),
+                "retryable": False,
+            }
+        )
+
+
+class McpTransportMiddleware:
+    """Audit the exact streamable-HTTP endpoint at the ASGI boundary."""
+
+    def __init__(
+        self,
+        app: Any,
+        audit_sink: StructuredLogs,
+        fatal_reporter: FatalShutdownReporter,
+    ) -> None:
+        self.app = app
+        self.audit_sink = audit_sink
+        self.fatal_reporter = fatal_reporter
+        self._clients = _McpClientRegistry()
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or scope.get("path") != "/mcp":
+            await self.app(scope, receive, send)
+            return
+
+        started = time.monotonic()
+        operation_id = uuid.uuid4().hex
+        headers = _scope_headers(scope)
+        body = _BoundedBodyCapture()
+        response_headers: dict[str, str] = {}
+        status: int | None = None
+        disconnected = False
+
+        async def audited_receive() -> dict[str, Any]:
+            nonlocal disconnected
+            message = await receive()
+            if message.get("type") == "http.request":
+                body.add(message.get("body", b""))
+            elif message.get("type") == "http.disconnect":
+                disconnected = True
+            return message
+
+        async def audited_send(message: dict[str, Any]) -> None:
+            nonlocal status
+            if message.get("type") == "http.response.start":
+                status = int(message["status"])
+                response_headers.update(
+                    {
+                        key.decode("latin-1").casefold(): value.decode("latin-1")
+                        for key, value in message.get("headers", [])
+                    }
+                )
+            elif message.get("type") == "http.response.body":
+                chunk = message.get("body", b"")
+                if status is not None and status < 400 and chunk:
+                    chunk_capture = _BoundedBodyCapture()
+                    chunk_capture.add(chunk)
+                    chunk_fields = _transport_fields(scope, headers)
+                    request_session_id = chunk_fields["sessionId"]
+                    response_session_id = response_headers.get("mcp-session-id")
+                    chunk_fields["sessionId"] = (
+                        request_session_id or response_session_id
+                    )
+                    chunk_fields["client"] = self._clients.resolve(
+                        request_body=body.raw_if_complete(),
+                        request_session_id=request_session_id,
+                        response_session_id=response_session_id,
+                    )
+                    for wire_message in _mcp_wire_messages(
+                        chunk_capture, response_headers.get("content-type")
+                    ):
+                        self.audit_sink.emit(
+                            "mcp",
+                            (
+                                "mcp_wire_chunk"
+                                if _is_bounded_wire_chunk(wire_message)
+                                else "mcp_wire_message"
+                            ),
+                            operationId=operation_id,
+                            protocolRequestId=_wire_request_id(wire_message),
+                            direction="server_to_client",
+                            statusCode=status,
+                            outcome="success",
+                            payload={
+                                "message": wire_message,
+                                "moreBody": bool(message.get("more_body", False)),
+                            },
+                            **chunk_fields,
+                        )
+            await send(message)
+
+        caught: BaseException | None = None
+        try:
+            await self.app(scope, audited_receive, audited_send)
+        except BaseException as error:  # noqa: BLE001 - audit cancellation/SystemExit too.
+            caught = error
+        if isinstance(caught, StructuredLogError):
+            # The inner structured writer already invoked the fatal reporter.
+            # Never attempt to describe a logging failure through that writer.
+            self.fatal_reporter.logging_failure(caught)
+            raise caught
+        outcome = (
+            "disconnected"
+            if disconnected
+            else "failed"
+            if caught is not None or (status is not None and status >= 500)
+            else "rejected"
+            if status is not None and status >= 400
+            else "success"
+        )
+        channel = "audit" if outcome in {"rejected", "failed"} else "mcp"
+        event = (
+            "session_close_requested"
+            if scope.get("method") == "DELETE"
+            else "mcp_transport_rejected"
+            if outcome == "rejected"
+            else "mcp_transport_completed"
+        )
+        caught_fields = _error_fields(caught) if caught is not None else None
+        transport_fields = _transport_fields(scope, headers)
+        response_session_id = response_headers.get("mcp-session-id")
+        session_id = transport_fields["sessionId"] or response_session_id
+        client = self._clients.resolve(
+            request_body=body.raw_if_complete(),
+            request_session_id=transport_fields["sessionId"],
+            response_session_id=response_session_id,
+        )
+        transport_fields["sessionId"] = session_id
+        transport_fields["client"] = client
+        try:
+            self.audit_sink.emit(
+                channel,
+                event,
+                level="ERROR" if caught is not None else "INFO",
+                operationId=operation_id,
+                statusCode=status,
+                outcome=outcome,
+                durationMs=round((time.monotonic() - started) * 1000, 3),
+                payload=(
+                    {"requestBody": body.payload()} if outcome == "rejected" else None
+                ),
+                error=caught_fields,
+                errorTraceId=(
+                    caught_fields.get("errorTraceId")
+                    if caught_fields is not None
+                    else None
+                ),
+                **transport_fields,
+            )
+        except StructuredLogError as log_error:
+            self.fatal_reporter.logging_failure(log_error)
+            if caught is None:
+                raise
+        finally:
+            if scope.get("method") == "DELETE" and session_id is not None:
+                self._clients.remove(session_id)
+        if caught is not None:
+            raise caught
+
+
+class McpAuditMiddleware(Middleware):
+    """Record decoded FastMCP messages and final normalized outcomes."""
+
+    def __init__(
+        self, audit_sink: StructuredLogs, fatal_reporter: FatalShutdownReporter
+    ) -> None:
+        self.audit_sink = audit_sink
+        self.fatal_reporter = fatal_reporter
+
+    async def on_message(self, context: Any, call_next: Any) -> Any:
+        operation_id = uuid.uuid4().hex
+        method = context.method
+        notification = context.type == "notification"
+        paired = method in {"initialize", "tools/call"} and not notification
+        common = _mcp_context_fields(context, operation_id)
+        if not notification:
+            self._emit(
+                "mcp_message_started" if paired else "mcp_message_received",
+                payload={"request": _jsonable(context.message)},
+                outcome=None,
+                **common,
+            )
+        started = time.monotonic()
+        try:
+            result = await call_next(context)
+        except BaseException as error:
+            cancelled = isinstance(error, anyio.get_cancelled_exc_class())
+            timed_out = isinstance(error, TimeoutError)
+            error_fields = _error_fields(error)
+            self._emit(
+                "mcp_message_completed",
+                level="WARNING" if cancelled else "ERROR",
+                outcome=(
+                    "cancelled" if cancelled else "timeout" if timed_out else "failed"
+                ),
+                durationMs=round((time.monotonic() - started) * 1000, 3),
+                error=error_fields,
+                errorTraceId=error_fields["errorTraceId"],
+                **_response_direction(common),
+            )
+            raise
+
+        result_payload = _jsonable(result)
+        outcome, retryable = _mcp_result_outcome(result_payload)
+        result_trace_id = _mcp_result_trace_id(result_payload)
+        self._emit(
+            "mcp_notification" if notification else "mcp_message_completed",
+            outcome=outcome,
+            retryable=retryable,
+            errorTraceId=result_trace_id,
+            durationMs=round((time.monotonic() - started) * 1000, 3),
+            payload={
+                "message": _jsonable(context.message),
+                "result": result_payload,
+            },
+            **(common if notification else _response_direction(common)),
+        )
+        return result
+
+    def _emit(self, event: str, *, level: str = "INFO", **fields: Any) -> None:
+        try:
+            self.audit_sink.emit("mcp", event, level=level, **fields)
+        except StructuredLogError as error:
+            self.fatal_reporter.logging_failure(error)
+            raise
+
 
 class DashboardFatalReporter:
     """Report the first uncaught Streamlit script error and stop the process."""
 
-    def __init__(self, dashboard_dir: Path) -> None:
+    def __init__(
+        self,
+        dashboard_dir: Path,
+        audit_sink: StructuredLogs | None = None,
+        fatal_reporter: FatalShutdownReporter | None = None,
+    ) -> None:
         self._dashboard_dir = dashboard_dir.resolve(strict=False)
+        self._audit_sink = audit_sink
+        self._fatal_reporter = fatal_reporter
         self._lock = threading.Lock()
         self._reported = False
 
@@ -290,23 +593,57 @@ class DashboardFatalReporter:
             "message": _safe_single_line(str(error), limit=512) or type(error).__name__,
             "retryable": False,
         }
-        print(
-            f"{FATAL_SENTINEL} "
-            + json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
-            file=sys.stderr,
-            flush=True,
-        )
-        sys.stderr.flush()
-        os.kill(os.getpid(), signal.SIGTERM)
+        if self._audit_sink is not None:
+            try:
+                self._audit_sink.emit(
+                    "audit",
+                    "python_runtime_fatal",
+                    level="ERROR",
+                    outcome="failed",
+                    error={
+                        "type": type(error).__name__,
+                        "message": str(error),
+                        "traceback": "".join(
+                            traceback.format_exception(
+                                type(error), error, error.__traceback__
+                            )
+                        ),
+                        "errorTraceId": trace_id,
+                        "retryable": False,
+                    },
+                    errorTraceId=trace_id,
+                    widget=widget,
+                    payload={"phase": phase, "path": path},
+                )
+            except StructuredLogError as log_error:
+                if self._fatal_reporter is not None:
+                    self._fatal_reporter.logging_failure(log_error)
+                    return True
+                raise
+        if self._fatal_reporter is not None:
+            self._fatal_reporter.report(payload)
+        else:
+            print(
+                f"{FATAL_SENTINEL} "
+                + json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+                file=sys.stderr,
+                flush=True,
+            )
+            sys.stderr.flush()
+            os.kill(os.getpid(), signal.SIGTERM)
         return True
 
 
 _DASHBOARD_FATAL_REPORTER: DashboardFatalReporter | None = None
 
 
-def configure_dashboard_fatal_reporter(dashboard_dir: Path) -> DashboardFatalReporter:
+def configure_dashboard_fatal_reporter(
+    dashboard_dir: Path,
+    audit_sink: StructuredLogs | None = None,
+    fatal_reporter: FatalShutdownReporter | None = None,
+) -> DashboardFatalReporter:
     global _DASHBOARD_FATAL_REPORTER
-    reporter = DashboardFatalReporter(dashboard_dir)
+    reporter = DashboardFatalReporter(dashboard_dir, audit_sink, fatal_reporter)
     _DASHBOARD_FATAL_REPORTER = reporter
     return reporter
 
@@ -445,6 +782,44 @@ def load_tools(
 
 
 def build_application() -> FastAPI:
+    logs_dir = _required_path("LITE_MCP_LOGS_DIR")
+    retention_days = _integer_setting("LITE_MCP_LOG_RETENTION_DAYS", minimum=1)
+    max_total_mib = _integer_setting("LITE_MCP_LOG_MAX_TOTAL_MIB", minimum=1)
+    audit_sink = StructuredLogs(
+        StructuredLogSettings(
+            logs_dir=logs_dir,
+            retention_days=retention_days,
+            max_total_mib=max_total_mib,
+        )
+    )
+    fatal_reporter = FatalShutdownReporter()
+    try:
+        return _build_application(audit_sink, fatal_reporter)
+    except BaseException as error:
+        error_fields = _error_fields(error)
+        try:
+            audit_sink.emit(
+                "audit",
+                "python_runtime_fatal",
+                level="ERROR",
+                outcome="failed",
+                error=error_fields,
+                errorTraceId=error_fields["errorTraceId"],
+                payload={"phase": "startup"},
+            )
+        except StructuredLogError as log_error:
+            fatal_reporter.logging_failure(log_error)
+        finally:
+            try:
+                audit_sink.close()
+            except StructuredLogError as log_error:
+                fatal_reporter.logging_failure(log_error)
+        raise
+
+
+def _build_application(
+    audit_sink: StructuredLogs, fatal_shutdown: FatalShutdownReporter
+) -> FastAPI:
     if sys.version_info[:2] != (3, 14) or sys.version_info.releaselevel != "final":
         raise RuntimeError(
             "lite-mcp requires a final Python 3.14 release; "
@@ -504,6 +879,7 @@ def build_application() -> FastAPI:
         workspace=workspace_path,
         logger=logging.getLogger("lite_mcp.dashboard"),
         runtime=runtime_summary,
+        audit_sink=audit_sink,
     )
     # Import-safe preflight intentionally does not render the app. Rendering is
     # session-scoped and may have database side effects.
@@ -516,6 +892,7 @@ def build_application() -> FastAPI:
     )
     for tool_object in tools:
         mcp.add_tool(tool_object)
+    mcp.add_middleware(McpAuditMiddleware(audit_sink, fatal_shutdown))
     mcp.add_middleware(
         RuntimeGuardMiddleware(concurrency, timeout_seconds, result_limit)
     )
@@ -528,7 +905,9 @@ def build_application() -> FastAPI:
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
     )
-    fatal_reporter = configure_dashboard_fatal_reporter(dashboard_dir)
+    fatal_reporter = configure_dashboard_fatal_reporter(
+        dashboard_dir, audit_sink, fatal_shutdown
+    )
     streamlit_app = streamlit.App(
         str(dashboard_runner_path),
         on_script_error=fatal_reporter,
@@ -541,26 +920,87 @@ def build_application() -> FastAPI:
         previous_thread_tokens = thread_limiter.total_tokens
         thread_limiter.total_tokens = math.inf if concurrency == 0 else concurrency
         try:
+            try:
+                audit_sink.emit(
+                    "audit",
+                    "python_runtime_started",
+                    outcome="success",
+                    payload={"pythonVersion": sys.version.split()[0]},
+                )
+            except StructuredLogError as error:
+                fatal_shutdown.logging_failure(error)
+                raise
             print(f"{READY_SENTINEL} {ready_token}", flush=True)
             yield
         finally:
             thread_limiter.total_tokens = previous_thread_tokens
+
+    combined_lifespan = combine_lifespans(
+        mcp_app.lifespan,
+        streamlit_app.lifespan(),
+        readiness_lifespan,
+    )
+
+    @asynccontextmanager
+    async def application_lifespan(application: FastAPI):
+        failure: BaseException | None = None
+        try:
+            async with combined_lifespan(application):
+                yield
+        except BaseException as error:
+            failure = error
+            if not isinstance(error, StructuredLogError):
+                error_fields = _error_fields(error)
+                try:
+                    audit_sink.emit(
+                        "audit",
+                        "python_runtime_fatal",
+                        level="ERROR",
+                        outcome="failed",
+                        error=error_fields,
+                        errorTraceId=error_fields["errorTraceId"],
+                        payload={"phase": "lifespan"},
+                    )
+                except StructuredLogError as log_error:
+                    fatal_shutdown.logging_failure(log_error)
+            raise
+        finally:
+            if not isinstance(failure, StructuredLogError):
+                try:
+                    audit_sink.emit(
+                        "audit",
+                        "python_runtime_stopped",
+                        outcome=(
+                            "failed"
+                            if failure is not None or fatal_shutdown.reported
+                            else "success"
+                        ),
+                    )
+                except StructuredLogError as error:
+                    fatal_shutdown.logging_failure(error)
+            try:
+                audit_sink.close()
+            except StructuredLogError as error:
+                fatal_shutdown.logging_failure(error)
 
     app = FastAPI(
         title="lite-mcp",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
-        lifespan=combine_lifespans(
-            mcp_app.lifespan,
-            streamlit_app.lifespan(),
-            readiness_lifespan,
-        ),
+        lifespan=application_lifespan,
+    )
+    app.add_middleware(
+        McpTransportMiddleware,
+        audit_sink=audit_sink,
+        fatal_reporter=fatal_shutdown,
     )
     app.add_middleware(
         HostOriginMiddleware,
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
+        audit_sink=audit_sink,
+        fatal_reporter=fatal_shutdown,
     )
 
     info_page = info_page_path.read_text(encoding="utf-8")
@@ -600,15 +1040,29 @@ def build_application() -> FastAPI:
         "/mcp/{unsupported_path:path}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     )
-    async def reject_unsupported_mcp_path(unsupported_path: str) -> PlainTextResponse:
-        del unsupported_path
+    async def reject_unsupported_mcp_path(
+        unsupported_path: str, request: Request
+    ) -> PlainTextResponse:
+        _emit_route_rejection(
+            audit_sink,
+            fatal_shutdown,
+            "unsupported_mcp_path",
+            request=request,
+            payload={"unsupportedPath": unsupported_path},
+        )
         return PlainTextResponse("Not Found", status_code=404)
 
     @app.api_route(
         "/sse",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     )
-    async def reject_legacy_sse() -> PlainTextResponse:
+    async def reject_legacy_sse(request: Request) -> PlainTextResponse:
+        _emit_route_rejection(
+            audit_sink,
+            fatal_shutdown,
+            "legacy_sse_rejected",
+            request=request,
+        )
         return PlainTextResponse("Not Found", status_code=404)
 
     app.mount("/", streamlit_app)
@@ -820,6 +1274,396 @@ def _pydantic_json(value: Any) -> Any:
     if callable(model_dump):
         return model_dump(mode="json")
     raise TypeError(f"{type(value).__name__} is not JSON serializable")
+
+
+def _scope_headers(scope: dict[str, Any]) -> dict[str, str]:
+    return {
+        key.decode("latin-1").casefold(): value.decode("latin-1")
+        for key, value in scope.get("headers", [])
+    }
+
+
+class _BoundedBodyCapture:
+    """Hash an ASGI body while retaining only bounded head/tail previews."""
+
+    # Leave room for base64 expansion and metadata so the complete preview can
+    # pass through the structured writer's 16 KiB payload bound unchanged.
+    _PART_LIMIT = 5 * 1024
+
+    def __init__(self) -> None:
+        self._head = bytearray()
+        self._tail = bytearray()
+        self._hash = hashlib.sha256()
+        self._size = 0
+
+    def add(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        self._hash.update(chunk)
+        self._size += len(chunk)
+        head_room = self._PART_LIMIT - len(self._head)
+        if head_room > 0:
+            self._head.extend(chunk[:head_room])
+        self._tail.extend(chunk)
+        if len(self._tail) > self._PART_LIMIT:
+            del self._tail[: len(self._tail) - self._PART_LIMIT]
+
+    def raw_if_complete(self) -> bytes | None:
+        """Return the exact body only while it fits the retained head/tail."""
+
+        if self._size <= self._PART_LIMIT:
+            return bytes(self._head)
+        if self._size <= self._PART_LIMIT * 2:
+            overlap = self._PART_LIMIT * 2 - self._size
+            return bytes(self._head) + bytes(self._tail[overlap:])
+        return None
+
+    def payload(self) -> dict[str, Any]:
+        complete = self.raw_if_complete()
+        if complete is not None:
+            preview = complete
+            truncated = False
+        else:
+            preview = (
+                bytes(self._head)
+                + b"\n... <middle truncated> ...\n"
+                + bytes(self._tail)
+            )
+            truncated = True
+        try:
+            display: Any = preview.decode("utf-8")
+            encoding = "utf-8"
+        except UnicodeDecodeError:
+            display = base64.b64encode(preview).decode("ascii")
+            encoding = "base64"
+        return {
+            "preview": display,
+            "encoding": encoding,
+            "truncated": truncated,
+            "originalBytes": self._size,
+            "sha256": self._hash.hexdigest(),
+        }
+
+
+class _McpClientRegistry:
+    """Correlate self-declared client identity with wire session IDs."""
+
+    _MAX_SESSIONS = 4_096
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._sessions: dict[str, dict[str, Any]] = {}
+
+    def resolve(
+        self,
+        *,
+        request_body: bytes | None,
+        request_session_id: str | None,
+        response_session_id: str | None,
+    ) -> dict[str, Any]:
+        declared = _declared_mcp_client(request_body)
+        with self._lock:
+            known = self._sessions.get(request_session_id or "")
+            client = declared or known or _unknown_mcp_client()
+            if response_session_id and declared is not None:
+                if len(self._sessions) >= self._MAX_SESSIONS:
+                    self._sessions.pop(next(iter(self._sessions)))
+                self._sessions[response_session_id] = dict(declared)
+            return dict(client)
+
+    def remove(self, session_id: str) -> None:
+        with self._lock:
+            self._sessions.pop(session_id, None)
+
+
+def _unknown_mcp_client() -> dict[str, Any]:
+    return {"name": None, "version": None, "verified": False}
+
+
+def _declared_mcp_client(body: bytes | None) -> dict[str, Any] | None:
+    if not body:
+        return None
+    try:
+        decoded = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    messages = decoded if isinstance(decoded, list) else [decoded]
+    for message in messages:
+        if not isinstance(message, dict) or message.get("method") != "initialize":
+            continue
+        params = message.get("params")
+        if not isinstance(params, dict):
+            continue
+        client_info = params.get("clientInfo", params.get("client_info"))
+        if not isinstance(client_info, dict):
+            continue
+        name = client_info.get("name")
+        version = client_info.get("version")
+        return {
+            "name": name if isinstance(name, str) else None,
+            "version": version if isinstance(version, str) else None,
+            "verified": False,
+        }
+    return None
+
+
+def _mcp_wire_messages(
+    capture: _BoundedBodyCapture, content_type: str | None
+) -> list[Any]:
+    """Decode complete JSON/SSE responses or retain one bounded wire record."""
+
+    raw = capture.raw_if_complete()
+    if raw is None:
+        return [{"wire": capture.payload()}]
+    media_type = (content_type or "").partition(";")[0].strip().casefold()
+    try:
+        if media_type == "text/event-stream":
+            messages: list[Any] = []
+            normalized = raw.replace(b"\r\n", b"\n")
+            for block in normalized.split(b"\n\n"):
+                data_lines = [
+                    line[5:].lstrip()
+                    for line in block.splitlines()
+                    if line.startswith(b"data:")
+                ]
+                if data_lines:
+                    messages.append(json.loads(b"\n".join(data_lines)))
+            if messages:
+                return messages
+        elif media_type == "application/json":
+            decoded = json.loads(raw)
+            return decoded if isinstance(decoded, list) else [decoded]
+        else:
+            return []
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    return [{"wire": capture.payload()}]
+
+
+def _wire_request_id(message: Any) -> Any:
+    if isinstance(message, dict):
+        return message.get("id")
+    return None
+
+
+def _is_bounded_wire_chunk(message: Any) -> bool:
+    return isinstance(message, dict) and set(message) == {"wire"}
+
+
+def _transport_fields(scope: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+    client = scope.get("client")
+    source_ip = client[0] if isinstance(client, (tuple, list)) and client else None
+    source_port = (
+        client[1] if isinstance(client, (tuple, list)) and len(client) > 1 else None
+    )
+    return {
+        "sourceIp": source_ip,
+        "sourcePort": source_port,
+        "sessionId": headers.get("mcp-session-id"),
+        "client": _unknown_mcp_client(),
+        "httpMethod": scope.get("method"),
+        "path": scope.get("path"),
+        "contentType": headers.get("content-type"),
+        "contentLength": headers.get("content-length"),
+        "userAgent": headers.get("user-agent"),
+        "protocolVersion": headers.get("mcp-protocol-version"),
+    }
+
+
+def _mcp_context_fields(context: Any, operation_id: str) -> dict[str, Any]:
+    fastmcp_context = context.fastmcp_context
+    request_context = (
+        fastmcp_context.request_context if fastmcp_context is not None else None
+    )
+    protocol_request_id = (
+        request_context.request_id if request_context is not None else None
+    )
+    meta = request_context.meta if request_context is not None else None
+    otel_trace_id = _current_otel_trace_id()
+
+    source_ip = source_port = session_id = user_agent = protocol_version = None
+    try:
+        from fastmcp.server.dependencies import get_http_request
+
+        request = get_http_request()
+        if request.client is not None:
+            source_ip = request.client.host
+            source_port = request.client.port
+        session_id = request.headers.get("mcp-session-id")
+        user_agent = request.headers.get("user-agent")
+        protocol_version = request.headers.get("mcp-protocol-version")
+    except RuntimeError:
+        pass
+
+    client_name = client_version = None
+    if fastmcp_context is not None:
+        try:
+            client_params = fastmcp_context.session.client_params
+        except RuntimeError:
+            client_params = None
+        client_info = getattr(client_params, "client_info", None)
+        client_name = getattr(client_info, "name", None)
+        client_version = getattr(client_info, "version", None)
+    message = context.message
+    if context.method == "initialize" and client_name is None:
+        initialize_params = getattr(message, "params", message)
+        client_info = getattr(initialize_params, "client_info", None)
+        client_name = getattr(client_info, "name", None)
+        client_version = getattr(client_info, "version", None)
+    if client_name is None and isinstance(meta, dict):
+        modern_info = meta.get("io.modelcontextprotocol/clientInfo")
+        if isinstance(modern_info, dict):
+            client_name = modern_info.get("name")
+            client_version = modern_info.get("version")
+    tool = getattr(message, "name", None)
+    if tool is None:
+        params = getattr(message, "params", None)
+        tool = getattr(params, "name", None)
+    return {
+        "operationId": operation_id,
+        "protocolRequestId": protocol_request_id,
+        "sessionId": session_id,
+        "sourceIp": source_ip,
+        "sourcePort": source_port,
+        "client": {
+            "name": client_name,
+            "version": client_version,
+            "verified": False,
+        },
+        "userAgent": user_agent,
+        "method": context.method,
+        "tool": tool,
+        "direction": (
+            "client_to_server" if context.source == "client" else "server_to_client"
+        ),
+        "otelTraceId": otel_trace_id,
+        "protocolVersion": protocol_version,
+    }
+
+
+def _response_direction(fields: dict[str, Any]) -> dict[str, Any]:
+    response = dict(fields)
+    response["direction"] = (
+        "client_to_server"
+        if fields.get("direction") == "server_to_client"
+        else "server_to_client"
+    )
+    return response
+
+
+def _jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool, bytes)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(item) for item in value]
+    # Component-list middleware receives FastMCP's internal component models,
+    # which deliberately retain implementation callables that are not part of
+    # the wire response. Convert those models through their public MCP
+    # representation before asking Pydantic to serialize them.
+    for converter_name in (
+        "to_mcp_tool",
+        "to_mcp_prompt",
+        "to_mcp_resource",
+        "to_mcp_template",
+    ):
+        converter = getattr(value, converter_name, None)
+        if callable(converter):
+            return _jsonable(converter())
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump(mode="json")
+        except (TypeError, ValueError):
+            # Some otherwise valid Pydantic models contain opaque runtime
+            # values. Python mode lets the recursive fallback below describe
+            # them without breaking the MCP operation being audited.
+            dumped = model_dump(mode="python")
+        return _jsonable(dumped)
+    to_mcp_result = getattr(value, "to_mcp_result", None)
+    if callable(to_mcp_result):
+        return _jsonable(to_mcp_result())
+    if hasattr(value, "__dict__"):
+        return {
+            key: _jsonable(item)
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
+    return str(value)
+
+
+def _mcp_result_outcome(payload: Any) -> tuple[str, bool | None]:
+    if not isinstance(payload, dict):
+        return "success", None
+    error = payload.get("structuredContent", payload.get("structured_content"))
+    if isinstance(error, dict):
+        error = error.get("error")
+    is_error = payload.get("isError", payload.get("is_error", False)) is True
+    if not isinstance(error, dict):
+        return ("failed", None) if is_error else ("success", None)
+    retryable = error.get("retryable")
+    code = error.get("code")
+    return ("timeout" if code == "tool_timeout" else "failed"), (
+        retryable if isinstance(retryable, bool) else None
+    )
+
+
+def _mcp_result_trace_id(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    structured = payload.get("structuredContent", payload.get("structured_content"))
+    error = structured.get("error") if isinstance(structured, dict) else None
+    trace_id = error.get("traceId") if isinstance(error, dict) else None
+    return trace_id if isinstance(trace_id, str) else None
+
+
+def _current_otel_trace_id() -> str | None:
+    try:
+        from opentelemetry import trace
+
+        context = trace.get_current_span().get_span_context()
+        if context.is_valid and context.trace_id:
+            return f"{context.trace_id:032x}"
+    except (ImportError, RuntimeError):
+        pass
+    return None
+
+
+def _error_fields(error: BaseException | None) -> dict[str, Any] | None:
+    if error is None:
+        return None
+    return {
+        "type": type(error).__name__,
+        "message": str(error),
+        "retryable": False,
+        "errorTraceId": uuid.uuid4().hex,
+        "traceback": "".join(
+            traceback.format_exception(type(error), error, error.__traceback__)
+        ),
+    }
+
+
+def _emit_route_rejection(
+    audit_sink: StructuredLogs,
+    fatal_reporter: FatalShutdownReporter,
+    event: str,
+    *,
+    request: Request,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    try:
+        audit_sink.emit(
+            "audit",
+            event,
+            level="WARNING",
+            outcome="rejected",
+            payload=payload,
+            **_transport_fields(request.scope, _scope_headers(request.scope)),
+        )
+    except StructuredLogError as error:
+        fatal_reporter.logging_failure(error)
+        raise
 
 
 def _required_path(name: str) -> Path:

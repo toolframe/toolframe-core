@@ -245,6 +245,9 @@ def second() -> str:
             "LITE_MCP_RESULT_LIMIT_BYTES": "4194304",
             "LITE_MCP_READY_TOKEN": "test-ready-token",
             "LITE_MCP_DEPENDENCIES_JSON": '["fastmcp==4.0.0"]',
+            "LITE_MCP_LOGS_DIR": str(self.root / "logs"),
+            "LITE_MCP_LOG_RETENTION_DAYS": "14",
+            "LITE_MCP_LOG_MAX_TOTAL_MIB": "256",
         }
 
         class FakeStreamlitApp:
@@ -294,6 +297,12 @@ def second() -> str:
         self.assertEqual(app.routes[-3].path, "/mcp/{unsupported_path:path}")
         self.assertEqual(app.routes[-2].path, "/sse")
         self.assertEqual(app.routes[-1].path, "")
+
+        # This test does not enter the ASGI lifespan, so release the process lock.
+        for middleware in app.user_middleware:
+            if middleware.cls is runtime.McpTransportMiddleware:
+                middleware.kwargs["audit_sink"].close()
+                break
 
 
 if __name__ == "__main__":

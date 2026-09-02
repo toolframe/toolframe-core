@@ -19,6 +19,7 @@ const CORE_SERVER: &str = include_str!("../core/server.py");
 const CORE_SUPPORT: &str = include_str!("../core/lite_mcp_runtime.py");
 const CORE_DASHBOARD: &str = include_str!("../core/lite_mcp_dashboard.py");
 const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/lite_mcp_dashboard_runner.py");
+const CORE_LOGGING: &str = include_str!("../core/lite_mcp_logging.py");
 const INFO_PAGE: &str = include_str!("../static/index.html");
 const DEFAULT_SQL_TOOL: &str = include_str!("../tools/execute_sql.py");
 const DASHBOARD_APP: &str = include_str!("../dashboard/app.py");
@@ -56,6 +57,21 @@ pub struct PreparedRuntime {
     pub manifest: PathBuf,
     pub project: PathBuf,
     pub dependencies: Vec<String>,
+}
+
+pub fn prepare_logs_dir(root: &Path, configured: Option<&Path>) -> Result<PathBuf> {
+    let path = match configured {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => root.join(path),
+        None => root.join("logs"),
+    };
+    fs::create_dir_all(&path)
+        .with_context(|| format!("could not create logs directory {}", path.display()))?;
+    if !path.is_dir() {
+        bail!("logs path {} is not a directory", path.display());
+    }
+    path.canonicalize()
+        .with_context(|| format!("could not resolve logs directory {}", path.display()))
 }
 
 pub fn executable_root() -> Result<PathBuf> {
@@ -130,6 +146,7 @@ pub fn prepare_runtime(
             CORE_SUPPORT.as_bytes(),
             CORE_DASHBOARD.as_bytes(),
             CORE_DASHBOARD_RUNNER.as_bytes(),
+            CORE_LOGGING.as_bytes(),
             INFO_PAGE.as_bytes(),
         ]
         .concat(),
@@ -146,11 +163,13 @@ pub fn prepare_runtime(
     let core_support = core_dir.join("lite_mcp_runtime.py");
     let dashboard_sdk = core_dir.join("lite_mcp_dashboard.py");
     let dashboard_runner = core_dir.join("lite_mcp_dashboard_runner.py");
+    let core_logging = core_dir.join("lite_mcp_logging.py");
     let info_page = core_dir.join("info.html");
     write_managed(&core_server, CORE_SERVER)?;
     write_managed(&core_support, CORE_SUPPORT)?;
     write_managed(&dashboard_sdk, CORE_DASHBOARD)?;
     write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
+    write_managed(&core_logging, CORE_LOGGING)?;
     write_managed(&info_page, INFO_PAGE)?;
 
     let project_toml = runtime_project_toml(catalog, dashboard)?;
@@ -535,6 +554,39 @@ mod tests {
         assert_eq!(paths.dashboard, root.join("dashboard"));
         assert_eq!(paths.workspace, root.join("workspace"));
         assert_eq!(paths.runtime, root.join("runtime"));
+    }
+
+    #[test]
+    fn resolves_and_prepares_logs_relative_to_executable_root() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let logs = prepare_logs_dir(directory.path(), Some(Path::new("custom-logs")))
+            .expect("prepare relative logs");
+        assert_eq!(
+            logs,
+            directory
+                .path()
+                .join("custom-logs")
+                .canonicalize()
+                .expect("canonical logs")
+        );
+
+        let defaults = prepare_logs_dir(directory.path(), None).expect("prepare default logs");
+        assert_eq!(
+            defaults,
+            directory
+                .path()
+                .join("logs")
+                .canonicalize()
+                .expect("canonical default logs")
+        );
+    }
+
+    #[test]
+    fn rejects_a_logs_path_that_is_a_file() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let path = directory.path().join("not-a-directory");
+        fs::write(&path, "occupied").expect("create file");
+        assert!(prepare_logs_dir(directory.path(), Some(&path)).is_err());
     }
 
     #[test]

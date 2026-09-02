@@ -18,6 +18,7 @@ import os
 import sqlite3
 import sys
 import threading
+import time
 import traceback
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
@@ -49,6 +50,7 @@ _DEFAULT_MAX_BYTES = 10 * 1024 * 1024
 _MAX_SQL_BYTES = 1024 * 1024
 _BUSY_TIMEOUT_MS = 5_000
 _DEFAULT_WIDGET_ORDER = 1_000
+_DASHBOARD_SESSION_STATE_KEY = "_lite_mcp_dashboard_session_id"
 
 
 def _sqlite_actions(*names: str) -> frozenset[int]:
@@ -94,6 +96,18 @@ _FUNCTION_ACTION = getattr(sqlite3, "SQLITE_FUNCTION", -1)
 _REINDEX_ACTION = getattr(sqlite3, "SQLITE_REINDEX", -1)
 _SQLITE_SCHEMA_TABLES = frozenset(
     {"sqlite_master", "sqlite_schema", "sqlite_temp_master"}
+)
+_POLICY_REJECTION_CODES = frozenset(
+    {
+        "empty_sql",
+        "forbidden_sql",
+        "invalid_parameters",
+        "invalid_sql",
+        "multi_statement",
+        "read_only_required",
+        "sql_too_long",
+        "write_statement_required",
+    }
 )
 
 
@@ -163,6 +177,7 @@ class _PolicyState:
     statement_keyword: str = ""
     saw_write: bool = False
     saw_user_insert: bool = False
+    saw_trigger_write: bool = False
     denied_code: str | None = None
     denied_message: str | None = None
     denied_hint: str | None = None
@@ -219,6 +234,8 @@ class _PolicyState:
                     "Move the mutation to execute() or transaction().",
                 )
             self.saw_write = True
+            if trigger_name is not None:
+                self.saw_trigger_write = True
             if (
                 action == getattr(sqlite3, "SQLITE_INSERT", -1)
                 and (argument_one or "").casefold() not in _SQLITE_SCHEMA_TABLES
@@ -270,11 +287,13 @@ class DashboardDatabase:
         logger: logging.Logger | None = None,
         max_rows: int = _DEFAULT_MAX_ROWS,
         max_bytes: int = _DEFAULT_MAX_BYTES,
+        audit_sink: Any | None = None,
     ) -> None:
         self.path = Path(path).expanduser().resolve(strict=False)
         self.logger = logger or _LOGGER
         self.max_rows = _validate_hard_limit("max_rows", max_rows)
         self.max_bytes = _validate_hard_limit("max_bytes", max_bytes)
+        self.audit_sink = audit_sink
 
     def query(
         self,
@@ -286,6 +305,8 @@ class DashboardDatabase:
     ) -> pd.DataFrame:
         """Execute one read-only statement and return a bounded DataFrame."""
 
+        started_at = time.monotonic()
+        operation_id = uuid.uuid4().hex
         try:
             connection = self._connect(read_only=True)
         except Exception as error:  # noqa: BLE001 - normalize the public boundary.
@@ -299,6 +320,21 @@ class DashboardDatabase:
                 max_rows=max_rows,
                 max_bytes=max_bytes,
             )
+        except DashboardDatabaseError as error:
+            if error.code == "read_only_required":
+                self._emit_audit(
+                    "dashboard_mutation_rejected",
+                    level="WARNING",
+                    payload=_statement_payload(sql, params),
+                    operationId=operation_id,
+                    method="query",
+                    outcome="rejected",
+                    durationMs=_duration_ms(started_at),
+                    retryable=error.retryable,
+                    error=_error_payload(error),
+                    errorTraceId=error.trace_id,
+                )
+            raise
         finally:
             connection.close()
 
@@ -309,29 +345,106 @@ class DashboardDatabase:
     ) -> ExecuteResult:
         """Execute and atomically commit one permitted DML or DDL statement."""
 
+        operation_id = uuid.uuid4().hex
+        started_at = time.monotonic()
+        self._emit_audit(
+            "dashboard_mutation_started",
+            payload=_statement_payload(sql, params),
+            operationId=operation_id,
+            method="execute",
+        )
         try:
             connection = self._connect(read_only=False)
         except Exception as error:  # noqa: BLE001 - normalize the public boundary.
-            self._raise_public(error, sql)
+            try:
+                self._raise_public(error, sql)
+            except DashboardDatabaseError as public_error:
+                self._emit_statement_failure(
+                    operation_id, public_error, started_at=started_at
+                )
+                raise
 
         try:
             connection.execute("BEGIN")
-            result = self._execute_on_connection(connection, sql, params)
+            result, policy = self._execute_on_connection(connection, sql, params)
             connection.commit()
-            return result
-        except DashboardDatabaseError:
+        except DashboardDatabaseError as error:
             _rollback_quietly(connection, self.logger)
+            self._emit_statement_failure(operation_id, error, started_at=started_at)
             raise
         except Exception as error:  # noqa: BLE001 - normalize the public boundary.
             _rollback_quietly(connection, self.logger)
-            self._raise_public(error, sql)
+            try:
+                self._raise_public(error, sql)
+            except DashboardDatabaseError as public_error:
+                self._emit_statement_failure(
+                    operation_id, public_error, started_at=started_at
+                )
+                raise
         finally:
             connection.close()
+        self._emit_audit(
+            "dashboard_mutation_completed",
+            payload=_execute_result_payload(result, policy),
+            operationId=operation_id,
+            method="execute",
+            outcome="success",
+            durationMs=_duration_ms(started_at),
+        )
+        return result
 
     def transaction(self) -> _DashboardTransaction:
         """Return an atomic, non-nestable transaction context manager."""
 
         return _DashboardTransaction(self)
+
+    def _emit_audit(
+        self,
+        event: str,
+        *,
+        level: str = "INFO",
+        payload: Any = None,
+        **fields: Any,
+    ) -> dict[str, Any] | None:
+        if self.audit_sink is None:
+            return None
+        metadata = {
+            "dashboardSessionId": None,
+            "requestId": None,
+            "sourceIp": None,
+            "userAgent": None,
+            "widget": None,
+            **_dashboard_request_metadata.get(),
+        }
+        metadata.update(fields)
+        return self.audit_sink.emit(
+            "audit", event, level=level, payload=payload, **metadata
+        )
+
+    def _emit_statement_failure(
+        self,
+        operation_id: str,
+        error: DashboardDatabaseError,
+        *,
+        started_at: float,
+        transaction_id: str | None = None,
+        event: str = "dashboard_mutation_completed",
+        **fields: Any,
+    ) -> None:
+        outcome = "rejected" if error.code in _POLICY_REJECTION_CODES else "failed"
+        fields.setdefault("method", "execute")
+        self._emit_audit(
+            event,
+            level="WARNING" if outcome == "rejected" else "ERROR",
+            operationId=operation_id,
+            transactionId=transaction_id,
+            outcome=outcome,
+            durationMs=_duration_ms(started_at),
+            retryable=error.retryable,
+            error=_error_payload(error),
+            errorTraceId=error.trace_id,
+            **fields,
+        )
 
     def _connect(self, *, read_only: bool) -> sqlite3.Connection:
         if read_only:
@@ -408,7 +521,7 @@ class DashboardDatabase:
         connection: sqlite3.Connection,
         sql: str,
         params: Mapping[str, Any] | Sequence[Any],
-    ) -> ExecuteResult:
+    ) -> tuple[ExecuteResult, _PolicyState]:
         policy = _PolicyState("execute")
         try:
             normalized_sql = _validate_sql(sql)
@@ -455,7 +568,7 @@ class DashboardDatabase:
                         else None
                     ),
                     rows=rows,
-                )
+                ), policy
             finally:
                 cursor.close()
         except DashboardDatabaseError:
@@ -500,6 +613,11 @@ _active_transactions: contextvars.ContextVar[tuple[int, ...]] = contextvars.Cont
     "lite_mcp_dashboard_active_transactions",
     default=(),
 )
+_dashboard_request_metadata: contextvars.ContextVar[Mapping[str, Any]] = (
+    contextvars.ContextVar(
+        "lite_mcp_dashboard_request_metadata", default=MappingProxyType({})
+    )
+)
 
 
 class _DashboardTransaction:
@@ -509,14 +627,37 @@ class _DashboardTransaction:
         self._context_token: contextvars.Token[tuple[int, ...]] | None = None
         self._failed = False
         self._entered = False
+        self._transaction_id = uuid.uuid4().hex
+        self._operation_id: str | None = None
+        self._started_at: float | None = None
 
     def __enter__(self) -> Self:
+        operation_id = uuid.uuid4().hex
+        self._started_at = time.monotonic()
+        self._operation_id = operation_id
+        self._database._emit_audit(
+            "dashboard_transaction_started",
+            operationId=operation_id,
+            transactionId=self._transaction_id,
+        )
         if self._entered or id(self._database) in _active_transactions.get():
-            raise DashboardDatabaseError(
+            error = DashboardDatabaseError(
                 "nested_transaction",
                 "Dashboard database transactions cannot be nested.",
                 recovery_hint="Use the existing transaction object for every statement.",
             )
+            self._database._emit_audit(
+                "dashboard_transaction_rolled_back",
+                level="WARNING",
+                operationId=operation_id,
+                transactionId=self._transaction_id,
+                outcome="rejected",
+                durationMs=_duration_ms(self._started_at),
+                retryable=error.retryable,
+                error=_error_payload(error),
+                errorTraceId=error.trace_id,
+            )
+            raise error
 
         self._entered = True
         active = _active_transactions.get()
@@ -530,7 +671,21 @@ class _DashboardTransaction:
                 self._connection.close()
                 self._connection = None
             self._reset_context()
-            self._database._raise_public(error, "BEGIN")
+            try:
+                self._database._raise_public(error, "BEGIN")
+            except DashboardDatabaseError as public_error:
+                self._database._emit_audit(
+                    "dashboard_transaction_rolled_back",
+                    level="ERROR",
+                    operationId=operation_id,
+                    transactionId=self._transaction_id,
+                    outcome="failed",
+                    durationMs=_duration_ms(self._started_at),
+                    retryable=public_error.retryable,
+                    error=_error_payload(public_error),
+                    errorTraceId=public_error.trace_id,
+                )
+                raise
 
     def __exit__(
         self,
@@ -548,9 +703,60 @@ class _DashboardTransaction:
                     connection.commit()
                 except Exception as error:  # noqa: BLE001 - normalize the public boundary.
                     _rollback_quietly(connection, self._database.logger)
-                    self._database._raise_public(error, "COMMIT")
+                    try:
+                        self._database._raise_public(error, "COMMIT")
+                    except DashboardDatabaseError as public_error:
+                        self._database._emit_audit(
+                            "dashboard_transaction_rolled_back",
+                            level="ERROR",
+                            operationId=self._operation_id,
+                            transactionId=self._transaction_id,
+                            outcome="failed",
+                            durationMs=_duration_ms(self._started_at),
+                            retryable=public_error.retryable,
+                            error=_error_payload(public_error),
+                            errorTraceId=public_error.trace_id,
+                        )
+                        raise
+                self._database._emit_audit(
+                    "dashboard_transaction_committed",
+                    operationId=self._operation_id,
+                    transactionId=self._transaction_id,
+                    outcome="success",
+                    durationMs=_duration_ms(self._started_at),
+                )
             else:
                 _rollback_quietly(connection, self._database.logger)
+                outcome = "failed" if self._failed else "cancelled"
+                error_payload = (
+                    _error_payload(exc_value)
+                    if isinstance(exc_value, DashboardDatabaseError)
+                    else {
+                        "type": exc_type.__name__,
+                        "message": str(exc_value),
+                        "traceId": None,
+                        "traceback": "".join(
+                            traceback.format_exception(exc_type, exc_value, exc_tb)
+                        ),
+                    }
+                    if exc_type is not None
+                    else None
+                )
+                self._database._emit_audit(
+                    "dashboard_transaction_rolled_back",
+                    level="WARNING" if outcome == "cancelled" else "ERROR",
+                    operationId=self._operation_id,
+                    transactionId=self._transaction_id,
+                    outcome=outcome,
+                    durationMs=_duration_ms(self._started_at),
+                    retryable=False,
+                    error=error_payload,
+                    errorTraceId=(
+                        exc_value.trace_id
+                        if isinstance(exc_value, DashboardDatabaseError)
+                        else None
+                    ),
+                )
                 if exc_type is None and self._failed:
                     raise DashboardDatabaseError(
                         "transaction_aborted",
@@ -571,17 +777,44 @@ class _DashboardTransaction:
         max_rows: int | None = None,
         max_bytes: int | None = None,
     ) -> pd.DataFrame:
-        connection = self._require_open()
+        operation_id = uuid.uuid4().hex
+        started_at = time.monotonic()
+        self._database._emit_audit(
+            "dashboard_transaction_statement_started",
+            payload=_statement_payload(sql, params),
+            operationId=operation_id,
+            transactionId=self._transaction_id,
+            method="query",
+        )
         try:
-            return self._database._query_on_connection(
+            connection = self._require_open()
+            result = self._database._query_on_connection(
                 connection,
                 sql,
                 params,
                 max_rows=max_rows,
                 max_bytes=max_bytes,
             )
-        except DashboardDatabaseError:
+            self._database._emit_audit(
+                "dashboard_transaction_statement_completed",
+                payload={"rows": _dataframe_records(result)},
+                operationId=operation_id,
+                transactionId=self._transaction_id,
+                method="query",
+                outcome="success",
+                durationMs=_duration_ms(started_at),
+            )
+            return result
+        except DashboardDatabaseError as error:
             self._failed = True
+            self._database._emit_statement_failure(
+                operation_id,
+                error,
+                started_at=started_at,
+                transaction_id=self._transaction_id,
+                event="dashboard_transaction_statement_completed",
+                method="query",
+            )
             raise
 
     def execute(
@@ -589,11 +822,40 @@ class _DashboardTransaction:
         sql: str,
         params: Mapping[str, Any] | Sequence[Any] = (),
     ) -> ExecuteResult:
-        connection = self._require_open()
+        operation_id = uuid.uuid4().hex
+        started_at = time.monotonic()
+        self._database._emit_audit(
+            "dashboard_transaction_statement_started",
+            payload=_statement_payload(sql, params),
+            operationId=operation_id,
+            transactionId=self._transaction_id,
+            method="execute",
+        )
         try:
-            return self._database._execute_on_connection(connection, sql, params)
-        except DashboardDatabaseError:
+            connection = self._require_open()
+            result, policy = self._database._execute_on_connection(
+                connection, sql, params
+            )
+            self._database._emit_audit(
+                "dashboard_transaction_statement_completed",
+                payload=_execute_result_payload(result, policy),
+                operationId=operation_id,
+                transactionId=self._transaction_id,
+                method="execute",
+                outcome="success",
+                durationMs=_duration_ms(started_at),
+            )
+            return result
+        except DashboardDatabaseError as error:
             self._failed = True
+            self._database._emit_statement_failure(
+                operation_id,
+                error,
+                started_at=started_at,
+                transaction_id=self._transaction_id,
+                event="dashboard_transaction_statement_completed",
+                method="execute",
+            )
             raise
 
     def _require_open(self) -> sqlite3.Connection:
@@ -940,6 +1202,85 @@ def _rollback_quietly(connection: sqlite3.Connection, logger: logging.Logger) ->
         logger.exception("dashboard database rollback failed")
 
 
+def _statement_payload(
+    sql: Any, params: Mapping[str, Any] | Sequence[Any] | Any
+) -> dict[str, Any]:
+    if isinstance(params, Mapping):
+        parameter_payload: Any = {
+            str(key): _audit_value(value) for key, value in params.items()
+        }
+    elif isinstance(params, Sequence) and not isinstance(
+        params, (str, bytes, bytearray, memoryview)
+    ):
+        parameter_payload = [_audit_value(value) for value in params]
+    else:
+        parameter_payload = _audit_value(params)
+    return {"sql": _audit_value(sql), "parameters": parameter_payload}
+
+
+def _audit_value(value: Any, *, _seen: set[int] | None = None) -> Any:
+    if value is None or isinstance(value, (str, bytes, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else {"nonFiniteFloat": repr(value)}
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value)
+    seen = _seen if _seen is not None else set()
+    identity = id(value)
+    if identity in seen:
+        return {"cyclicReference": type(value).__name__}
+    seen.add(identity)
+    try:
+        if isinstance(value, Mapping):
+            return {
+                str(key): _audit_value(item, _seen=seen) for key, item in value.items()
+            }
+        if isinstance(value, Sequence):
+            return [_audit_value(item, _seen=seen) for item in value]
+        return {"unsupportedType": type(value).__name__, "repr": repr(value)}
+    finally:
+        seen.remove(identity)
+
+
+def _dataframe_records(frame: pd.DataFrame | None) -> list[dict[str, Any]] | None:
+    if frame is None:
+        return None
+    return [
+        {str(key): _audit_value(value) for key, value in row.items()}
+        for row in frame.to_dict("records")
+    ]
+
+
+def _execute_result_payload(
+    result: ExecuteResult, policy: _PolicyState
+) -> dict[str, Any]:
+    return {
+        "affectedRows": result.affected_rows,
+        "lastInsertRowId": result.last_insert_rowid,
+        "rows": _dataframe_records(result.rows),
+        "triggeredWrites": policy.saw_trigger_write,
+    }
+
+
+def _error_payload(error: DashboardDatabaseError) -> dict[str, Any]:
+    return {
+        "type": type(error).__name__,
+        "code": error.code,
+        "message": error.message,
+        "traceId": error.trace_id,
+        "details": dict(error.details),
+        "traceback": "".join(
+            traceback.format_exception(type(error), error, error.__traceback__)
+        ),
+    }
+
+
+def _duration_ms(started_at: float | None) -> float:
+    if started_at is None:
+        return 0.0
+    return round((time.monotonic() - started_at) * 1000, 3)
+
+
 _configuration_lock = threading.RLock()
 _configuration: _SdkConfiguration | None = None
 _current_context: contextvars.ContextVar[DashboardContext | None] = (
@@ -957,6 +1298,7 @@ def _configure(
     workspace: Path,
     logger: logging.Logger,
     runtime: Mapping[str, Any],
+    audit_sink: Any | None = None,
 ) -> DashboardContext:
     """Configure the process-global SDK before preflight and HTTP readiness."""
 
@@ -970,7 +1312,7 @@ def _configure(
     if not isinstance(frozen_runtime, Mapping):
         raise TypeError("runtime must be a mapping")
     context = DashboardContext(
-        db=DashboardDatabase(database_path, logger=logger),
+        db=DashboardDatabase(database_path, logger=logger, audit_sink=audit_sink),
         workspace=workspace_path,
         logger=logger,
         widget_id="",
@@ -1072,15 +1414,25 @@ def render_widget(
     """Render one validated widget; unhandled widget exceptions propagate."""
 
     base_context = context or get_context()
+    inherited_metadata = _dashboard_request_metadata.get()
+    owns_request_metadata = not inherited_metadata
+    request_metadata = (
+        _collect_dashboard_request_metadata()
+        if owns_request_metadata and base_context.db.audit_sink is not None
+        else dict(inherited_metadata)
+    )
+    request_metadata["widget"] = widget.widget_id
     widget_context = replace(
         base_context,
         widget_id=widget.widget_id,
         logger=base_context.logger.getChild(widget.widget_id),
     )
     token = _current_context.set(widget_context)
+    metadata_token = _dashboard_request_metadata.set(request_metadata)
     try:
         widget.module.render(widget_context)
     finally:
+        _dashboard_request_metadata.reset(metadata_token)
         _current_context.reset(token)
 
 
@@ -1091,8 +1443,54 @@ def render_widgets(
     """Discover (when omitted) and render widgets in validated order."""
 
     selected = discover_widgets() if widgets is None else tuple(widgets)
-    for widget in selected:
-        render_widget(widget, context)
+    base_context = context or get_context()
+    metadata = (
+        _collect_dashboard_request_metadata()
+        if base_context.db.audit_sink is not None
+        else {}
+    )
+    metadata_token = _dashboard_request_metadata.set(metadata)
+    try:
+        for widget in selected:
+            render_widget(widget, base_context)
+    finally:
+        _dashboard_request_metadata.reset(metadata_token)
+
+
+def _collect_dashboard_request_metadata() -> dict[str, Any]:
+    dashboard_session_id = uuid.uuid4().hex
+    source_ip: str | None = None
+    user_agent: str | None = None
+    try:
+        import streamlit as st
+
+        try:
+            existing_session_id = st.session_state.get(_DASHBOARD_SESSION_STATE_KEY)
+            if not isinstance(existing_session_id, str) or not existing_session_id:
+                st.session_state[_DASHBOARD_SESSION_STATE_KEY] = dashboard_session_id
+            else:
+                dashboard_session_id = existing_session_id
+        except Exception:  # noqa: BLE001 - Streamlit context may be absent in tests.
+            dashboard_session_id = uuid.uuid4().hex
+
+        try:
+            candidate_ip = st.context.ip_address
+            source_ip = candidate_ip if isinstance(candidate_ip, str) else None
+            headers = st.context.headers
+            candidate_agent = headers.get("User-Agent")
+            user_agent = candidate_agent if isinstance(candidate_agent, str) else None
+        except Exception:  # noqa: BLE001 - public context is runtime-only.
+            source_ip = None
+            user_agent = None
+    except ImportError:
+        source_ip = None
+    return {
+        "dashboardSessionId": dashboard_session_id,
+        "requestId": uuid.uuid4().hex,
+        "sourceIp": source_ip,
+        "userAgent": user_agent,
+        "widget": None,
+    }
 
 
 def _resolve_dashboard_dir(dashboard_dir: Path | None) -> Path:
