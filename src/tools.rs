@@ -350,7 +350,7 @@ fn extract_script_metadata(source: &str) -> Result<String> {
     bail!("unterminated # /// script metadata block")
 }
 
-fn validate_tool_name(name: &str) -> Result<()> {
+pub fn validate_tool_name(name: &str) -> Result<()> {
     let mut characters = name.chars();
     if name.len() > 64
         || !characters

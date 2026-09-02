@@ -98,6 +98,76 @@ url = "http://127.0.0.1:8000/mcp"
 Only modern Streamable HTTP is served. There is no legacy SSE endpoint,
 client-facing stdio transport, hot reload service, reload API, or reload UI.
 
+## Coding-agent development CLI
+
+Running `lite-mcp` without a subcommand still starts the server. `lite-mcp
+serve` is the explicit equivalent. The same binary also provides bounded local
+commands for coding agents; path and runtime options may appear before or after
+the subcommand.
+
+### Preflight validation
+
+Use `check` before starting the server or after editing migrations, tools,
+dashboard dependencies, or widgets:
+
+```sh
+./lite-mcp check
+./lite-mcp check --format json
+```
+
+`check` exercises the production migration engine against an in-memory SQLite
+database, resolves the real shared UV project, strictly imports every startup
+tool, materializes its FastMCP schema, compiles `dashboard/app.py`, and imports
+and validates every public widget. The JSON form writes a versioned object to
+stdout and emits JSON on failure, making it suitable for coding-agent gates.
+
+Preflight does not bind a port, mutate the configured `data.db`, create logs,
+or scaffold missing source directories. If the database exists, migration
+history and pending migrations are exercised against an in-memory backup
+opened from a read-only connection; a missing database uses a new in-memory
+database. Tool imports receive a separate temporary `LITE_MCP_DB` path. Check
+may provision Python and dependencies and update managed content under
+`runtime/`; imported tools and widgets remain trusted Python code and can
+perform other import-time side effects. The report includes the exact paths,
+Python and UV versions, migration range and pending count, tools, widgets, and
+merged dependencies.
+
+### Local tool invocation
+
+`invoke` loads the complete startup catalog into one bounded Python 3.14
+process in the same shared UV environment, calls one tool through FastMCP, and
+prints one JSON result:
+
+```sh
+./lite-mcp invoke fetch_title --json '{"url":"https://example.com"}'
+./lite-mcp invoke execute_sql --json '{"sql":"SELECT 1 AS ready"}'
+```
+
+Arguments must be one JSON object. A successful call exits `0`; an MCP
+`isError` result or runner failure exits nonzero while preserving a
+machine-readable JSON response when one is available. Invocation starts no
+HTTP server and performs no hot reload. It strictly loads all tools once, does
+not apply migrations automatically, and does not write the server audit logs.
+The invoked tool retains its normal trusted capabilities, so a tool such as
+`execute_sql` can intentionally mutate the configured database.
+
+### Safe scaffolding
+
+Each scaffold command creates exactly one direct source file and refuses to
+overwrite an existing path:
+
+```sh
+./lite-mcp scaffold migration add_status
+./lite-mcp scaffold tool fetch_status
+./lite-mcp scaffold widget status_card
+```
+
+Migration scaffolding validates the existing contiguous history and chooses
+the next four-digit version. Tool and widget names use lowercase snake case
+and must not be Python keywords. The target `migrations/`, `tools/`, or
+`dashboard/widgets/` directory must already exist; scaffolding never creates,
+repairs, or replaces a user-owned directory.
+
 ## Database migrations
 
 `migrations/` is the source of truth for the `data.db` schema and includes an

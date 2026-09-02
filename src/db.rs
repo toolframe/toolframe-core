@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use rusqlite::{
-    Connection, Error as SqliteError, ErrorCode, Transaction, TransactionBehavior,
+    Connection, Error as SqliteError, ErrorCode, OpenFlags, Transaction, TransactionBehavior,
+    backup::{Backup, StepResult},
     hooks::{AuthAction, AuthContext, Authorization},
     params,
 };
@@ -32,6 +33,14 @@ pub struct MigrationReport {
     pub applied_now: usize,
     pub total: usize,
     pub current_version: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MigrationValidation {
+    pub total: usize,
+    pub current_version: u16,
+    pub pending: usize,
+    pub database_exists: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +93,15 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
     })?;
     configure_connection(&connection, database_path)?;
 
+    migrate_connection(&mut connection, database_path, &migrations, true)
+}
+
+fn migrate_connection(
+    connection: &mut Connection,
+    database_path: &Path,
+    migrations: &[Migration],
+    commit: bool,
+) -> Result<MigrationReport> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| {
@@ -107,8 +125,8 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
     validate_ledger_schema(&transaction, database_path)?;
 
     let applied = load_applied(&transaction, database_path)?;
-    validate_applied_history(&migrations, &applied)?;
-    verify_sources_unchanged(&migrations)?;
+    validate_applied_history(migrations, &applied)?;
+    verify_sources_unchanged(migrations)?;
 
     let mut applied_now = 0;
     for migration in migrations.iter().skip(applied.len()) {
@@ -116,15 +134,21 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
         applied_now += 1;
     }
 
-    transaction.commit().map_err(|error| {
-        sqlite_failure(
-            "commit",
-            migrations.last(),
-            database_path,
-            &error,
-            "Restart lite-mcp; the ledger will determine whether the transaction committed.",
-        )
-    })?;
+    if commit {
+        transaction.commit().map_err(|error| {
+            sqlite_failure(
+                "commit",
+                migrations.last(),
+                database_path,
+                &error,
+                "Restart lite-mcp; the ledger will determine whether the transaction committed.",
+            )
+        })?;
+    } else {
+        transaction
+            .rollback()
+            .context("could not discard the migration validation snapshot")?;
+    }
 
     Ok(MigrationReport {
         applied_now,
@@ -134,6 +158,78 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
             .expect("migration discovery requires bootstrap")
             .version,
     })
+}
+
+/// Exercise production migration discovery, history validation, and pending
+/// application against an in-memory snapshot without changing data.db.
+pub fn validate_migrations(
+    database_path: &Path,
+    migrations_dir: &Path,
+) -> Result<MigrationValidation> {
+    let migrations = discover_migrations(migrations_dir)?;
+    let database_exists = database_path.exists();
+    let mut connection = Connection::open_in_memory()
+        .context("could not open the in-memory migration validation database")?;
+    if database_exists {
+        let source = Connection::open_with_flags(database_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| {
+            sqlite_failure(
+                "open-read-only",
+                None,
+                database_path,
+                &error,
+                "Inspect the database path and read permissions.",
+            )
+        })?;
+        let backup = Backup::new(&source, &mut connection)
+            .context("could not start the read-only database validation snapshot")?;
+        let started = Instant::now();
+        loop {
+            match backup
+                .step(64)
+                .context("could not copy the read-only database validation snapshot")?
+            {
+                StepResult::Done => break,
+                StepResult::More => {}
+                StepResult::Busy | StepResult::Locked if started.elapsed() < BUSY_TIMEOUT => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                StepResult::Busy | StepResult::Locked => {
+                    bail!(
+                        "database validation snapshot remained busy for {} seconds (phase=migration-validation, path={}, retryable=true)",
+                        BUSY_TIMEOUT.as_secs(),
+                        database_path.display()
+                    );
+                }
+                _ => unreachable!("rusqlite backup step result is exhaustive"),
+            }
+        }
+    }
+    connection
+        .busy_timeout(BUSY_TIMEOUT)
+        .context("could not configure the in-memory migration validation database busy timeout")?;
+    configure_connection(&connection, database_path)?;
+    let report = migrate_connection(&mut connection, database_path, &migrations, false)?;
+
+    Ok(MigrationValidation {
+        total: report.total,
+        current_version: report.current_version,
+        pending: report.applied_now,
+        database_exists,
+    })
+}
+
+pub fn next_migration_filename(migrations_dir: &Path, description: &str) -> Result<String> {
+    let migrations = discover_migrations(migrations_dir)?;
+    let version = u16::try_from(migrations.len())
+        .context("migration sequence is too long for four-digit versions")?;
+    if version > 9999 {
+        bail!("migration sequence has exhausted four-digit versions");
+    }
+    let filename = format!("{version:04}_{description}.sql");
+    parse_filename(&filename)
+        .with_context(|| format!("invalid migration description {description:?}"))?;
+    Ok(filename)
 }
 
 fn configure_connection(connection: &Connection, database_path: &Path) -> Result<()> {
@@ -767,6 +863,69 @@ mod tests {
             .expect("apply ordered migrations");
         assert_eq!(report.applied_now, 3);
         assert_eq!(report.current_version, 2);
+    }
+
+    #[test]
+    fn validates_migrations_in_memory_without_creating_a_database_file() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let migrations = directory.path().join("migrations");
+        fs::create_dir(&migrations).expect("create migrations");
+        bootstrap(&migrations);
+        write_migration(
+            &migrations,
+            "0001_add_status.sql",
+            "ALTER TABLE example ADD COLUMN status TEXT;",
+        );
+        let configured_database = directory.path().join("data.db");
+
+        let report =
+            validate_migrations(&configured_database, &migrations).expect("validate in memory");
+
+        assert_eq!(report.total, 2);
+        assert_eq!(report.current_version, 1);
+        assert_eq!(report.pending, 2);
+        assert!(!report.database_exists);
+        assert!(!configured_database.exists());
+
+        write_migration(
+            &migrations,
+            "0002_forbidden.sql",
+            "PRAGMA user_version = 2;",
+        );
+        assert!(validate_migrations(&configured_database, &migrations).is_err());
+        assert!(!configured_database.exists());
+    }
+
+    #[test]
+    fn validates_existing_database_history_through_a_read_only_snapshot() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let migrations = directory.path().join("migrations");
+        fs::create_dir(&migrations).expect("create migrations");
+        bootstrap(&migrations);
+        let database = directory.path().join("data.db");
+        migrate(&database, &migrations).expect("apply bootstrap");
+        let original = fs::read(&database).expect("read database before validation");
+
+        let report =
+            validate_migrations(&database, &migrations).expect("validate database snapshot");
+
+        assert!(report.database_exists);
+        assert_eq!(report.pending, 0);
+        assert_eq!(
+            fs::read(&database).expect("read database after validation"),
+            original
+        );
+
+        fs::write(
+            migrations.join(BOOTSTRAP_FILENAME),
+            "CREATE TABLE changed(value INTEGER);\n",
+        )
+        .expect("change applied migration");
+        assert!(validate_migrations(&database, &migrations).is_err());
+        assert_eq!(
+            fs::read(&database).expect("read database after drift check"),
+            original
+        );
     }
 
     #[test]
