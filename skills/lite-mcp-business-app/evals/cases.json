@@ -30,6 +30,10 @@
       {
         "id": "route-positive-07",
         "prompt": "My scheduled workflow cannot reach the LAN lite-mcp server. Warn me without marking the task failed and give me a complete issue I can copy to the maintainer."
+      },
+      {
+        "id": "route-positive-08",
+        "prompt": "Customize this lite-mcp app's /llms.txt discovery pages so another LAN agent can register /mcp and build my approval workflow from the published capabilities."
       }
     ],
     "should_not_activate": [
@@ -136,6 +140,18 @@
         "references/job-domain-model.md",
         "references/product-decisions.md"
       ]
+    },
+    {
+      "id": "read-llms-authoring",
+      "prompt": "Update the LAN agent discovery pages for this existing non-queue inventory app after adding a business tool.",
+      "expected": [
+        "references/development-handbook.md",
+        "references/operations-handbook.md"
+      ],
+      "forbidden": [
+        "references/job-domain-model.md",
+        "references/product-decisions.md"
+      ]
     }
   ],
   "end_to_end": [
@@ -184,6 +200,18 @@
         "The issue contains observation time, attempted Dashboard/MCP URL, caller/source when known, exact symptom, workflow impact, last confirmed business state, retryability, safe owner checks, maintainer diagnostics, and evidence placeholders.",
         "It asks for no authentication workaround, performs no arbitrary SQL repair, and gives the external scheduler or owner an explicit next action."
       ]
+    },
+    {
+      "id": "e2e-llms-discovery",
+      "prompt": "You only have http://192.168.1.20:8000/llms.txt and my request to automate our approval workflow. Discover what this server is, connect it to your agent client, and propose the executable workflow.",
+      "assertions": [
+        "The agent identifies the same-origin /mcp endpoint as an unauthenticated trusted-LAN MCP server using Streamable HTTP, without inventing SSE, stdio, authentication, or a client-specific command.",
+        "It follows the linked context, capability, workflow, and operations documents progressively instead of expecting every detail in llms.txt.",
+        "It configures or asks the user to configure the current client's MCP registry, then proves the connection by listing actual tools before claiming installation success.",
+        "It maps the user's request only to published narrow business tools and documented state rules; it does not treat execute_sql or a demo widget as a production workflow API.",
+        "It distinguishes a client-side workflow using existing capabilities from server-side app development that requires filesystem access, migrations, tools, dashboard code, and documentation changes.",
+        "It produces a bounded workflow with trigger, reads, guarded mutations, retry/error handling, human review, and completion evidence, or states the exact missing server capability instead of inventing one."
+      ]
     }
   ],
   "runtime_installation": [
@@ -196,6 +224,19 @@
         "An existing real target directory is preserved byte for byte and is never completed or upgraded automatically.",
         "A file or symlink in any managed installation path fails startup with the offending path and reason.",
         "check, invoke, and scaffold do not install the skill."
+      ]
+    }
+  ],
+  "llms_discovery": [
+    {
+      "id": "serve-editable-llms-discovery",
+      "assertions": [
+        "A normal server start creates the complete editable <executable-root>/llms.txt plus <executable-root>/llms document set only when both are absent; existing source is never repaired or overwritten, and a partial pair fails clearly.",
+        "The root source <executable-root>/llms.txt follows the llms.txt v2 H1, summary, and H2 link-list shape while keeping details in focused direct Markdown subdocuments.",
+        "GET /llms.txt and the allowlisted /llms/<name>.md routes serve current source bytes with bounded Markdown-safe responses before the Streamlit root mount.",
+        "Unknown names, traversal, directories, symlinks, non-UTF-8 content, and oversized documents never expose filesystem content and produce a clear startup or HTTP failure.",
+        "The index uses same-origin links so a peer can derive /mcp from any current LAN host and port without a baked-in address.",
+        "The packaged distribution contains the editable llms source, and check validates it without starting a listener or mutating the source."
       ]
     }
   ]

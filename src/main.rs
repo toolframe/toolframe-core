@@ -256,6 +256,14 @@ struct Cli {
     #[arg(long, env = "LITE_MCP_RUNTIME", global = true)]
     runtime_dir: Option<PathBuf>,
 
+    /// Root LAN agent context index. Relative paths resolve from the current directory.
+    #[arg(long, env = "LITE_MCP_LLMS_FILE", global = true)]
+    llms_file: Option<PathBuf>,
+
+    /// LAN agent context detail directory. Relative paths resolve from the current directory.
+    #[arg(long, env = "LITE_MCP_LLMS_DIR", global = true)]
+    llms_dir: Option<PathBuf>,
+
     /// Structured audit and MCP JSONL directory. Relative paths resolve from the executable root.
     #[arg(long, env = "LITE_MCP_LOGS_DIR", global = true)]
     logs_dir: Option<PathBuf>,
@@ -428,6 +436,8 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         cli.dashboard_dir,
         cli.workspace_dir,
         cli.runtime_dir,
+        cli.llms_file,
+        cli.llms_dir,
     )?;
     let directories = runtime::prepare_directories(&paths)?;
     if directories.tools_scaffolded {
@@ -438,6 +448,24 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     }
     if directories.migrations_scaffolded {
         info!(target: "lite_mcp::db", path = %paths.migrations.display(), "created editable SQL migration scaffold");
+    }
+    if directories.llms_file_scaffolded {
+        console.print(
+            ConsoleCategory::Mcp,
+            format!(
+                "created LAN agent guide index at {}",
+                paths.llms_file.display()
+            ),
+        );
+    }
+    if directories.llms_dir_scaffolded {
+        console.print(
+            ConsoleCategory::Mcp,
+            format!(
+                "created LAN agent guide documents at {}",
+                paths.llms_dir.display()
+            ),
+        );
     }
 
     let migration_report = db::migrate(&paths.database, &paths.migrations).with_context(|| {
@@ -550,6 +578,8 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         .env("LITE_MCP_MIGRATIONS_DIR", &migrations_dir)
         .env("LITE_MCP_TOOLS", &tools_dir)
         .env("LITE_MCP_DASHBOARD_DIR", &dashboard_dir)
+        .env("LITE_MCP_LLMS_FILE", &paths.llms_file)
+        .env("LITE_MCP_LLMS_DIR", &paths.llms_dir)
         .env("LITE_MCP_WORKSPACE", &workspace)
         .env("LITE_MCP_RUNTIME", &runtime_dir)
         .env("LITE_MCP_LOGS_DIR", &logs_dir)
@@ -823,6 +853,10 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
         "liteMcpVersion": env!("CARGO_PKG_VERSION"),
         "uvVersion": development.uv_version,
         "pythonVersion": python.get("pythonVersion"),
+        "agentDocuments": python
+            .get("agentDocuments")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
         "paths": {
             "database": development.paths.database,
             "migrations": development.paths.migrations,
@@ -830,6 +864,8 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
             "dashboard": development.paths.dashboard,
             "workspace": development.paths.workspace,
             "runtime": development.paths.runtime,
+            "llmsFile": development.paths.llms_file,
+            "llmsDir": development.paths.llms_dir,
         },
         "migrations": {
             "total": development.migrations.total,
@@ -871,6 +907,13 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
                 "  widgets     {}",
                 python
                     .get("widgets")
+                    .and_then(serde_json::Value::as_array)
+                    .map_or(0, Vec::len)
+            );
+            println!(
+                "  agent docs  {}",
+                python
+                    .get("agentDocuments")
                     .and_then(serde_json::Value::as_array)
                     .map_or(0, Vec::len)
             );
@@ -940,6 +983,8 @@ fn resolve_cli_paths(cli: &Cli, executable_root: &Path) -> Result<runtime::AppPa
         cli.dashboard_dir.clone(),
         cli.workspace_dir.clone(),
         cli.runtime_dir.clone(),
+        cli.llms_file.clone(),
+        cli.llms_dir.clone(),
     )
 }
 
@@ -968,6 +1013,10 @@ async fn run_cli_python(
         .arg(&development.prepared.manifest)
         .arg("--dashboard")
         .arg(&development.paths.dashboard)
+        .arg("--llms-file")
+        .arg(&development.paths.llms_file)
+        .arg("--llms-dir")
+        .arg(&development.paths.llms_dir)
         .arg("--workspace")
         .arg(&development.workspace)
         .arg("--timeout")
@@ -999,6 +1048,8 @@ async fn run_cli_python(
         .env("LITE_MCP_MIGRATIONS_DIR", &development.paths.migrations)
         .env("LITE_MCP_TOOLS", &development.paths.tools)
         .env("LITE_MCP_DASHBOARD_DIR", &development.paths.dashboard)
+        .env("LITE_MCP_LLMS_FILE", &development.paths.llms_file)
+        .env("LITE_MCP_LLMS_DIR", &development.paths.llms_dir)
         .env("LITE_MCP_WORKSPACE", &development.workspace)
         .env("LITE_MCP_RUNTIME", &development.runtime_dir)
         .env("LITE_MCP_MANIFEST", &development.prepared.manifest)
@@ -1452,6 +1503,10 @@ fn announce(announcement: Announcement<'_>) {
     );
     console.print(ConsoleCategory::Mcp, format!("MCP        {local_url}/mcp"));
     console.print(
+        ConsoleCategory::Mcp,
+        format!("Agent guide {local_url}/llms.txt"),
+    );
+    console.print(
         ConsoleCategory::Db,
         format!("Database   {}", database.display()),
     );
@@ -1853,6 +1908,26 @@ mod tests {
             .expect("parse explicit serve command");
         assert!(matches!(serve.command, Some(CliCommand::Serve)));
         assert_eq!(serve.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn parses_llms_flags_and_resolves_executable_root_defaults() {
+        let cli = Cli::try_parse_from([
+            "lite-mcp",
+            "--llms-file",
+            "custom-guide.txt",
+            "--llms-dir",
+            "custom-guides",
+        ])
+        .expect("parse llms flags");
+        assert_eq!(cli.llms_file, Some(PathBuf::from("custom-guide.txt")));
+        assert_eq!(cli.llms_dir, Some(PathBuf::from("custom-guides")));
+
+        let default_cli = Cli::try_parse_from(["lite-mcp"]).expect("parse default cli");
+        let root = Path::new("/tmp/lite-mcp-llms-defaults");
+        let paths = resolve_cli_paths(&default_cli, root).expect("resolve default paths");
+        assert_eq!(paths.llms_file, root.join("llms.txt"));
+        assert_eq!(paths.llms_dir, root.join("llms"));
     }
 
     #[test]

@@ -69,8 +69,9 @@ Confirm the current public shape before relying on it:
 
 - `./lite-mcp` or `./lite-mcp serve` starts the one-process LAN service.
 - `/` is the Streamlit dashboard, `/info` is the built-in runtime/datastore
-  page, and `/mcp` is FastMCP Streamable HTTP. There is no SSE, client stdio,
-  hot reload, reload API, or reload UI.
+  page, `/llms.txt` is the progressive LAN-agent entry point, and `/mcp` is
+  FastMCP Streamable HTTP. There is no SSE, client stdio, hot reload, reload
+  API, or reload UI.
 - Migrations and MCP tools load at process start. Dashboard source is picked
   up on browser refresh, Streamlit rerun, or interaction rerun; tool source,
   migration source, and dependency changes require a full restart.
@@ -112,6 +113,8 @@ Keep each fact authoritative in one place:
 - business vocabulary and state rules: app-local `DOMAIN_MODEL.md`;
 - why the app exists and how another agent takes over: `APP_CONTEXT.md`;
 - implementation details: the tool/widget source and their docstrings.
+- what a remote LAN agent may discover: the short `llms.txt` index and its
+  linked `llms/*.md` projection of those authoritative facts.
 
 At handoff, update both app-local documents with the current schema version,
 published tool names, dashboard entry points, unresolved business questions,
@@ -225,7 +228,42 @@ components. Dashboard code is trusted server-side Python, not a browser
 sandbox; an app-specific helper does not prevent direct `sqlite3`, filesystem,
 environment, or network access.
 
-### E. Keep the scheduler outside the app
+### E. Publish progressive LAN-agent discovery
+
+Treat `llms.txt` as the copy/paste entry point for a peer agent that cannot
+read this folder. Keep the root file short: identify the app, state the trusted
+LAN boundary, point to same-origin `/mcp`, then link the relevant detail pages.
+Put business context, actual capabilities, the operating workflow, and
+diagnosis behind root-relative links under `llms/`. Do not copy the whole
+README into the root file or link to local filesystem paths a peer cannot open.
+
+Reconcile these default editable files as one set:
+
+- `llms.txt` — index and progressive reading order;
+- `llms/agent-guide.md` — client-neutral MCP connection and proof;
+- `llms/capabilities.md` — only the tools and Dashboard actions that actually
+  exist;
+- `llms/context.md` — the app-specific purpose, actors, vocabulary, and source
+  of truth projected from `APP_CONTEXT.md` and `DOMAIN_MODEL.md`;
+- `llms/workflow.md` — the bounded user-request-to-result sequence;
+- `llms/operations.md` — restart, retry, outage, security, and diagnosis rules.
+
+Replace every `CUSTOMIZE` placeholder that the business design resolves. Do
+not present the shipped `execute_sql` reference or `example_card` demo as the
+production workflow. For a non-queue app, explicitly omit the Job model; use
+claim, lease, retry, and review language only when the domain really owns those
+concepts. Whenever a tool, schema, widget, business state, or operating rule
+changes, update the relevant linked document in the same change.
+
+Write client-neutral connection intent: a peer should use its current client's
+MCP registration flow for the same-origin `/mcp` URL with Streamable HTTP,
+then list the actual tools. Do not invent a client-specific install command,
+claim that reading `/llms.txt` installed the server, or advertise SSE, stdio,
+authentication, a scheduler, or capabilities the runtime does not provide.
+If the client's registration mechanism is unavailable, report the MCP name,
+URL, transport, and exact blocker for the owner instead.
+
+### F. Keep the scheduler outside the app
 
 `lite-mcp` stores business state and exposes the MCP interface; it is not a
 cron service or a durable queue. A separate scheduler or agent trigger calls
@@ -283,16 +321,19 @@ Run these stages in order and record evidence in `APP_CONTEXT.md`:
    writes are visible after a rerun. Test a stale/conflicting write only when
    the app supports concurrent writers.
 6. **Peer agent path:** when the agreed app exposes MCP tools, give a trusted
-   LAN agent the current printed `/mcp` URL, let it list/call the relevant
-   tools, and confirm shared state appears in the dashboard. Use the actual
-   current LAN URL; do not hard-code an interface discovered from a previous
-   run.
+   LAN agent only the current printed `/llms.txt` URL. Confirm every selected
+   link resolves, the guide derives the same-origin `/mcp` URL, the client
+   registers Streamable HTTP through its supported flow, and an actual
+   tool-list response precedes relevant tool calls. Confirm shared state then
+   appears in the dashboard. Use the current LAN URL; do not hard-code an
+   interface discovered from a previous run.
 7. **Restart boundary:** stop and start `lite-mcp` after tool, migration, or
    dependency edits; verify the app fails clearly when an intentionally broken
    source file is present, then restore it and rerun the checks.
-8. **Handoff:** update `APP_CONTEXT.md` and `DOMAIN_MODEL.md`, list the
-   commands run and their outcomes, name known limitations, and state the next
-   business decision. Keep this evidence short and reproducible.
+8. **Handoff:** update `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, and the progressive
+   `llms.txt` document set; list the commands run and their outcomes, name known
+   limitations, and state the next business decision. Keep this evidence short
+   and reproducible.
 
 Completion means every capability in the agreed scope works: a nontechnical
 owner can understand the relevant dashboard path; a peer agent can use any MCP

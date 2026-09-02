@@ -103,6 +103,21 @@ class CliRunnerTests(unittest.TestCase):
         )
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
+        self.llms_dir = self.root / "llms"
+        self.llms_dir.mkdir()
+        (self.llms_dir / "overview.md").write_text(
+            "# Overview\n\nDetails.\n", encoding="utf-8"
+        )
+        self.llms_file = self.root / "llms.txt"
+        self.llms_file.write_text(
+            "# lite-mcp\n"
+            "> LAN MCP server context.\n"
+            "\n"
+            "## Documents\n"
+            "\n"
+            "- [Overview](/llms/overview.md)\n",
+            encoding="utf-8",
+        )
 
     def tearDown(self):
         self.temporary_directory.cleanup()
@@ -113,6 +128,8 @@ class CliRunnerTests(unittest.TestCase):
             "manifest": self.manifest,
             "dashboard": self.dashboard,
             "workspace": self.workspace,
+            "llms_file": self.llms_file,
+            "llms_dir": self.llms_dir,
             "tool": None,
             "timeout": 60.0,
             "result_limit": 4096,
@@ -151,6 +168,40 @@ class CliRunnerTests(unittest.TestCase):
         self.assertIn("widget import noise", noise.getvalue())
         self.assertNotIn("noise", output.getvalue())
 
+        self.assertEqual(json.loads(output.getvalue())["agentDocuments"], ["overview.md"])
+
+    def test_parser_requires_llms_source_arguments(self):
+        with self.assertRaises(SystemExit):
+            cli._parser().parse_args(
+                [
+                    "check",
+                    "--manifest",
+                    str(self.manifest),
+                    "--dashboard",
+                    str(self.dashboard),
+                    "--workspace",
+                    str(self.workspace),
+                ]
+            )
+
+        arguments = cli._parser().parse_args(
+            [
+                "check",
+                "--manifest",
+                str(self.manifest),
+                "--dashboard",
+                str(self.dashboard),
+                "--workspace",
+                str(self.workspace),
+                "--llms-file",
+                str(self.llms_file),
+                "--llms-dir",
+                str(self.llms_dir),
+            ]
+        )
+        self.assertEqual(arguments.llms_file, self.llms_file)
+        self.assertEqual(arguments.llms_dir, self.llms_dir)
+
     def test_check_configures_tool_helpers_in_temporary_paths(self):
         self.replace_tool(CONTEXT_TOOL_SOURCE)
         output = io.StringIO()
@@ -181,6 +232,25 @@ class CliRunnerTests(unittest.TestCase):
         self.assertIn("tool import noise", noise.getvalue())
         self.assertIn("tool invocation noise", noise.getvalue())
         self.assertNotIn("noise", output.getvalue())
+
+    def test_invoke_does_not_validate_llms_source(self):
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, {"LITE_MCP_DB": str(self.root / "data.db")} ),
+            patch("sys.stdin", io.StringIO('{"value":"hello"}')),
+            redirect_stdout(output),
+            redirect_stderr(io.StringIO()),
+        ):
+            exit_code = cli._invoke(
+                self.arguments(
+                    "invoke",
+                    tool="echo",
+                    llms_file=self.root / "missing-llms.txt",
+                    llms_dir=self.root / "missing-llms",
+                )
+            )
+
+        self.assertEqual(exit_code, 0)
 
     def test_invoke_configures_durable_idempotency_before_tool_import(self):
         self.replace_tool(IDEMPOTENT_TOOL_SOURCE)

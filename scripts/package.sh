@@ -6,6 +6,8 @@ REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 UV_SOURCE="${UV_BIN:-$(command -v uv || true)}"
 DESTINATION="$REPOSITORY_ROOT/dist/lite-mcp"
 SKILL_SOURCE="$REPOSITORY_ROOT/skills/lite-mcp-business-app"
+LLMS_FILE_SOURCE="$REPOSITORY_ROOT/llms.txt"
+LLMS_DIRECTORY_SOURCE="$REPOSITORY_ROOT/llms"
 STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/lite-mcp-package.XXXXXX")"
 
 cleanup() {
@@ -48,6 +50,32 @@ if [[ ! -f "$REPOSITORY_ROOT/examples/idempotent_create_entry.py" || -L "$REPOSI
   echo "error: idempotency reference must be a regular non-symlink file at $REPOSITORY_ROOT/examples/idempotent_create_entry.py" >&2
   exit 1
 fi
+if [[ ! -f "$LLMS_FILE_SOURCE" || -L "$LLMS_FILE_SOURCE" ]]; then
+  echo "error: llms.txt must be a regular non-symlink file at $LLMS_FILE_SOURCE" >&2
+  exit 1
+fi
+if [[ ! -d "$LLMS_DIRECTORY_SOURCE" || -L "$LLMS_DIRECTORY_SOURCE" ]]; then
+  echo "error: llms detail source must be a regular directory at $LLMS_DIRECTORY_SOURCE" >&2
+  exit 1
+fi
+LLMS_INVALID_ENTRY="$(find -P "$LLMS_DIRECTORY_SOURCE" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+if [[ -n "$LLMS_INVALID_ENTRY" ]]; then
+  echo "error: llms detail source must contain direct regular files only: $LLMS_INVALID_ENTRY" >&2
+  exit 1
+fi
+LLMS_DETAIL_COUNT=0
+while IFS= read -r -d '' llms_source; do
+  llms_name="$(basename "$llms_source")"
+  if [[ ! "$llms_name" =~ ^[a-z0-9][a-z0-9_-]*\.md$ ]]; then
+    echo "error: llms detail filename must be lowercase and end in .md: $llms_source" >&2
+    exit 1
+  fi
+  LLMS_DETAIL_COUNT=$((LLMS_DETAIL_COUNT + 1))
+done < <(find -P "$LLMS_DIRECTORY_SOURCE" -mindepth 1 -maxdepth 1 -type f -print0)
+if (( LLMS_DETAIL_COUNT == 0 )); then
+  echo "error: llms detail source must contain at least one Markdown file" >&2
+  exit 1
+fi
 
 cd "$REPOSITORY_ROOT"
 cargo build --release
@@ -80,6 +108,7 @@ mkdir -p \
   "$PACKAGE/tools" \
   "$PACKAGE/dashboard" \
   "$PACKAGE/examples" \
+  "$PACKAGE/llms" \
   "$PACKAGE/migrations" \
   "$PACKAGE/skills/lite-mcp-business-app" \
   "$PACKAGE/workspace" \
@@ -90,7 +119,15 @@ install -m 0755 "$UV_SOURCE" "$PACKAGE/uv"
 install -m 0644 "$REPOSITORY_ROOT/tools/execute_sql.py" "$PACKAGE/tools/execute_sql.py"
 install -m 0644 "$REPOSITORY_ROOT/tools/_artifact_example.py" "$PACKAGE/tools/_artifact_example.py"
 install -m 0644 "$REPOSITORY_ROOT/examples/idempotent_create_entry.py" "$PACKAGE/examples/idempotent_create_entry.py"
+install -m 0644 "$LLMS_FILE_SOURCE" "$PACKAGE/llms.txt"
 install -m 0644 "$REPOSITORY_ROOT/README.md" "$PACKAGE/README.md"
+
+# The LAN agent guide is editable application source. Keep the root index and
+# its direct Markdown details together without following links or packaging
+# unrelated files.
+while IFS= read -r -d '' llms_source; do
+  install -m 0644 "$llms_source" "$PACKAGE/llms/$(basename "$llms_source")"
+done < <(find -P "$LLMS_DIRECTORY_SOURCE" -mindepth 1 -maxdepth 1 -type f -print0)
 
 # The dashboard is intentionally editable in the one-folder distribution. Copy
 # regular source files while excluding interpreter caches; never mutate the

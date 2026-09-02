@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import importlib.util
 import inspect
@@ -10,8 +11,10 @@ import json
 import logging
 import math
 import os
+import re
 import signal
 import sqlite3
+import stat
 import sys
 import threading
 import time
@@ -26,7 +29,7 @@ from typing import Any
 import anyio
 import lite_mcp_idempotency as idempotency
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastmcp import FastMCP
 from fastmcp.decorators import get_fastmcp_meta
 from fastmcp.server.middleware import Middleware
@@ -47,6 +50,264 @@ FATAL_SENTINEL = "LITE_MCP_FATAL"
 DATABASE_PREVIEW_ROWS = 25
 STREAMLIT_VERSION = "1.61.0"
 STREAMLIT_RESOURCE_LIMIT_MIB = 25
+LLMS_MAX_BYTES = 256 * 1024
+_LLMS_DOCUMENT_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*\.md\Z")
+_LLMS_LOCAL_LINK = re.compile(
+    r"(?:^|(?<=[(<\s\"']))/llms/([^\s<>'\"()\]]+)", re.MULTILINE
+)
+_STANDARD_HTTP_METHODS = {
+    "GET",
+    "HEAD",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+    "TRACE",
+}
+
+
+class LlmsValidationError(ValueError, RuntimeError):
+    """A safe, source-specific validation failure for the agent context tree."""
+
+    def __init__(self, source: Path, reason: str) -> None:
+        self.source = Path(source)
+        self.reason = reason
+        super().__init__(f"{self.source}: {reason}")
+
+
+def validate_llms_source(index_file: Path, docs_dir: Path) -> list[str]:
+    """Validate an llms.txt index and return its safe, reachable detail files.
+
+    The validator intentionally returns filenames (including ``.md``) rather
+    than paths.  Callers can use that allowlist to ensure later requests never
+    turn an arbitrary path into a file server.
+    """
+
+    documents, _ = _validated_llms_source(Path(index_file), Path(docs_dir))
+    return documents
+
+
+def _validated_llms_source(index_file: Path, docs_dir: Path) -> tuple[list[str], bytes]:
+    index_bytes = _read_llms_utf8(index_file, source_label="llms index")
+    index_text = index_bytes.decode("utf-8")
+    _validate_llms_index_format(index_file, index_text)
+
+    _validate_llms_directory(docs_dir)
+    documents: list[str] = []
+    for entry in _scan_llms_directory(docs_dir):
+        entry_path = Path(entry.path)
+        if entry.is_symlink():
+            raise LlmsValidationError(
+                entry_path,
+                "detail must be a regular, non-symlink file",
+            )
+        if not _LLMS_DOCUMENT_NAME.fullmatch(entry.name):
+            raise LlmsValidationError(
+                entry_path,
+                "detail filename must match safe lowercase [a-z0-9][a-z0-9_-]*.md",
+            )
+        try:
+            entry_stat = entry.stat(follow_symlinks=False)
+        except OSError as error:
+            raise LlmsValidationError(
+                entry_path,
+                f"could not inspect detail ({_os_error_reason(error)})",
+            ) from error
+        if not stat.S_ISREG(entry_stat.st_mode):
+            raise LlmsValidationError(
+                entry_path,
+                "detail must be a regular, non-symlink file",
+            )
+        _read_llms_utf8(entry_path, source_label="llms detail")
+        documents.append(entry.name)
+
+    if not documents:
+        raise LlmsValidationError(docs_dir, "at least one detail .md file is required")
+
+    linked_documents = _llms_local_links(index_file, index_text)
+    available = set(documents)
+    missing = sorted(linked_documents - available)
+    if missing:
+        raise LlmsValidationError(
+            index_file,
+            f"local detail link does not exist: {missing[0]}",
+        )
+    orphaned = sorted(available - linked_documents)
+    if orphaned:
+        raise LlmsValidationError(
+            docs_dir / orphaned[0],
+            "detail is not reachable from the llms index",
+        )
+    return sorted(documents), index_bytes
+
+
+def _validate_llms_index_format(index_file: Path, index_text: str) -> None:
+    lines = index_text.splitlines()
+    if lines:
+        lines[0] = lines[0].removeprefix("\ufeff")
+    if not lines or not re.match(r"^#[ \t]+\S", lines[0]) or lines[0].startswith("##"):
+        raise LlmsValidationError(
+            index_file,
+            "first line must be a level-one Markdown H1",
+        )
+    blockquote_line = next(
+        (line for line in lines[1:] if line.strip()),
+        None,
+    )
+    if blockquote_line is None or not re.match(r"^>[ \t]?\S", blockquote_line):
+        raise LlmsValidationError(
+            index_file,
+            "second line must be a Markdown blockquote",
+        )
+    if not any(
+        re.match(r"^##[ \t]+\S", line) and not line.startswith("###")
+        for line in lines[2:]
+    ):
+        raise LlmsValidationError(
+            index_file,
+            "index must contain at least one level-two Markdown H2",
+        )
+
+
+def _llms_local_links(index_file: Path, index_text: str) -> set[str]:
+    links: set[str] = set()
+    for match in _LLMS_LOCAL_LINK.finditer(index_text):
+        target = match.group(1)
+        if not _LLMS_DOCUMENT_NAME.fullmatch(target):
+            raise LlmsValidationError(
+                index_file,
+                f"local link /llms/{target} must target a safe detail filename",
+            )
+        links.add(target)
+    return links
+
+
+def _validate_llms_directory(docs_dir: Path) -> None:
+    try:
+        directory_stat = docs_dir.lstat()
+    except FileNotFoundError as error:
+        raise LlmsValidationError(
+            docs_dir, "detail directory does not exist"
+        ) from error
+    except OSError as error:
+        raise LlmsValidationError(
+            docs_dir,
+            f"could not inspect detail directory ({_os_error_reason(error)})",
+        ) from error
+    if stat.S_ISLNK(directory_stat.st_mode) or not stat.S_ISDIR(directory_stat.st_mode):
+        raise LlmsValidationError(
+            docs_dir,
+            "detail directory must be a real, non-symlink directory",
+        )
+
+
+def _scan_llms_directory(docs_dir: Path) -> list[os.DirEntry[str]]:
+    try:
+        with os.scandir(docs_dir) as entries:
+            return list(entries)
+    except FileNotFoundError as error:
+        raise LlmsValidationError(
+            docs_dir, "detail directory does not exist"
+        ) from error
+    except OSError as error:
+        raise LlmsValidationError(
+            docs_dir,
+            f"could not read detail directory ({_os_error_reason(error)})",
+        ) from error
+
+
+def _read_llms_utf8(path: Path, *, source_label: str) -> bytes:
+    """Read one bounded regular file without following a final symlink."""
+
+    try:
+        initial_stat = path.lstat()
+    except FileNotFoundError as error:
+        raise LlmsValidationError(path, f"{source_label} does not exist") from error
+    except OSError as error:
+        raise LlmsValidationError(
+            path,
+            f"could not inspect {source_label} ({_os_error_reason(error)})",
+        ) from error
+    if stat.S_ISLNK(initial_stat.st_mode):
+        raise LlmsValidationError(path, f"{source_label} must not be a symlink")
+    if not stat.S_ISREG(initial_stat.st_mode):
+        raise LlmsValidationError(path, f"{source_label} must be a regular file")
+
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    flags |= nofollow
+    descriptor: int | None = None
+    try:
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                raise LlmsValidationError(
+                    path, f"{source_label} must not be a symlink"
+                ) from error
+            raise LlmsValidationError(
+                path,
+                f"could not open {source_label} ({_os_error_reason(error)})",
+            ) from error
+        descriptor_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(descriptor_stat.st_mode):
+            raise LlmsValidationError(path, f"{source_label} must be a regular file")
+        if descriptor_stat.st_size > LLMS_MAX_BYTES:
+            raise LlmsValidationError(
+                path,
+                f"{source_label} exceeds the {LLMS_MAX_BYTES // 1024} KiB limit",
+            )
+
+        chunks: list[bytes] = []
+        total = 0
+        while total <= LLMS_MAX_BYTES:
+            chunk = os.read(descriptor, min(64 * 1024, LLMS_MAX_BYTES + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > LLMS_MAX_BYTES:
+                raise LlmsValidationError(
+                    path,
+                    f"{source_label} exceeds the {LLMS_MAX_BYTES // 1024} KiB limit",
+                )
+        final_stat = os.fstat(descriptor)
+        if (
+            final_stat.st_dev != descriptor_stat.st_dev
+            or final_stat.st_ino != descriptor_stat.st_ino
+            or not stat.S_ISREG(final_stat.st_mode)
+        ):
+            raise LlmsValidationError(path, f"{source_label} changed while being read")
+        if final_stat.st_size > LLMS_MAX_BYTES:
+            raise LlmsValidationError(
+                path,
+                f"{source_label} exceeds the {LLMS_MAX_BYTES // 1024} KiB limit",
+            )
+        data = b"".join(chunks)
+    except LlmsValidationError:
+        raise
+    except OSError as error:
+        raise LlmsValidationError(
+            path,
+            f"could not read {source_label} ({_os_error_reason(error)})",
+        ) from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise LlmsValidationError(
+            path,
+            f"{source_label} is not valid UTF-8",
+        ) from error
+    return data
+
+
+def _os_error_reason(error: OSError) -> str:
+    return error.strerror or type(error).__name__
 
 
 class LiteMcpError(Exception):
@@ -203,6 +464,68 @@ class RuntimeGuardMiddleware(Middleware):
                 },
             )
         return result
+
+
+class LlmsMethodGuardMiddleware:
+    """Keep non-standard methods on discovery paths out of Streamlit."""
+
+    def __init__(
+        self,
+        app: Any,
+        audit_sink: StructuredLogs | None = None,
+        fatal_reporter: FatalShutdownReporter | None = None,
+    ) -> None:
+        self.app = app
+        self.audit_sink = audit_sink
+        self.fatal_reporter = fatal_reporter
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or scope.get("method") in _STANDARD_HTTP_METHODS:
+            await self.app(scope, receive, send)
+            return
+
+        path = str(scope.get("path", ""))
+        index = path == "/llms.txt"
+        discovery_path = (
+            index
+            or path.startswith("/llms.txt/")
+            or path == "/llms"
+            or path.startswith("/llms/")
+        )
+        if not discovery_path:
+            await self.app(scope, receive, send)
+            return
+
+        status_code = 405 if index else 404
+        headers = _llms_common_headers()
+        if index:
+            headers["Allow"] = "GET, HEAD"
+        self._audit_rejection(scope, path, status_code)
+        await PlainTextResponse(
+            "Method Not Allowed" if index else "Not Found",
+            status_code=status_code,
+            headers=headers,
+        )(scope, receive, send)
+
+    def _audit_rejection(
+        self, scope: dict[str, Any], path: str, status_code: int
+    ) -> None:
+        if self.audit_sink is None:
+            return
+        try:
+            self.audit_sink.emit(
+                "audit",
+                "unsupported_llms_method",
+                level="WARNING",
+                outcome="rejected",
+                statusCode=status_code,
+                payload={"path": path, "method": scope.get("method")},
+                **_transport_fields(scope, _scope_headers(scope)),
+            )
+        except StructuredLogError as error:
+            if self.fatal_reporter is not None:
+                self.fatal_reporter.logging_failure(error)
+            raise
 
 
 class HostOriginMiddleware:
@@ -842,6 +1165,9 @@ def _build_application(
         )
     manifest_path = _required_path("LITE_MCP_MANIFEST")
     database_path = _required_path("LITE_MCP_DB")
+    llms_file = _required_path("LITE_MCP_LLMS_FILE")
+    llms_dir = _required_path("LITE_MCP_LLMS_DIR")
+    llms_documents = tuple(validate_llms_source(llms_file, llms_dir))
     dashboard_dir = _required_directory("LITE_MCP_DASHBOARD_DIR")
     dashboard_app_path = dashboard_dir / "app.py"
     if not dashboard_app_path.is_file() or dashboard_app_path.is_symlink():
@@ -891,6 +1217,7 @@ def _build_application(
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
         python_version=sys.version.split()[0],
+        agent_documents=list(llms_documents),
     )
 
     import lite_mcp_dashboard as dashboard_sdk
@@ -1014,6 +1341,11 @@ def _build_application(
         lifespan=application_lifespan,
     )
     app.add_middleware(
+        LlmsMethodGuardMiddleware,
+        audit_sink=audit_sink,
+        fatal_reporter=fatal_shutdown,
+    )
+    app.add_middleware(
         McpTransportMiddleware,
         audit_sink=audit_sink,
         fatal_reporter=fatal_shutdown,
@@ -1052,6 +1384,114 @@ def _build_application(
     @app.get("/api/runtime")
     async def runtime_snapshot() -> dict[str, Any]:
         return runtime_summary
+
+    def _current_llms_source() -> tuple[list[str], bytes]:
+        current_documents, index_bytes = _validated_llms_source(llms_file, llms_dir)
+        if tuple(current_documents) != llms_documents:
+            raise LlmsValidationError(
+                llms_file,
+                "validated detail allowlist changed since startup",
+            )
+        return current_documents, index_bytes
+
+    @app.api_route("/llms.txt", methods=["GET", "HEAD"])
+    async def llms_index() -> Response:
+        try:
+            _, index_bytes = _current_llms_source()
+            return _llms_response(index_bytes)
+        except LlmsValidationError as error:
+            return _llms_unavailable(error)
+
+    @app.api_route(
+        "/llms.txt",
+        methods=["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"],
+    )
+    async def reject_llms_index_method(request: Request) -> PlainTextResponse:
+        _emit_route_rejection(
+            audit_sink,
+            fatal_shutdown,
+            "unsupported_llms_method",
+            request=request,
+            payload={"unsupportedPath": "llms.txt"},
+        )
+        return PlainTextResponse(
+            "Method Not Allowed",
+            status_code=405,
+            headers={**_llms_common_headers(), "Allow": "GET, HEAD"},
+        )
+
+    @app.api_route(
+        "/llms.txt/{unsupported_path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "TRACE"],
+    )
+    async def reject_unsupported_llms_index_path(
+        unsupported_path: str, request: Request
+    ) -> PlainTextResponse:
+        _emit_route_rejection(
+            audit_sink,
+            fatal_shutdown,
+            "unsupported_llms_path",
+            request=request,
+            payload={"unsupportedPath": f"llms.txt/{unsupported_path}"},
+        )
+        return PlainTextResponse(
+            "Not Found", status_code=404, headers=_llms_common_headers()
+        )
+
+    @app.api_route("/llms/{document_name}.md", methods=["GET", "HEAD"])
+    async def llms_detail(document_name: str) -> Response:
+        filename = f"{document_name}.md"
+        if filename not in llms_documents or not _LLMS_DOCUMENT_NAME.fullmatch(
+            filename
+        ):
+            return PlainTextResponse(
+                "Not Found",
+                status_code=404,
+                headers=_llms_common_headers(),
+            )
+        try:
+            _current_llms_source()
+            detail_bytes = _read_llms_utf8(
+                llms_dir / filename,
+                source_label="llms detail",
+            )
+            return _llms_response(detail_bytes, detail=True)
+        except LlmsValidationError as error:
+            return _llms_unavailable(error)
+
+    @app.api_route(
+        "/llms",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "TRACE"],
+    )
+    async def reject_llms_root(request: Request) -> PlainTextResponse:
+        _emit_route_rejection(
+            audit_sink,
+            fatal_shutdown,
+            "unsupported_llms_path",
+            request=request,
+            payload={"unsupportedPath": ""},
+        )
+        return PlainTextResponse(
+            "Not Found", status_code=404, headers=_llms_common_headers()
+        )
+
+    @app.api_route(
+        "/llms/{unsupported_path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "TRACE"],
+    )
+    async def reject_unsupported_llms_path(
+        unsupported_path: str, request: Request
+    ) -> PlainTextResponse:
+        _emit_route_rejection(
+            audit_sink,
+            fatal_shutdown,
+            "unsupported_llms_path",
+            request=request,
+            payload={"unsupportedPath": unsupported_path},
+        )
+        return PlainTextResponse(
+            "Not Found", status_code=404, headers=_llms_common_headers()
+        )
 
     # Route the full FastMCP ASGI application at the exact endpoint instead of
     # using Mount("/mcp"), which redirects POST /mcp to /mcp/. This retains the
@@ -1157,11 +1597,13 @@ def _runtime_summary(
     allowed_hosts: list[str],
     allowed_origins: list[str],
     python_version: str,
+    agent_documents: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "pythonVersion": python_version,
         "tools": tool_details,
         "dependencies": dependency_summary,
+        "agentDocuments": list(agent_documents or []),
         "startupOnly": True,
         "maxConcurrency": concurrency,
         "toolTimeoutSeconds": timeout_seconds,
@@ -1191,6 +1633,29 @@ def _runtime_summary(
             "automaticProcessRestart": False,
         },
     }
+
+
+def _llms_common_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+
+
+def _llms_response(content: bytes, *, detail: bool = False) -> Response:
+    headers = _llms_common_headers()
+    if detail:
+        headers["Link"] = '</llms.txt>; rel="describedby"'
+    return Response(content=content, media_type="text/markdown", headers=headers)
+
+
+def _llms_unavailable(error: LlmsValidationError) -> PlainTextResponse:
+    LOGGER.error("llms source error source=%s reason=%s", error.source, error.reason)
+    return PlainTextResponse(
+        f"llms source unavailable: {error.reason}",
+        status_code=503,
+        headers=_llms_common_headers(),
+    )
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:

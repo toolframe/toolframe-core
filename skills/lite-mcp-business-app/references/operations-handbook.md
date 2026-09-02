@@ -53,6 +53,7 @@ the same computer:
 Dashboard  http://127.0.0.1:8000/
 Info       http://127.0.0.1:8000/info
 MCP        http://127.0.0.1:8000/mcp
+Agent guide http://127.0.0.1:8000/llms.txt
 LAN        http://192.168.1.20:8000/
 ```
 
@@ -66,12 +67,19 @@ preferred address cannot be reached, check that both computers are on the same
 LAN and that the host firewall permits the selected port, then inspect the
 actual network configuration.
 
-For a peer coding agent, the MCP URL is the LAN address with `/mcp` appended,
-for example:
+For a peer coding agent, first give the LAN address with `/llms.txt` appended:
 
 ```text
-http://192.168.1.20:8000/mcp
+http://192.168.1.20:8000/llms.txt
 ```
+
+That short document links to the business context, actual capabilities,
+workflow, and operations guide. It instructs the peer to use its own client's
+MCP registration flow for same-origin `/mcp`, then list the actual tools before
+claiming the connection works. Reading the document alone cannot install MCP
+into every client or bypass an approval step. If the client cannot register an
+MCP server, it should return the name, URL, Streamable HTTP transport, and exact
+blocker instead of inventing a command.
 
 The MCP transport is Streamable HTTP only. There is no SSE endpoint and no
 stdio endpoint. `/` is the Streamlit dashboard, `/info` is the built-in
@@ -85,9 +93,9 @@ built-in info page and compatibility tooling.
 2. Open the printed LAN dashboard address in a browser.
 3. Use the dashboard to see the business items, their status, the latest
    progress, and the result or review request.
-4. Give the peer agent the printed LAN MCP URL. It can use the app’s published
-   tools to claim or read a ready item, load its user context, record progress,
-   and submit a result.
+4. Give the peer agent the printed LAN Agent guide URL. It reads only the
+   linked pages relevant to the request, registers same-origin `/mcp`, proves
+   the connection by listing tools, then uses the app's narrow business tools.
 5. Review the item in the dashboard. The owner or an agent can write the next
    business action through a widget or a controlled tool.
 
@@ -138,6 +146,12 @@ Use the executable as a startup contract:
 - Dashboard source is also validated at startup, but Streamlit reloads the
   dashboard source during a browser refresh or rerun. This is dashboard
   rerun, not MCP tool hot reload.
+- Existing startup-approved `llms.txt` and `llms/*.md` files are read again for
+  each request, so editing their content does not require a restart. Adding or
+  renaming a linked detail file changes the startup allowlist and requires a
+  complete restart. Unsafe, missing, invalid UTF-8, oversized, or unlinked
+  agent documents make startup/check fail instead of publishing partial
+  guidance.
 - There is no reload command, reload API, or reload button in this MVP.
 
 Before a restart, run the non-destructive preflight:
@@ -148,10 +162,11 @@ Before a restart, run the non-destructive preflight:
 ```
 
 Use the JSON result when a coding agent needs a machine-readable gate. Check
-uses an isolated database snapshot, validates migration history, resolves the
-real shared UV environment, loads every tool, and validates the dashboard and
-widgets. It does not mutate the configured `data.db`, bind a port, create
-server logs, or scaffold missing directories. It can still provision managed
+uses an isolated database snapshot, validates migration history and the
+agent-document set, resolves the real shared UV environment, loads every tool,
+and validates the dashboard and widgets. It does not mutate the configured
+`data.db`, bind a port, create server logs, or scaffold missing source. It can
+still provision managed
 runtime/dependency files, and importing trusted Python may have import-time
 side effects. Stop the running app and other database writers before checking
 a live database so it cannot change during the snapshot.
@@ -297,8 +312,24 @@ current startup output.
 ### Can I use `127.0.0.1` from another computer?
 
 No. That address means “this same computer” to the caller. A peer agent needs
-the current printed LAN address and `/mcp`; a person needs the same LAN host
-address without `/mcp` for the dashboard.
+the current printed LAN address and `/llms.txt` first; a person needs the same
+LAN host address without a suffix for the dashboard.
+
+### Which URL should I give a new peer agent?
+
+Give it the current printed LAN address ending in `/llms.txt`. That is the
+progressive discovery guide; it tells the agent how to derive same-origin
+`/mcp`, which linked context to read, and how to prove registration by listing
+tools. Give `/mcp` directly only when the client's MCP registration flow asks
+for the endpoint URL.
+
+### Do edits to the agent guide need a restart?
+
+Content edits to existing approved `llms.txt` and `llms/*.md` files appear on
+the next request. Adding, removing, or renaming a detail file needs a restart
+because the safe file set is fixed at startup. Run `check --format json` before
+restart; `check` validates existing guide source but never creates or repairs
+it.
 
 ### Does the browser accept arbitrary SQL?
 

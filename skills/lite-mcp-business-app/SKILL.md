@@ -1,6 +1,6 @@
 ---
 name: lite-mcp-business-app
-description: Load when a user wants a coding agent to create, extend, operate, connect, diagnose, or judge the fit of a business-specific LAN app inside an editable lite-mcp distribution, including its SQLite migrations, MCP tools, Streamlit dashboard, peer-agent workflow, and nontechnical operating handbook.
+description: Load when a user wants a coding agent to create, extend, operate, connect, diagnose, or judge the fit of a business-specific LAN app inside an editable lite-mcp distribution, including its SQLite migrations, MCP tools, Streamlit dashboard, llms.txt LAN-agent guide, peer-agent workflow, and nontechnical operating handbook.
 ---
 
 # Lite MCP business app
@@ -27,8 +27,10 @@ nontechnical owner can operate and another agent can inherit.
 - Treat actor names as attribution, not identity. This product is trusted-LAN,
   unauthenticated application code; a need for security boundaries triggers the
   dedicated-app escalation path.
-- Keep `APP_CONTEXT.md` and `DOMAIN_MODEL.md` aligned with migrations, tools,
-  dashboard behavior, and tests in the same change.
+- Keep `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, `llms.txt`, and the linked `llms/`
+  documents aligned with migrations, tools, dashboard behavior, and tests in
+  the same change. The `llms` files are a curated LAN-facing projection, not a
+  second source of business truth.
 - Prefix user-owned business tables with `app_`; treat `_lite_mcp_*` tables as
   runtime-owned and outside user migrations or repair SQL.
 
@@ -77,7 +79,8 @@ unresolved business choices are visible rather than buried in implementation.
 ## 3. Implement one vertical business loop
 
 Build in dependency order: migration, private domain/storage helpers, narrow
-named MCP tools, then Streamlit widgets. Use the binary's scaffold commands
+named MCP tools, Streamlit widgets, then the progressive `llms.txt` agent
+guide. Use the binary's scaffold commands
 where they apply; inspect their generated file before filling it. Keep one
 published tool per public tool file and place shared support behind private
 underscore-prefixed modules.
@@ -105,7 +108,10 @@ is:
    proves representative reads, writes, replay, stale input, and error
    classification.
 5. The Dashboard completes the human path.
-6. A peer-LAN client completes the MCP path using the tested advertised address.
+6. A peer-LAN client starts from the tested advertised `/llms.txt` address,
+   follows its relevant linked documents, registers the same-origin `/mcp`
+   Streamable HTTP server through its own client, and proves the connection by
+   listing the actual tools before calling them.
 7. One end-to-end business item reaches its intended review or terminal state
    with history and result visible.
 
@@ -119,13 +125,14 @@ affected gate.
 
 Lead the final report with what the owner can now accomplish. Include app-local
 doc paths, changed business behavior, data migration/backups, tool names,
-Dashboard actions, the tested Dashboard and MCP addresses, verification
+Dashboard actions, the tested Dashboard, Agent guide, and MCP addresses, verification
 evidence, restart rules, known limits, and the next human action. Leave technical
 detail behind links unless it changes how the owner operates the app.
 
 For Develop, finish only when every agreed human and peer-agent path works and a
 future coding agent can continue safely from `APP_CONTEXT.md` and
-`DOMAIN_MODEL.md`. For Doctor, finish with an evidence-backed cause and, only
+`DOMAIN_MODEL.md`, while a peer LAN agent can discover the supported workflow
+from `/llms.txt`. For Doctor, finish with an evidence-backed cause and, only
 when repair was requested, a verified repair. For Operate, finish when the
 requested run, connection, backup, or explanation outcome is proven. For Fit,
 finish with a clear keep/escalate decision and the business reason; do not
@@ -134,7 +141,7 @@ invent implementation work.
 ## Conditional references
 
 - Read [development-handbook.md](references/development-handbook.md) for any
-  schema, tool, widget, or app-document change.
+  schema, tool, widget, `llms.txt`, or app-document change.
 - Read [job-domain-model.md](references/job-domain-model.md) only for queued,
   scheduled, claimed, leased, retried, or human-reviewed agent work.
 - Read [operations-handbook.md](references/operations-handbook.md) for startup,
@@ -163,7 +170,11 @@ invent implementation work.
   the owner explicitly changes that product decision. Give operational agents
   narrow business tools instead of arbitrary SQL instructions.
 - The first tested private LAN address is for peers; `127.0.0.1` is only for the
-  host machine. Use the same LAN host and port with `/mcp` for MCP.
+  host machine. Use that same LAN host and port for `/llms.txt` and `/mcp`.
+- Give a new peer agent the tested LAN `/llms.txt` URL first. That guide can
+  tell the agent to register same-origin `/mcp`, but it cannot install an MCP
+  server into every possible client or bypass client approval. A successful
+  tool-list response, not reading the guide, proves the connection.
 - An unreachable MCP endpoint pauses the integration before business state is
   known. Return a visible warning and one self-contained, copyable issue from
   the response asset; do not invent a Job transition or claim that the server

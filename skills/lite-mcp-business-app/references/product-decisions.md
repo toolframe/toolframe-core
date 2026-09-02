@@ -398,3 +398,37 @@ recommendation, answer, and rationale before implementation.
 - **Rationale/tradeoff:** Coding agents discover the handbook without a manual
   setup step. Create-once behavior protects local edits; a later release does
   not silently upgrade an existing installed copy.
+
+## Round 9 — LAN agent discovery (Q33–Q34)
+
+### Q33 — How should a peer learn the app from one URL?
+
+- **Question:** Should every runtime and business detail live in one root
+  document, or should the app expose a small `/llms.txt` index with linked
+  detail pages that a peer reads only when relevant?
+- **Recommendation:** Follow the progressive llms.txt shape: a concise root
+  index at `/llms.txt` and editable app-specific documents below `/llms/` for
+  the agent guide, capabilities, context, workflow, and operations.
+- **Product-owner answer:** Use the subpath approach. Ship a default template
+  like tools and Dashboard source, then let the coding agent adapt it to the
+  user's business requirement without placing every detail in `llms.txt`.
+- **Rationale/tradeoff:** A peer receives one stable copy/paste URL without
+  wasting context on unrelated detail. The coding agent must keep the linked
+  projection aligned with actual tools, widgets, schema, and domain documents.
+
+### Q34 — What outcome should the guide drive?
+
+- **Question:** Is reading the guide sufficient, or should it direct the peer
+  to connect this server as MCP and build the requested workflow from verified
+  capabilities?
+- **Recommendation:** State same-origin `/mcp` and Streamable HTTP in
+  client-neutral terms, require the peer to use its supported MCP registration
+  flow, and treat a successful tool-list response as proof before building a
+  bounded workflow.
+- **Product-owner answer:** When another agent receives `LANIP/llms.txt`, it
+  should recognize this as an MCP-backed app, try to install/register it, and
+  build the user's workflow from the published capabilities.
+- **Rationale/tradeoff:** MCP client commands and approval policies vary, so
+  the guide cannot guarantee automatic installation or invent one universal
+  command. It can provide the exact name, same-origin URL, transport, proof
+  step, and a precise blocker when the current client cannot register it.

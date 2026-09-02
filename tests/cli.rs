@@ -98,5 +98,13 @@ fn non_server_commands_do_not_install_the_agent_skill() {
             !directory.path().join(".agents").exists(),
             "{command_name} must not install the production skill"
         );
+        assert!(
+            !directory.path().join("llms.txt").exists(),
+            "{command_name} must not scaffold the root llms file"
+        );
+        assert!(
+            !directory.path().join("llms").exists(),
+            "{command_name} must not scaffold the llms directory"
+        );
     }
 }

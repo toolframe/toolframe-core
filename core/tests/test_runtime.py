@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import anyio
+from fastapi.testclient import TestClient
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CORE_DIRECTORY = REPOSITORY_ROOT / "core"
@@ -60,6 +61,91 @@ class RuntimeTests(unittest.TestCase):
         manifest_path = self.root / "manifest.json"
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         return manifest_path, tool_path
+
+    def write_llms_source(self, *, index=None, documents=None):
+        llms_dir = self.root / "llms"
+        llms_dir.mkdir(exist_ok=True)
+        documents = documents or {"overview": "# Overview\n\nDetails.\n"}
+        for name, contents in documents.items():
+            (llms_dir / f"{name}.md").write_text(contents, encoding="utf-8")
+        index_path = self.root / "llms.txt"
+        index_path.write_text(
+            index
+            or "# lite-mcp\n> LAN MCP server context.\n\n## Documents\n\n- [Overview](/llms/overview.md)\n",
+            encoding="utf-8",
+        )
+        return index_path, llms_dir
+
+    def test_validate_llms_source_returns_safe_reachable_document_allowlist(self):
+        index_path, llms_dir = self.write_llms_source(
+            index=(
+                "# lite-mcp\n"
+                "> LAN MCP server context.\n"
+                "\n"
+                "## Documents\n"
+                "\n"
+                "- [Overview](/llms/overview.md)\n"
+                "- [Workflow](/llms/workflow_notes.md)\n"
+            ),
+            documents={
+                "overview": "# Overview\n\nDetails.\n",
+                "workflow_notes": "# Workflow\n\nDetails.\n",
+            },
+        )
+
+        self.assertEqual(
+            runtime.validate_llms_source(index_path, llms_dir),
+            ["overview.md", "workflow_notes.md"],
+        )
+
+    def test_validate_llms_source_accepts_v2_bom_and_blank_line_before_summary(self):
+        index_path, llms_dir = self.write_llms_source(
+            index=(
+                "\ufeff# lite-mcp\n"
+                "\n"
+                "> LAN MCP server context.\n"
+                "\n"
+                "## Documents\n"
+                "\n"
+                "- [Overview](/llms/overview.md)\n"
+            )
+        )
+
+        self.assertEqual(runtime.validate_llms_source(index_path, llms_dir), ["overview.md"])
+
+    def test_validate_llms_source_rejects_unlinked_or_unsafe_documents(self):
+        index_path, llms_dir = self.write_llms_source(
+            documents={
+                "overview": "# Overview\n\nDetails.\n",
+                "orphan": "# Orphan\n\nNot linked.\n",
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "orphan.md.*not reachable"):
+            runtime.validate_llms_source(index_path, llms_dir)
+
+        unsafe = llms_dir / "Unsafe.md"
+        unsafe.write_text("# Unsafe\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Unsafe.md.*safe"):
+            runtime.validate_llms_source(index_path, llms_dir)
+
+    def test_validate_llms_source_rejects_symlink_utf8_and_oversize_sources(self):
+        index_path, llms_dir = self.write_llms_source()
+        target = self.root / "outside.md"
+        target.write_text("# Outside\n", encoding="utf-8")
+        (llms_dir / "overview.md").unlink()
+        (llms_dir / "overview.md").symlink_to(target)
+        with self.assertRaisesRegex(ValueError, "overview.md.*symlink"):
+            runtime.validate_llms_source(index_path, llms_dir)
+
+        (llms_dir / "overview.md").unlink()
+        (llms_dir / "overview.md").write_bytes(b"# Overview\n\xff")
+        with self.assertRaisesRegex(ValueError, "overview.md.*UTF-8"):
+            runtime.validate_llms_source(index_path, llms_dir)
+
+        (llms_dir / "overview.md").write_bytes(b"x" * (256 * 1024 + 1))
+        with self.assertRaisesRegex(ValueError, "overview.md.*256 KiB"):
+            runtime.validate_llms_source(index_path, llms_dir)
 
     def test_loads_exactly_one_decorated_tool(self):
         manifest_path, _ = self.write_manifest()
@@ -281,6 +367,7 @@ def second() -> str:
 
     def test_application_has_startup_only_routes(self):
         manifest_path, _ = self.write_manifest()
+        llms_file, llms_dir = self.write_llms_source()
         database = self.root / "data.db"
         sqlite3.connect(database).close()
         dashboard = self.root / "dashboard"
@@ -299,6 +386,8 @@ def second() -> str:
             "LITE_MCP_DASHBOARD_RUNNER": str(runner_path),
             "LITE_MCP_INFO_PAGE": str(info_page),
             "LITE_MCP_WORKSPACE": str(workspace),
+            "LITE_MCP_LLMS_FILE": str(llms_file),
+            "LITE_MCP_LLMS_DIR": str(llms_dir),
             "LITE_MCP_PORT": "8000",
             "LITE_MCP_ALLOWED_HOSTS": '["localhost","127.0.0.1"]',
             "LITE_MCP_ALLOWED_ORIGINS": '["http://localhost:8000"]',
@@ -352,6 +441,11 @@ def second() -> str:
         self.assertIn("/healthz", paths)
         self.assertIn("/api/database", paths)
         self.assertIn("/api/runtime", paths)
+        self.assertIn("/llms.txt", paths)
+        self.assertIn("/llms.txt/{unsupported_path:path}", paths)
+        self.assertIn("/llms/{document_name}.md", paths)
+        self.assertIn("/llms", paths)
+        self.assertIn("/llms/{unsupported_path:path}", paths)
         self.assertIn("/mcp", paths)
         self.assertIn("/sse", paths)
         self.assertFalse(any("reload" in path for path in paths))
@@ -359,6 +453,62 @@ def second() -> str:
         self.assertEqual(app.routes[-3].path, "/mcp/{unsupported_path:path}")
         self.assertEqual(app.routes[-2].path, "/sse")
         self.assertEqual(app.routes[-1].path, "")
+
+        client = TestClient(app, base_url="http://localhost")
+        root_response = client.get("/llms.txt")
+        self.assertEqual(root_response.status_code, 200)
+        self.assertEqual(root_response.content, llms_file.read_bytes())
+        self.assertEqual(root_response.headers["content-type"], "text/markdown; charset=utf-8")
+        self.assertEqual(root_response.headers["cache-control"], "no-store")
+        self.assertEqual(root_response.headers["x-content-type-options"], "nosniff")
+
+        llms_file.write_text(
+            "# lite-mcp changed\n"
+            "> Updated LAN MCP server context.\n"
+            "\n"
+            "## Documents\n"
+            "\n"
+            "- [Overview](/llms/overview.md)\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(client.get("/llms.txt").content, llms_file.read_bytes())
+
+        detail_response = client.get("/llms/overview.md")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.headers["link"], '</llms.txt>; rel="describedby"')
+        self.assertEqual(detail_response.content, b"# Overview\n\nDetails.\n")
+
+        (llms_dir / "overview.md").write_bytes(b"# Overview\n\nChanged.\n")
+        self.assertEqual(client.get("/llms/overview.md").content, b"# Overview\n\nChanged.\n")
+        head_response = client.head("/llms.txt")
+        self.assertEqual(head_response.status_code, 200)
+        self.assertEqual(head_response.content, b"")
+        self.assertEqual(head_response.headers["content-type"], "text/markdown; charset=utf-8")
+        self.assertEqual(client.get("/llms/unknown.md").status_code, 404)
+        self.assertEqual(client.get("/llms/%2E%2E/outside.md").status_code, 404)
+        self.assertEqual(client.get("/llms").status_code, 404)
+        method_rejected = client.post("/llms.txt")
+        self.assertEqual(method_rejected.status_code, 405)
+        self.assertEqual(method_rejected.headers["allow"], "GET, HEAD")
+        self.assertEqual(client.put("/llms.txt").status_code, 405)
+        self.assertEqual(client.get("/llms.txt/").status_code, 404)
+        self.assertEqual(client.get("/llms.txt/extra").status_code, 404)
+        self.assertEqual(client.request("PROPFIND", "/llms.txt").status_code, 405)
+        self.assertEqual(
+            client.request("PROPFIND", "/llms.txt/extra").status_code, 404
+        )
+        self.assertEqual(client.request("FOO", "/llms/overview.md").status_code, 404)
+
+        (llms_dir / "overview.md").write_bytes(b"# Overview\n\xff")
+        invalid = client.get("/llms/overview.md")
+        self.assertEqual(invalid.status_code, 503)
+        self.assertNotIn("Overview", invalid.text)
+
+        (llms_dir / "overview.md").write_bytes(b"# Overview\n\nChanged.\n")
+        (llms_dir / "overview.md").unlink()
+        unavailable = client.get("/llms/overview.md")
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertNotIn("Overview", unavailable.text)
 
         # This test does not enter the ASGI lifespan, so release the process lock.
         for middleware in app.user_middleware:

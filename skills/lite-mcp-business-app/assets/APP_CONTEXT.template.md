@@ -43,6 +43,8 @@ canonical term.
 
 - Dashboard: `/` — [what a human sees first and what can be submitted].
 - Built-in information: `/info` — [when to use it].
+- Agent guide: `/llms.txt` — [what a new LAN agent should discover and which
+  linked pages apply to this business app].
 - MCP: `/mcp` — [trusted peer-agent tools and their business purpose].
 - Database: `data.db` — [business data owned by this app].
 - Scheduler boundary: [external trigger, cadence, or “none”].
@@ -63,6 +65,9 @@ has consciously accepted the local exposure.
 ```
 
 - Dashboard URL: [copy the URL printed for this run].
+- Agent guide URL for a peer: [use the tested printed LAN host/port with
+  `/llms.txt`; the peer derives same-origin `/mcp` and proves it by listing
+  tools].
 - MCP URL for this host: [copy the loopback URL printed for this run].
 - MCP URL for a peer: [use the tested printed LAN host/port with `/mcp`].
 - Restart required after: [migrations, MCP tools, dependencies, and other
@@ -81,6 +86,7 @@ has consciously accepted the local exposure.
 | Schema | `migrations/` | [latest migration and immutable-history note] |
 | MCP tools | `tools/` | [public tool names and private helper modules] |
 | Dashboard | `dashboard/app.py`, `dashboard/widgets/` | [entry point and widget list] |
+| LAN agent discovery | `llms.txt`, `llms/` | [linked capability/context/workflow pages and last reconciliation] |
 | Large results/files | `workspace/artifacts/` | [artifact naming and retrieval convention] |
 
 ## Decisions and open issues

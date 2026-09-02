@@ -32,42 +32,22 @@ The package contains the complete editable dashboard scaffold and the
 the first normal server start, its production copy also exists under
 `.agents/skills/`:
 
-```text
-lite-mcp/
-├── lite-mcp
-├── uv
-├── .agents/                         # created by `lite-mcp` / `serve`
-│   └── skills/
-│       └── lite-mcp-business-app/   # production handbook; no eval folders
-├── dashboard/
-│   ├── app.py
-│   ├── pyproject.toml
-│   ├── components/
-│   └── widgets/
-│       └── example_card.py
-├── migrations/
-│   ├── 0000_bootstrap.sql
-│   └── README.md
-├── examples/
-│   └── idempotent_create_entry.py # MCP mutation reference
-├── skills/
-│   └── lite-mcp-business-app/
-│       └── SKILL.md                 # business-first coding handbook
-├── tools/
-│   ├── execute_sql.py
-│   └── _artifact_example.py    # ignored, copyable tool reference
-├── workspace/
-│   └── artifacts/              # managed local exchange layer
-├── logs/                       # runtime audit and MCP JSONL files
-└── runtime/
-```
-
 The packaging script refuses to overwrite an existing `dist/lite-mcp` and
-copies the editable dashboard, migration, and full skill source. Dashboard and
-skill `__pycache__`, `.pyc`, and `.pyo` files are excluded. It does not alter
-the source tree. At runtime, a missing entire `dashboard/` or `migrations/`
-directory is created from the embedded scaffold. Existing directories and
-files are never overwritten, completed, or automatically upgraded.
+copies the editable dashboard, migrations, LAN agent-discovery documents, and
+full skill source. Dashboard and skill `__pycache__`, `.pyc`, and `.pyo` files
+are excluded. It does not alter the source tree. At runtime, a missing entire
+`dashboard/`, `llms/`, or `migrations/` directory is created from the embedded
+scaffold, and a missing `llms.txt` is created with it. Existing directories and
+files are never overwritten, completed, repaired, or automatically upgraded.
+
+The discovery source has a stricter all-or-nothing rule: the root `llms.txt`
+and its `llms/` directory must either both be absent (so the complete default
+scaffold can be created) or both be valid. A partial source tree, unsafe path,
+symlink, wrong file type, invalid UTF-8, missing linked document, or oversized
+document fails startup with the offending path and reason.
+Detail files are direct regular non-symlink UTF-8 Markdown files named
+`[a-z0-9][a-z0-9_-]*.md`, limited to 256 KiB each; every document linked by
+the root index must be present and reachable.
 
 ### Bundled coding-agent skill
 
@@ -98,8 +78,35 @@ me how a trusted peer agent and a person use it.
 ```
 
 The coding agent needs filesystem access to develop the folder. A peer runtime
-agent needs only the printed LAN `/mcp` URL and the business tools that the
-coding agent publishes.
+agent starts with the printed LAN `/llms.txt` URL, then connects same-origin
+`/mcp` and uses only the business tools that the coding agent publishes.
+
+### LAN agent discovery
+
+The editable [`llms.txt`](llms.txt) is the URL-first handoff for another agent.
+Give a peer the server's LAN address plus `/llms.txt`, for example
+`http://192.168.1.20:8000/llms.txt`. It is a short progressive index; the
+linked documents under [`llms/`](llms/) describe the app's purpose, current
+capabilities, context, workflow, and operations. Keep this projection aligned
+with the tools, dashboard, migrations, and business request so a peer can plan
+against what the running app actually exposes.
+
+The peer should use its current MCP client registration flow for the same-origin
+`/mcp` URL, then list the actual tools and schemas before claiming that the
+connection works. The endpoint is unauthenticated trusted-LAN Streamable HTTP;
+there is no SSE or stdio endpoint. `llms.txt` cannot guarantee a client-specific
+automatic installation, and it must not invent a client command. If the client
+does not support this transport, report the exact URL, transport, and blocker
+for the owner to copy.
+
+The root and existing detail files are read on each request, so editing their
+content becomes visible after a browser refresh or a peer's next fetch. The
+startup-validated document allowlist is not hot-reloaded: adding or renaming a
+detail file, or changing its safe filename, requires a full restart. `check`
+validates and reports `agentDocuments` without scaffolding; `invoke` does not
+validate or publish these documents. The package script copies the root and
+direct detail files, never follows symlinks, and does not include unrelated
+nested content.
 
 If a scheduled workflow cannot reach that URL, it should pause before changing
 business state, show a clear **Lite MCP unavailable** warning, and return the
@@ -122,6 +129,7 @@ to stderr. A typical terminal shows:
 07:21:48.700 [SKILL] installed bundled business skill at /path/to/lite-mcp/.agents/skills/lite-mcp-business-app
 07:21:48.755 [BOOT] lite-mcp 0.1.0 is ready
 07:21:48.755 [DASHBOARD] Dashboard  http://127.0.0.1:8000/ (Streamlit)
+07:21:48.755 [MCP] Agent guide http://127.0.0.1:8000/llms.txt
 07:21:48.755 [MCP] MCP        http://127.0.0.1:8000/mcp
 07:21:48.755 [DB] Migrations /path/to/lite-mcp/migrations (current 0000; 1 applied this start; 1 total)
 07:21:48.755 [NETWORK] LAN        http://192.168.1.20:8000/
@@ -173,6 +181,8 @@ snapshot, resolves the real shared UV project, strictly imports every startup
 tool, materializes its FastMCP schema, compiles `dashboard/app.py`, and imports
 and validates every public widget. The JSON form writes a versioned object to
 stdout and emits JSON on failure, making it suitable for coding-agent gates.
+It also validates the URL-first `llms.txt` index and its direct detail files,
+and reports their paths and reachable document names under `agentDocuments`.
 
 Preflight does not bind a port, mutate the configured `data.db` or its SQLite
 sidecars, create logs, or scaffold missing source directories. If the database
@@ -758,6 +768,8 @@ database receives the same ordered change and drift remains detectable.
 | Route | Purpose |
 | --- | --- |
 | `GET /` | Streamlit Dashboard |
+| `GET, HEAD /llms.txt` | Progressive LAN agent-discovery index |
+| `GET, HEAD /llms/{name}.md` | Direct linked LAN agent-discovery document |
 | `GET /info` | Built-in datastore and runtime diagnostics page |
 | `GET /api/database` | Up to 25 preview rows per SQLite table |
 | `GET /api/runtime` | Python version, loaded tools, dependencies, and runtime limits |
@@ -782,6 +794,8 @@ reduces DNS-rebinding exposure but is not authentication or a code sandbox.
 | `--migrations-dir` | `LITE_MCP_MIGRATIONS_DIR` | `<executable>/migrations` |
 | `--tools-dir` | `LITE_MCP_TOOLS` | `<executable>/tools` |
 | `--dashboard-dir` | `LITE_MCP_DASHBOARD_DIR` | `<executable>/dashboard` |
+| `--llms-file` | `LITE_MCP_LLMS_FILE` | `<executable>/llms.txt` |
+| `--llms-dir` | `LITE_MCP_LLMS_DIR` | `<executable>/llms` |
 | `--workspace-dir` | `LITE_MCP_WORKSPACE` | `<executable>/workspace` |
 | `--runtime-dir` | `LITE_MCP_RUNTIME` | `<executable>/runtime` |
 | `--logs-dir` | `LITE_MCP_LOGS_DIR` | `<executable>/logs` |
@@ -819,6 +833,8 @@ cargo run --release -- \
   --migrations-dir ./migrations \
   --tools-dir ./tools \
   --dashboard-dir ./dashboard \
+  --llms-file ./llms.txt \
+  --llms-dir ./llms \
   --workspace-dir ./workspace \
   --runtime-dir ./runtime \
   --uv-path /path/to/uv

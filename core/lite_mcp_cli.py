@@ -19,7 +19,12 @@ from lite_mcp_artifacts import (
     configure_artifact_store,
 )
 from lite_mcp_idempotency import _configure as _configure_idempotency
-from lite_mcp_runtime import RuntimeGuardMiddleware, _pydantic_json, load_tools
+from lite_mcp_runtime import (
+    RuntimeGuardMiddleware,
+    _pydantic_json,
+    load_tools,
+    validate_llms_source,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -28,6 +33,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--dashboard", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument("--llms-file", type=Path, required=True)
+    parser.add_argument("--llms-dir", type=Path, required=True)
     parser.add_argument("--tool")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--result-limit", type=int, default=4_194_304)
@@ -68,6 +75,7 @@ def _configure_tool_support(database: Path, workspace: Path) -> Any:
 
 def _check(arguments: argparse.Namespace) -> int:
     _require_python()
+    agent_documents = validate_llms_source(arguments.llms_file, arguments.llms_dir)
     with tempfile.TemporaryDirectory(prefix="lite-mcp-check-") as temporary:
         temporary_root = Path(temporary)
         database = temporary_root / "data.db"
@@ -103,6 +111,7 @@ def _check(arguments: argparse.Namespace) -> int:
                     for widget in widgets
                 ],
                 "loadedToolCount": len(tools),
+                "agentDocuments": agent_documents,
             }
         )
     return 0

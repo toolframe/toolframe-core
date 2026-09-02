@@ -33,6 +33,14 @@ const DASHBOARD_WIDGETS_INIT: &str = include_str!("../dashboard/widgets/__init__
 const DASHBOARD_EXAMPLE_CARD: &str = include_str!("../dashboard/widgets/example_card.py");
 const DEFAULT_BOOTSTRAP_MIGRATION: &str = include_str!("../migrations/0000_bootstrap.sql");
 const DEFAULT_MIGRATION_README: &str = include_str!("../migrations/README.md");
+const DEFAULT_LLMS_FILE: &str = include_str!("../llms.txt");
+const EMBEDDED_LLMS_FILES: &[(&str, &str)] = &[
+    ("agent-guide.md", include_str!("../llms/agent-guide.md")),
+    ("capabilities.md", include_str!("../llms/capabilities.md")),
+    ("context.md", include_str!("../llms/context.md")),
+    ("workflow.md", include_str!("../llms/workflow.md")),
+    ("operations.md", include_str!("../llms/operations.md")),
+];
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const EMBEDDED_BUSINESS_SKILL_FILES: &[(&str, &[u8])] = &[
@@ -82,6 +90,8 @@ pub struct AppPaths {
     pub dashboard: PathBuf,
     pub workspace: PathBuf,
     pub runtime: PathBuf,
+    pub llms_file: PathBuf,
+    pub llms_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +99,8 @@ pub struct PreparedDirectories {
     pub migrations_scaffolded: bool,
     pub tools_scaffolded: bool,
     pub dashboard_scaffolded: bool,
+    pub llms_file_scaffolded: bool,
+    pub llms_dir_scaffolded: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +161,12 @@ pub fn install_business_skill(executable_root: &Path) -> Result<bool> {
                 target.display()
             );
         }
+        SkillPathState::Other => {
+            bail!(
+                "cannot install business skill: target path {} is not a regular file or directory",
+                target.display()
+            );
+        }
         SkillPathState::Symlink => {
             bail!(
                 "cannot install business skill: target path {} is a symlink; refusing to follow it",
@@ -198,6 +216,10 @@ pub fn install_business_skill(executable_root: &Path) -> Result<bool> {
                     "cannot install business skill: target path {} is a file after a concurrent install",
                     target.display()
                 ),
+                SkillPathState::Other => bail!(
+                    "cannot install business skill: target path {} is not a regular file or directory after a concurrent install",
+                    target.display()
+                ),
                 SkillPathState::Symlink => bail!(
                     "cannot install business skill: target path {} is a symlink after a concurrent install; refusing to follow it",
                     target.display()
@@ -227,6 +249,7 @@ enum SkillPathState {
     Missing,
     Directory,
     File,
+    Other,
     Symlink,
 }
 
@@ -247,8 +270,10 @@ fn inspect_skill_path(path: &Path) -> Result<SkillPathState> {
         Ok(SkillPathState::Symlink)
     } else if metadata.is_dir() {
         Ok(SkillPathState::Directory)
-    } else {
+    } else if metadata.is_file() {
         Ok(SkillPathState::File)
+    } else {
+        Ok(SkillPathState::Other)
     }
 }
 
@@ -259,6 +284,12 @@ fn ensure_real_directory(path: &Path, label: &str) -> Result<()> {
             SkillPathState::File => {
                 bail!(
                     "cannot install business skill: {label} path {} is a file; expected a real directory",
+                    path.display()
+                );
+            }
+            SkillPathState::Other => {
+                bail!(
+                    "cannot install business skill: {label} path {} is not a regular directory",
                     path.display()
                 );
             }
@@ -297,6 +328,7 @@ fn write_embedded_skill_file(path: &Path, content: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_paths(
     root: &Path,
     database: Option<PathBuf>,
@@ -305,6 +337,8 @@ pub fn resolve_paths(
     dashboard: Option<PathBuf>,
     workspace: Option<PathBuf>,
     runtime: Option<PathBuf>,
+    llms_file: Option<PathBuf>,
+    llms_dir: Option<PathBuf>,
 ) -> Result<AppPaths> {
     let cwd = env::current_dir().context("could not read the current directory")?;
     Ok(AppPaths {
@@ -314,10 +348,26 @@ pub fn resolve_paths(
         dashboard: absolute_override(dashboard, &cwd, &root.join("dashboard")),
         workspace: absolute_override(workspace, &cwd, &root.join("workspace")),
         runtime: absolute_override(runtime, &cwd, &root.join("runtime")),
+        llms_file: absolute_override(llms_file, &cwd, &root.join("llms.txt")),
+        llms_dir: absolute_override(llms_dir, &cwd, &root.join("llms")),
     })
 }
 
 pub fn prepare_directories(paths: &AppPaths) -> Result<PreparedDirectories> {
+    let llms_scaffolded = validate_llms_pair(&paths.llms_file, &paths.llms_dir)?;
+    let llms_file_scaffolded = if llms_scaffolded {
+        scaffold_llms_file_if_missing(&paths.llms_file)?
+    } else {
+        false
+    };
+    let llms_dir_scaffolded = if llms_scaffolded {
+        scaffold_llms_directory_if_missing(&paths.llms_dir)?
+    } else {
+        false
+    };
+    // Keep the pair-level invariant true even if a concurrent launcher changed
+    // one target while this process was staging the default source.
+    validate_llms_pair(&paths.llms_file, &paths.llms_dir)?;
     let migrations_scaffolded = scaffold_migrations_if_missing(&paths.migrations)?;
     let tools_created = create_directory_if_missing(&paths.tools, "tools")?;
     create_directory_if_missing(&paths.workspace, "workspace")?;
@@ -365,6 +415,8 @@ pub fn prepare_directories(paths: &AppPaths) -> Result<PreparedDirectories> {
         migrations_scaffolded,
         tools_scaffolded: tools_created,
         dashboard_scaffolded,
+        llms_file_scaffolded,
+        llms_dir_scaffolded,
     })
 }
 
@@ -552,6 +604,145 @@ fn scaffold_migrations_if_missing(path: &Path) -> Result<bool> {
     )
 }
 
+fn validate_llms_file_path(path: &Path) -> Result<bool> {
+    match inspect_skill_path(path)? {
+        SkillPathState::Missing => Ok(true),
+        SkillPathState::File => Ok(false),
+        SkillPathState::Directory => bail!(
+            "llms file path {} is a directory; expected a regular file",
+            path.display()
+        ),
+        SkillPathState::Other => bail!(
+            "llms file path {} is not a regular file; refusing to use it",
+            path.display()
+        ),
+        SkillPathState::Symlink => bail!(
+            "llms file path {} is a symlink; refusing to follow it",
+            path.display()
+        ),
+    }
+}
+
+fn validate_llms_directory_path(path: &Path) -> Result<bool> {
+    match inspect_skill_path(path)? {
+        SkillPathState::Missing => Ok(true),
+        SkillPathState::Directory => Ok(false),
+        SkillPathState::File => bail!(
+            "llms directory path {} is a file; expected a real directory",
+            path.display()
+        ),
+        SkillPathState::Other => bail!(
+            "llms directory path {} is not a real directory",
+            path.display()
+        ),
+        SkillPathState::Symlink => bail!(
+            "llms directory path {} is a symlink; refusing to follow it",
+            path.display()
+        ),
+    }
+}
+
+fn validate_llms_pair(file: &Path, directory: &Path) -> Result<bool> {
+    let file_missing = validate_llms_file_path(file)?;
+    let directory_missing = validate_llms_directory_path(directory)?;
+    if file_missing != directory_missing {
+        if file_missing {
+            bail!(
+                "llms source is partial: llms file path {} is missing while llms directory path {} exists; both must be present or both absent",
+                file.display(),
+                directory.display()
+            );
+        }
+        bail!(
+            "llms source is partial: llms directory path {} is missing while llms file path {} exists; both must be present or both absent",
+            directory.display(),
+            file.display()
+        );
+    }
+    Ok(file_missing)
+}
+
+fn scaffold_llms_file_if_missing(path: &Path) -> Result<bool> {
+    if !validate_llms_file_path(path)? {
+        return Ok(false);
+    }
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("llms file path {} has no parent directory", path.display()))?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "could not create llms file parent directory {}",
+            parent.display()
+        )
+    })?;
+
+    let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let staging = parent.join(format!(
+        ".lite-mcp-llms-file-{}-{sequence}.tmp",
+        std::process::id()
+    ));
+    let mut published = false;
+    let result = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&staging)
+            .with_context(|| {
+                format!(
+                    "could not create llms file staging path {}",
+                    staging.display()
+                )
+            })?;
+        file.write_all(DEFAULT_LLMS_FILE.as_bytes())
+            .with_context(|| {
+                format!(
+                    "could not write llms file staging path {}",
+                    staging.display()
+                )
+            })?;
+        file.sync_all().with_context(|| {
+            format!(
+                "could not sync llms file staging path {}",
+                staging.display()
+            )
+        })?;
+        published = rename_file_if_absent(&staging, path)?;
+        Ok(())
+    })();
+    if staging.exists() {
+        fs::remove_file(&staging).with_context(|| {
+            format!(
+                "could not remove llms file staging path {}",
+                staging.display()
+            )
+        })?;
+    }
+    result?;
+    if !published {
+        // A concurrent launcher may have published the create-once file.
+        // Re-inspect without following symlinks before treating the race as a
+        // successful no-op.
+        validate_llms_file_path(path)?;
+    }
+    Ok(published)
+}
+
+fn scaffold_llms_directory_if_missing(path: &Path) -> Result<bool> {
+    if !validate_llms_directory_path(path)? {
+        return Ok(false);
+    }
+
+    let published = scaffold_directory_if_missing(path, "llms", EMBEDDED_LLMS_FILES)?;
+    if !published {
+        // The directory may have been created by another launcher while the
+        // complete staged tree was being written. Confirm its type without
+        // following a symlink before preserving it.
+        validate_llms_directory_path(path)?;
+    }
+    Ok(published)
+}
+
 fn scaffold_directory_if_missing(path: &Path, label: &str, files: &[(&str, &str)]) -> Result<bool> {
     if path.exists() {
         if path.is_dir() {
@@ -612,6 +803,91 @@ fn scaffold_directory_if_missing(path: &Path, label: &str, files: &[(&str, &str)
 
     // If another launcher won the race, its directory remains untouched.
     Ok(published)
+}
+
+#[cfg(target_vendor = "apple")]
+fn rename_file_if_absent(source: &Path, destination: &Path) -> Result<bool> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let source = CString::new(source.as_os_str().as_bytes())
+        .context("temporary llms file path contains a NUL byte")?;
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .context("llms file path contains a NUL byte")?;
+    // SAFETY: both pointers reference live NUL-terminated path buffers, and
+    // RENAME_EXCL asks the kernel not to replace an existing destination.
+    let result =
+        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::EEXIST) | Some(libc::ENOTEMPTY)
+    ) {
+        return Ok(false);
+    }
+    Err(error).with_context(|| {
+        format!(
+            "could not publish llms file at {}",
+            destination.to_string_lossy()
+        )
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_file_if_absent(source: &Path, destination: &Path) -> Result<bool> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let source = CString::new(source.as_os_str().as_bytes())
+        .context("temporary llms file path contains a NUL byte")?;
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .context("llms file path contains a NUL byte")?;
+    // SAFETY: both pointers reference live NUL-terminated path buffers, and
+    // RENAME_NOREPLACE asks the kernel not to replace an existing destination.
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::EEXIST) | Some(libc::ENOTEMPTY)
+    ) {
+        return Ok(false);
+    }
+    Err(error).with_context(|| {
+        format!(
+            "could not publish llms file at {}",
+            destination.to_string_lossy()
+        )
+    })
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android")))]
+fn rename_file_if_absent(source: &Path, destination: &Path) -> Result<bool> {
+    match fs::hard_link(source, destination) {
+        Ok(()) => {
+            fs::remove_file(source).with_context(|| {
+                format!(
+                    "could not remove llms file staging path {}",
+                    source.display()
+                )
+            })?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error)
+            .with_context(|| format!("could not publish llms file at {}", destination.display())),
+    }
 }
 
 #[cfg(target_vendor = "apple")]
@@ -1007,6 +1283,8 @@ mod tests {
             dashboard: directory.path().join("nested").join("dashboard"),
             workspace: directory.path().join("nested").join("workspace"),
             runtime: directory.path().join("nested").join("runtime"),
+            llms_file: directory.path().join("nested").join("llms.txt"),
+            llms_dir: directory.path().join("nested").join("llms"),
         };
 
         let prepared = prepare_directories(&paths).expect("prepare new directories");
@@ -1038,15 +1316,218 @@ mod tests {
     }
 
     #[test]
+    fn scaffolds_llms_file_and_directory_once_without_repairing_user_content() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let paths = AppPaths {
+            database: directory.path().join("data.db"),
+            migrations: directory.path().join("migrations"),
+            tools: directory.path().join("tools"),
+            dashboard: directory.path().join("dashboard"),
+            workspace: directory.path().join("workspace"),
+            runtime: directory.path().join("runtime"),
+            llms_file: directory.path().join("llms.txt"),
+            llms_dir: directory.path().join("llms"),
+        };
+
+        let prepared = prepare_directories(&paths).expect("prepare llms defaults");
+        assert!(prepared.llms_file_scaffolded);
+        assert!(prepared.llms_dir_scaffolded);
+        assert!(paths.llms_file.is_file());
+        assert_eq!(
+            fs::read_to_string(&paths.llms_file).expect("read default llms file"),
+            DEFAULT_LLMS_FILE
+        );
+        for (relative, expected) in EMBEDDED_LLMS_FILES {
+            let child = paths.llms_dir.join(relative);
+            assert!(child.is_file(), "missing llms scaffold file {relative}");
+            assert_eq!(
+                fs::read_to_string(child).expect("read llms scaffold file"),
+                *expected
+            );
+        }
+
+        fs::write(&paths.llms_file, "# user-owned guide\n").expect("replace llms guide");
+        fs::remove_file(paths.llms_dir.join("workflow.md")).expect("remove llms workflow");
+        let prepared = prepare_directories(&paths).expect("prepare existing llms paths");
+        assert!(!prepared.llms_file_scaffolded);
+        assert!(!prepared.llms_dir_scaffolded);
+        assert_eq!(
+            fs::read_to_string(&paths.llms_file).expect("read user llms guide"),
+            "# user-owned guide\n"
+        );
+        assert!(
+            !paths.llms_dir.join("workflow.md").exists(),
+            "existing llms directory must not be repaired"
+        );
+    }
+
+    #[test]
+    fn existing_empty_llms_directory_is_not_scaffolded() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let paths = AppPaths {
+            database: directory.path().join("data.db"),
+            migrations: directory.path().join("migrations"),
+            tools: directory.path().join("tools"),
+            dashboard: directory.path().join("dashboard"),
+            workspace: directory.path().join("workspace"),
+            runtime: directory.path().join("runtime"),
+            llms_file: directory.path().join("llms.txt"),
+            llms_dir: directory.path().join("llms"),
+        };
+        fs::write(&paths.llms_file, "# user-owned guide\n").expect("create user llms guide");
+        fs::create_dir(&paths.llms_dir).expect("create user llms directory");
+
+        let prepared = prepare_directories(&paths).expect("prepare existing llms directory");
+        assert!(!prepared.llms_file_scaffolded);
+        assert!(!prepared.llms_dir_scaffolded);
+        assert!(
+            fs::read_dir(&paths.llms_dir)
+                .expect("read llms directory")
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_a_partial_llms_source_without_repairing_the_missing_peer() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let root_only = AppPaths {
+            database: directory.path().join("root-only-data.db"),
+            migrations: directory.path().join("root-only-migrations"),
+            tools: directory.path().join("root-only-tools"),
+            dashboard: directory.path().join("root-only-dashboard"),
+            workspace: directory.path().join("root-only-workspace"),
+            runtime: directory.path().join("root-only-runtime"),
+            llms_file: directory.path().join("root-only-llms.txt"),
+            llms_dir: directory.path().join("root-only-llms"),
+        };
+        fs::write(&root_only.llms_file, "# user-owned guide\n")
+            .expect("create root-only llms file");
+        let error = prepare_directories(&root_only)
+            .expect_err("root-only llms source must be rejected")
+            .to_string();
+        assert!(error.contains(&root_only.llms_dir.display().to_string()));
+        assert!(error.contains("both must be present or both absent"));
+        assert!(!root_only.llms_dir.exists());
+
+        let dir_only = AppPaths {
+            database: directory.path().join("dir-only-data.db"),
+            migrations: directory.path().join("dir-only-migrations"),
+            tools: directory.path().join("dir-only-tools"),
+            dashboard: directory.path().join("dir-only-dashboard"),
+            workspace: directory.path().join("dir-only-workspace"),
+            runtime: directory.path().join("dir-only-runtime"),
+            llms_file: directory.path().join("dir-only-llms.txt"),
+            llms_dir: directory.path().join("dir-only-llms"),
+        };
+        fs::create_dir(&dir_only.llms_dir).expect("create dir-only llms directory");
+        let error = prepare_directories(&dir_only)
+            .expect_err("dir-only llms source must be rejected")
+            .to_string();
+        assert!(error.contains(&dir_only.llms_file.display().to_string()));
+        assert!(error.contains("both must be present or both absent"));
+        assert!(!dir_only.llms_file.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_llms_wrong_types_and_symlinks_with_path_and_reason() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let wrong_file = AppPaths {
+            database: directory.path().join("wrong-file-data.db"),
+            migrations: directory.path().join("wrong-file-migrations"),
+            tools: directory.path().join("wrong-file-tools"),
+            dashboard: directory.path().join("wrong-file-dashboard"),
+            workspace: directory.path().join("wrong-file-workspace"),
+            runtime: directory.path().join("wrong-file-runtime"),
+            llms_file: directory.path().join("wrong-file-llms.txt"),
+            llms_dir: directory.path().join("wrong-file-llms"),
+        };
+        fs::create_dir(&wrong_file.llms_file).expect("create wrong llms file directory");
+        let error = prepare_directories(&wrong_file)
+            .expect_err("llms file directory must be rejected")
+            .to_string();
+        assert!(error.contains(&wrong_file.llms_file.display().to_string()));
+        assert!(error.contains("expected a regular file"));
+
+        let wrong_dir = AppPaths {
+            database: directory.path().join("wrong-dir-data.db"),
+            migrations: directory.path().join("wrong-dir-migrations"),
+            tools: directory.path().join("wrong-dir-tools"),
+            dashboard: directory.path().join("wrong-dir-dashboard"),
+            workspace: directory.path().join("wrong-dir-workspace"),
+            runtime: directory.path().join("wrong-dir-runtime"),
+            llms_file: directory.path().join("wrong-dir-llms.txt"),
+            llms_dir: directory.path().join("wrong-dir-llms"),
+        };
+        fs::write(&wrong_dir.llms_file, "# guide\n").expect("create valid llms file");
+        fs::write(&wrong_dir.llms_dir, "not a directory").expect("create wrong llms dir file");
+        let error = prepare_directories(&wrong_dir)
+            .expect_err("llms directory file must be rejected")
+            .to_string();
+        assert!(error.contains(&wrong_dir.llms_dir.display().to_string()));
+        assert!(error.contains("expected a real directory"));
+
+        let symlink_file = AppPaths {
+            database: directory.path().join("symlink-file-data.db"),
+            migrations: directory.path().join("symlink-file-migrations"),
+            tools: directory.path().join("symlink-file-tools"),
+            dashboard: directory.path().join("symlink-file-dashboard"),
+            workspace: directory.path().join("symlink-file-workspace"),
+            runtime: directory.path().join("symlink-file-runtime"),
+            llms_file: directory.path().join("symlink-file-llms.txt"),
+            llms_dir: directory.path().join("symlink-file-llms"),
+        };
+        fs::write(directory.path().join("guide-target.txt"), "# target\n")
+            .expect("create llms file symlink target");
+        fs::create_dir(&symlink_file.llms_dir).expect("create valid llms directory");
+        symlink(
+            directory.path().join("guide-target.txt"),
+            &symlink_file.llms_file,
+        )
+        .expect("create llms file symlink");
+        let error = prepare_directories(&symlink_file)
+            .expect_err("llms file symlink must be rejected")
+            .to_string();
+        assert!(error.contains(&symlink_file.llms_file.display().to_string()));
+        assert!(error.contains("symlink"));
+
+        let symlink_dir = AppPaths {
+            database: directory.path().join("symlink-dir-data.db"),
+            migrations: directory.path().join("symlink-dir-migrations"),
+            tools: directory.path().join("symlink-dir-tools"),
+            dashboard: directory.path().join("symlink-dir-dashboard"),
+            workspace: directory.path().join("symlink-dir-workspace"),
+            runtime: directory.path().join("symlink-dir-runtime"),
+            llms_file: directory.path().join("symlink-dir-llms.txt"),
+            llms_dir: directory.path().join("symlink-dir-llms"),
+        };
+        fs::write(&symlink_dir.llms_file, "# guide\n").expect("create valid llms file");
+        let target = directory.path().join("real-llms-directory");
+        fs::create_dir(&target).expect("create llms directory symlink target");
+        symlink(&target, &symlink_dir.llms_dir).expect("create llms directory symlink");
+        let error = prepare_directories(&symlink_dir)
+            .expect_err("llms directory symlink must be rejected")
+            .to_string();
+        assert!(error.contains(&symlink_dir.llms_dir.display().to_string()));
+        assert!(error.contains("symlink"));
+    }
+
+    #[test]
     fn resolves_defaults_beside_the_executable_root() {
         let root = Path::new("/tmp/lite-mcp-dist");
-        let paths = resolve_paths(root, None, None, None, None, None, None).expect("resolve paths");
+        let paths = resolve_paths(root, None, None, None, None, None, None, None, None)
+            .expect("resolve paths");
         assert_eq!(paths.database, root.join("data.db"));
         assert_eq!(paths.migrations, root.join("migrations"));
         assert_eq!(paths.tools, root.join("tools"));
         assert_eq!(paths.dashboard, root.join("dashboard"));
         assert_eq!(paths.workspace, root.join("workspace"));
         assert_eq!(paths.runtime, root.join("runtime"));
+        assert_eq!(paths.llms_file, root.join("llms.txt"));
+        assert_eq!(paths.llms_dir, root.join("llms"));
     }
 
     #[test]
@@ -1094,6 +1575,8 @@ mod tests {
             Some(PathBuf::from("custom-dashboard")),
             None,
             None,
+            None,
+            None,
         )
         .expect("resolve paths");
         assert_eq!(paths.dashboard, cwd.join("custom-dashboard"));
@@ -1107,6 +1590,8 @@ mod tests {
             root,
             None,
             Some(PathBuf::from("custom-migrations")),
+            None,
+            None,
             None,
             None,
             None,
@@ -1126,6 +1611,8 @@ mod tests {
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),
             runtime: directory.path().join("runtime"),
+            llms_file: directory.path().join("llms.txt"),
+            llms_dir: directory.path().join("llms"),
         };
 
         let prepared = prepare_directories(&paths).expect("prepare new directories");
@@ -1160,6 +1647,8 @@ mod tests {
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),
             runtime: directory.path().join("runtime"),
+            llms_file: directory.path().join("llms.txt"),
+            llms_dir: directory.path().join("llms"),
         };
         fs::create_dir(&paths.migrations).expect("create user migrations directory");
 
@@ -1183,6 +1672,8 @@ mod tests {
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),
             runtime: directory.path().join("runtime"),
+            llms_file: directory.path().join("llms.txt"),
+            llms_dir: directory.path().join("llms"),
         };
 
         let prepared = prepare_directories(&paths).expect("prepare new directories");
@@ -1227,6 +1718,8 @@ mod tests {
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),
             runtime: directory.path().join("runtime"),
+            llms_file: directory.path().join("llms.txt"),
+            llms_dir: directory.path().join("llms"),
         };
         fs::create_dir(&paths.dashboard).expect("create user dashboard directory");
 
