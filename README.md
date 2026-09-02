@@ -45,6 +45,7 @@ lite-mcp/
 ├── tools/
 │   └── execute_sql.py
 ├── workspace/
+├── logs/                       # runtime audit and MCP JSONL files
 └── runtime/
 ```
 
@@ -62,15 +63,24 @@ artifacts are cached.
 
 At startup the launcher validates and applies migrations to `data.db`, then
 binds the preferred or next available port without a release/rebind race,
-validates the dashboard, loads every tool, and prints its URLs:
+validates the dashboard, loads every tool, and prints categorized diagnostics
+to stderr. A typical terminal shows:
 
 ```text
-lite-mcp 0.1.0 is ready
-Dashboard: http://127.0.0.1:8000/
-MCP:       http://127.0.0.1:8000/mcp
-Migrations: /path/to/lite-mcp/migrations (current 0000; 1 applied this start; 1 total)
-LAN:       http://192.168.1.20:8000/
+07:21:48.755 [BOOT] lite-mcp 0.1.0 is ready
+07:21:48.755 [DASHBOARD] Dashboard  http://127.0.0.1:8000/ (Streamlit)
+07:21:48.755 [MCP] MCP        http://127.0.0.1:8000/mcp
+07:21:48.755 [DB] Migrations /path/to/lite-mcp/migrations (current 0000; 1 applied this start; 1 total)
+07:21:48.755 [NETWORK] LAN        http://192.168.1.20:8000/
+07:21:48.755 [SECURITY] WARNING no authentication: LAN clients can read and mutate data and call trusted tools
 ```
+
+Human diagnostics use local `HH:MM:SS.mmm` timestamps and are colorized only
+when stderr is a TTY. `--no-color`, `LITE_MCP_NO_COLOR`, or the standard
+`NO_COLOR` environment variable disables ANSI colors. Routine UV and Python
+dependency output is summarized; use `--verbose` or `LITE_MCP_VERBOSE` for the
+full child output and debug diagnostics. stdout is reserved for the two
+machine-readable assignments `LITE_MCP_URL=...` and `LITE_MCP_MCP_URL=...`.
 
 Connect Codex using the printed MCP URL:
 
@@ -249,8 +259,10 @@ Helper failures use typed `DashboardDatabaseError` values with `code`,
 errors they expect (for example validation, constraint, conflict, or temporary
 lock errors) and show a useful `st.error`. A lock or transient I/O error is
 retryable; syntax, constraint, invalid input, oversized result, and policy
-errors are not. Full SQL and tracebacks stay in server stderr and are never
-sent to a LAN browser.
+errors are not. Full SQL and tracebacks stay server-side in stderr and the
+structured logs; they are never sent to a LAN browser. Dashboard mutation
+records are written to the audit log described below; direct `sqlite3` access
+remains an unlogged trusted-code escape hatch.
 
 The generated `widgets/example_card.py` is a complete small CRUD reference. It
 uses the `dashboard_example_entries` table owned by `0000_bootstrap.sql`,
@@ -260,6 +272,62 @@ confirmation. It binds all values, refreshes after a successful commit, and
 displays caught widget errors. Its updates use an `id` plus version or
 `updated_at` check; a stale update reports a conflict and asks the user to
 refresh instead of silently overwriting another LAN session.
+
+## Structured logging and audit
+
+The runtime writes two synchronous UTF-8 JSONL streams under `logs/`, one file
+per UTC date:
+
+```text
+logs/
+├── audit-YYYY-MM-DD.jsonl
+└── mcp-YYYY-MM-DD.jsonl
+```
+
+`mcp-*` contains valid MCP transport and protocol messages in both directions,
+including server-to-client wire responses, tool calls, notifications,
+arguments, and normalized results. `audit-*`
+contains dashboard mutations and transaction events, malformed or rejected
+MCP requests, Host/Origin rejections, retention and tail recovery, and Python
+runtime start/stop/fatal events. Rust migration, UV, and bootstrap diagnostics
+remain console-only. A process-exclusive `logs/.lite-mcp.lock` prevents two
+instances from writing the same directory.
+
+Every record uses schema version 1, a UTC RFC3339 timestamp, a process
+`instanceId`, and a process-wide increasing `sequence` shared by both writers.
+Correlation fields include `operationId`, the protocol request ID,
+`transactionId`, `dashboardSessionId`, `requestId`, and error/trace IDs where
+available. MCP records include the socket peer IP/port, self-declared client
+name/version, wire session ID, method, protocol headers, and user agent; the
+client metadata is not authenticated and forwarded headers are ignored.
+
+Arguments, parameters, request bodies, and results larger than 16 KiB are
+represented by a head-and-tail preview with a truncation marker, original byte
+count, and SHA-256. Tracebacks have an independent 64 KiB limit with the same
+metadata. JSON-compatible values are preserved; binary or non-UTF-8 data is
+base64-encoded. There is no additional redaction, so SQL, parameters,
+payloads, results, and secrets may appear in these files. Treat `logs/` as
+sensitive and restrict access to trusted operators.
+
+Dashboard audit coverage is guaranteed for `context.db.execute()` and
+`context.db.transaction()`: mutation starts/completions, rejected mutations,
+transaction begin/commit/rollback, and transaction statements are recorded.
+Standalone reads are not audited. A widget that opens `sqlite3` directly
+bypasses this audit contract. JSONL and SQLite cannot be committed atomically;
+a database commit can therefore be followed by a missing completion record if
+the writer fails.
+
+The runtime keeps the configured number of UTC date buckets including today
+(14 by default), deletes old `audit`/`mcp` files as date pairs, and enforces a
+combined 256 MiB cap by default. Unknown files are preserved. A partial final
+line is trimmed to the last complete newline at startup and recorded as a
+recovery event. There is no log viewer or web log API.
+
+Logging is fail-closed: setup, serialization, append, flush, rollover,
+retention, or close failures stop the Python runtime and the launcher exits
+non-zero. If a current operation cannot be recorded, it is not reported as a
+successful operation; the terminal receives the failure detail, including the
+writer path and OS error when applicable.
 
 ## Failure behavior
 
@@ -275,6 +343,12 @@ invalid dependency metadata, dependency resolution failures, syntax errors,
 imports, loader errors, invalid widget contracts, and uncaught render/callback
 exceptions fail the whole application. Startup does not execute side-effecting
 widget renders, so readiness cannot prove every interactive path.
+
+Structured-log setup and runtime writer failures are also fatal. The launcher
+reports the underlying error and any applicable writer path, terminates the
+Python process, and exits non-zero. The best-effort MCP error response may be
+unavailable if a response has already started; the reliable contract is
+connection termination and process failure.
 
 If an uncaught dashboard error occurs during a later Streamlit rerun, the
 runtime logs the widget, phase, exception, trace ID, and full traceback to
@@ -390,6 +464,11 @@ reduces DNS-rebinding exposure but is not authentication or a code sandbox.
 | `--dashboard-dir` | `LITE_MCP_DASHBOARD_DIR` | `<executable>/dashboard` |
 | `--workspace-dir` | `LITE_MCP_WORKSPACE` | `<executable>/workspace` |
 | `--runtime-dir` | `LITE_MCP_RUNTIME` | `<executable>/runtime` |
+| `--logs-dir` | `LITE_MCP_LOGS_DIR` | `<executable>/logs` |
+| `--log-retention-days` | `LITE_MCP_LOG_RETENTION_DAYS` | `14` UTC date buckets |
+| `--log-max-total-mib` | `LITE_MCP_LOG_MAX_TOTAL_MIB` | `256` MiB combined |
+| `--verbose` | `LITE_MCP_VERBOSE` | false |
+| `--no-color` | `LITE_MCP_NO_COLOR` | false; `NO_COLOR` also disables ANSI |
 | `--uv-path` | `LITE_MCP_UV` | sibling `uv`, then PATH |
 | `--offline` | `LITE_MCP_OFFLINE` | false |
 | `--max-concurrency` | `LITE_MCP_MAX_CONCURRENCY` | 60; `0` is unlimited |
@@ -397,8 +476,10 @@ reduces DNS-rebinding exposure but is not authentication or a code sandbox.
 | `--result-limit` | `LITE_MCP_RESULT_LIMIT` | 4 MiB |
 | `--startup-timeout` | `LITE_MCP_STARTUP_TIMEOUT` | 600 seconds |
 
-Migration, dashboard, and other path overrides are resolved relative to the
-current working directory when they are relative.
+Migration, dashboard, and other explicit path overrides are resolved relative
+to the current working directory when they are relative. The exception is
+`--logs-dir`: a relative logs path is resolved from the executable root so
+structured logs remain with the lite-mcp instance.
 
 Timeouts are best effort. A blocking thread or native extension cannot always
 be safely killed inside the shared Python process.
