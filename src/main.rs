@@ -47,6 +47,7 @@ enum ConsoleCategory {
     Mcp,
     Network,
     Security,
+    Skill,
     Shutdown,
 }
 
@@ -61,6 +62,7 @@ impl ConsoleCategory {
             Self::Mcp => "MCP",
             Self::Network => "NETWORK",
             Self::Security => "SECURITY",
+            Self::Skill => "SKILL",
             Self::Shutdown => "SHUTDOWN",
         }
     }
@@ -74,6 +76,7 @@ impl ConsoleCategory {
             Self::Dashboard => "32",
             Self::Mcp => "33",
             Self::Security => "31",
+            Self::Skill => "32",
             Self::Shutdown => "90",
         }
     }
@@ -87,6 +90,7 @@ impl ConsoleCategory {
             "lite_mcp::mcp" => Self::Mcp,
             "lite_mcp::network" => Self::Network,
             "lite_mcp::security" => Self::Security,
+            "lite_mcp::skill" => Self::Skill,
             "lite_mcp::shutdown" => Self::Shutdown,
             _ => Self::Boot,
         }
@@ -397,6 +401,20 @@ async fn run(cli: Cli, console: ConsoleStyle) -> Result<i32> {
 
 async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     let executable_root = runtime::executable_root()?;
+    let skill_installed = runtime::install_business_skill(&executable_root)?;
+    if skill_installed {
+        console.print(
+            ConsoleCategory::Skill,
+            format!(
+                "installed bundled business skill at {}",
+                executable_root
+                    .join(".agents")
+                    .join("skills")
+                    .join("lite-mcp-business-app")
+                    .display()
+            ),
+        );
+    }
     let logs_dir = runtime::prepare_logs_dir(&executable_root, cli.logs_dir.as_deref())?;
     console.print(
         ConsoleCategory::Boot,
@@ -1859,6 +1877,19 @@ mod tests {
         assert_eq!(
             ConsoleCategory::from_tracing_target("lite_mcp::shutdown"),
             ConsoleCategory::Shutdown
+        );
+        assert_eq!(
+            ConsoleCategory::from_tracing_target("lite_mcp::skill"),
+            ConsoleCategory::Skill
+        );
+        assert_eq!(
+            format_console_line(
+                ConsoleCategory::Skill,
+                "installed bundled skill",
+                false,
+                "12:34:56.789"
+            ),
+            "12:34:56.789 [SKILL] installed bundled skill"
         );
         assert_eq!(
             ConsoleCategory::from_tracing_target("third_party"),

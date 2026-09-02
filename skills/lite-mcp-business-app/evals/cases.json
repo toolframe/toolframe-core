@@ -26,6 +26,10 @@
       {
         "id": "route-positive-06",
         "prompt": "Help a peer Codex on my LAN use the job tools from this lite-mcp app, and make the dashboard clear enough for a nontechnical reviewer."
+      },
+      {
+        "id": "route-positive-07",
+        "prompt": "My scheduled workflow cannot reach the LAN lite-mcp server. Warn me without marking the task failed and give me a complete issue I can copy to the maintainer."
       }
     ],
     "should_not_activate": [
@@ -119,6 +123,19 @@
         "evals/cases.json"
       ],
       "forbidden": []
+    },
+    {
+      "id": "read-mcp-unavailable",
+      "prompt": "The scheduled agent gets connection refused from the saved LAN /mcp URL. Return the workflow warning and a copyable issue for me.",
+      "expected": [
+        "references/operations-handbook.md",
+        "assets/MCP_UNAVAILABLE_ISSUE.template.md"
+      ],
+      "forbidden": [
+        "references/development-handbook.md",
+        "references/job-domain-model.md",
+        "references/product-decisions.md"
+      ]
     }
   ],
   "end_to_end": [
@@ -154,6 +171,31 @@
         "It preserves applied migrations and user data, backs up before a necessary data repair, and fixes the reported source instead of bypassing startup validation.",
         "It classifies retryability and verifies startup, health, dashboard, and MCP after repair.",
         "It keeps the repair scoped to the diagnosed failure and does not enter the Develop workflow or redesign the business domain."
+      ]
+    },
+    {
+      "id": "e2e-mcp-unavailable-handoff",
+      "prompt": "A scheduled peer agent cannot connect to http://192.168.1.20:8000/mcp and therefore cannot query pending work. Produce the workflow response for the user.",
+      "assertions": [
+        "The response begins with a visible MCP-unavailable warning and says the workflow is paused before any business item was read or changed.",
+        "It treats loss of MCP access as an integration/infrastructure issue rather than changing a Job to failed, blocked, done, or any invented state.",
+        "It distinguishes observed facts from unknowns and does not claim the server is down when only peer reachability is known.",
+        "It includes one self-contained Markdown issue block the user can copy without reconstructing context from the surrounding response.",
+        "The issue contains observation time, attempted Dashboard/MCP URL, caller/source when known, exact symptom, workflow impact, last confirmed business state, retryability, safe owner checks, maintainer diagnostics, and evidence placeholders.",
+        "It asks for no authentication workaround, performs no arbitrary SQL repair, and gives the external scheduler or owner an explicit next action."
+      ]
+    }
+  ],
+  "runtime_installation": [
+    {
+      "id": "install-production-skill-on-serve",
+      "assertions": [
+        "A normal server start atomically creates <executable-root>/.agents/skills/lite-mcp-business-app when absent.",
+        "The installed copy contains SKILL.md, agents metadata, production assets, and references with exact source bytes.",
+        "No evals or evaluations directory is installed.",
+        "An existing real target directory is preserved byte for byte and is never completed or upgraded automatically.",
+        "A file or symlink in any managed installation path fails startup with the offending path and reason.",
+        "check, invoke, and scaffold do not install the skill."
       ]
     }
   ]

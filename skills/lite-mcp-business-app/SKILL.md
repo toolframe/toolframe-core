@@ -139,13 +139,18 @@ invent implementation work.
   scheduled, claimed, leased, retried, or human-reviewed agent work.
 - Read [operations-handbook.md](references/operations-handbook.md) for startup,
   peer LAN connection, backup, Doctor, limitations, escalation, or FAQ.
-- Read [product-decisions.md](references/product-decisions.md) and
-  [evals/cases.json](evals/cases.json) only when reviewing or changing this
-  skill's product policy; they are maintenance evidence, not normal
-  app-development context. Update the evaluation evidence after a policy
-  change.
-- Use the two assets whenever creating or reconciling the required app-local
-  handoff documents; adapt their placeholders to the user's domain.
+- Read [product-decisions.md](references/product-decisions.md) only when
+  reviewing or changing this skill's product policy. In a source checkout,
+  also read the source-only `evals/cases.json` and update evaluation evidence
+  when present; production auto-installation intentionally omits evaluation
+  directories.
+- Use the app-context and domain-model assets whenever creating or reconciling
+  the required app-local handoff documents; adapt their placeholders to the
+  user's domain.
+- Use the
+  [MCP-unavailable response asset](assets/MCP_UNAVAILABLE_ISSUE.template.md)
+  whenever a scheduled workflow or peer agent cannot reach `/mcp` before its
+  intended business action completes.
 
 ## Recognition-critical gotchas
 
@@ -159,6 +164,10 @@ invent implementation work.
   narrow business tools instead of arbitrary SQL instructions.
 - The first tested private LAN address is for peers; `127.0.0.1` is only for the
   host machine. Use the same LAN host and port with `/mcp` for MCP.
+- An unreachable MCP endpoint pauses the integration before business state is
+  known. Return a visible warning and one self-contained, copyable issue from
+  the response asset; do not invent a Job transition or claim that the server
+  is down when only peer reachability failed.
 - Invalid migrations, tools, dependencies, widgets, logging, or Dashboard code
   make the application unhealthy. Surface and repair the cause; a partially
   loaded catalog is not a successful start.

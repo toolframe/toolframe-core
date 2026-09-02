@@ -96,6 +96,33 @@ keep the owner’s instructions visible in the app’s context documentation and
 must make state changes explicit, reviewable, and idempotent where a caller
 may retry.
 
+## When a workflow cannot reach MCP
+
+Connection refused, timeout, DNS failure, a wrong route, or a stopped server
+can prevent a scheduled/peer agent from reaching `/mcp`. At that point the
+agent does not know which business item is pending and cannot truthfully write
+a Job outcome. Keep the workflow paused at the integration boundary; do not
+turn missing access into `failed`, `blocked`, `done`, or another business state.
+
+Return two things in the workflow response:
+
+1. a visible **Lite MCP unavailable — workflow paused** warning stating which
+   reads/writes did not happen and that no business-state change is known; and
+2. one fenced Markdown issue the owner can copy as-is to the maintainer.
+
+Read and fill the
+[MCP-unavailable response template](../assets/MCP_UNAVAILABLE_ISSUE.template.md).
+Use observed values or `Unknown`, preserve the attempted URL and exact client
+error, and distinguish “this peer cannot reach the route” from evidence that
+the server process itself stopped. Retry only after the stated prerequisite is
+corrected; a later scheduler run is a new attempt, not proof that an earlier
+mutation failed.
+
+If MCP returned a structured tool/business error, use that error's code,
+retryability, and recovery hint instead. The unavailable template applies when
+the intended MCP business action did not complete because transport, route, or
+server availability failed.
+
 ## What changes require a restart
 
 Use the executable as a startup contract:
@@ -338,3 +365,11 @@ not paste raw logs into an untrusted chat.
 No. It is a simple server readiness check. Use `/info`, `check`, the dashboard,
 and the relevant logs to determine whether a particular migration, widget,
 tool, or business operation works.
+
+### What should a scheduled workflow return when MCP is unavailable?
+
+It should pause, say that pending work was not queried and no business state
+was changed, then include the complete copyable issue from the installed
+skill's MCP-unavailable response template. It should not silently succeed,
+invent a Job failure, or require the owner to reconstruct the URL and error
+from earlier messages.

@@ -28,12 +28,17 @@ UV_BIN=/path/to/uv ./scripts/package.sh
 ```
 
 The package contains the complete editable dashboard scaffold and the
-`lite-mcp-business-app` coding-agent handbook shipped beside the binary:
+`lite-mcp-business-app` coding-agent handbook shipped beside the binary. After
+the first normal server start, its production copy also exists under
+`.agents/skills/`:
 
 ```text
 lite-mcp/
 ├── lite-mcp
 ├── uv
+├── .agents/                         # created by `lite-mcp` / `serve`
+│   └── skills/
+│       └── lite-mcp-business-app/   # production handbook; no eval folders
 ├── dashboard/
 │   ├── app.py
 │   ├── pyproject.toml
@@ -58,7 +63,7 @@ lite-mcp/
 ```
 
 The packaging script refuses to overwrite an existing `dist/lite-mcp` and
-copies the editable dashboard, migration, and skill source. Dashboard and
+copies the editable dashboard, migration, and full skill source. Dashboard and
 skill `__pycache__`, `.pyc`, and `.pyo` files are excluded. It does not alter
 the source tree. At runtime, a missing entire `dashboard/` or `migrations/`
 directory is created from the embedded scaffold. Existing directories and
@@ -69,10 +74,19 @@ files are never overwritten, completed, or automatically upgraded.
 [`skills/lite-mcp-business-app`](skills/lite-mcp-business-app/SKILL.md) guides a
 coding agent with filesystem access to develop, doctor, or operate a
 nontechnical owner's app. It is a coding-agent handbook shipped beside the
-binary, not an MCP service: it is not automatically served over MCP or
-installed into an agent. The owner must point their coding-agent client at the
-skill or install it there. Peer runtime agents connect to the tested LAN URL
-ending in `/mcp`, such as `http://192.168.1.20:8000/mcp`.
+binary, not an MCP service. A normal `./lite-mcp` or `./lite-mcp serve` start
+atomically installs its production files at
+`.agents/skills/lite-mcp-business-app` beside the executable. `check`,
+`invoke`, and `scaffold` do not install it. The installed copy deliberately
+omits `evals/` and `evaluations/`; those remain only in the full source package
+for maintainers.
+
+Installation is create-once. A real existing skill directory is preserved
+without completion or upgrade. A file or symlink at `.agents`,
+`.agents/skills`, or the target skill path fails startup with the offending
+path and reason instead of writing elsewhere. Peer runtime agents connect to
+the tested LAN URL ending in `/mcp`, such as
+`http://192.168.1.20:8000/mcp`.
 
 A nontechnical owner can hand the editable folder to a coding agent with a
 business request such as:
@@ -87,6 +101,13 @@ The coding agent needs filesystem access to develop the folder. A peer runtime
 agent needs only the printed LAN `/mcp` URL and the business tools that the
 coding agent publishes.
 
+If a scheduled workflow cannot reach that URL, it should pause before changing
+business state, show a clear **Lite MCP unavailable** warning, and return the
+self-contained copyable issue from
+`.agents/skills/lite-mcp-business-app/assets/MCP_UNAVAILABLE_ISSUE.template.md`.
+The issue preserves the attempted URL, exact error, workflow impact, unknowns,
+safe owner checks, and maintainer diagnostics.
+
 On first online launch, UV downloads Python 3.14 and the pinned core,
 dashboard, and tool dependencies into `runtime/`; no system Python is
 required. UV 0.12.8 or newer is required. Pass `--offline` only after those
@@ -98,6 +119,7 @@ validates the dashboard, loads every tool, and prints categorized diagnostics
 to stderr. A typical terminal shows:
 
 ```text
+07:21:48.700 [SKILL] installed bundled business skill at /path/to/lite-mcp/.agents/skills/lite-mcp-business-app
 07:21:48.755 [BOOT] lite-mcp 0.1.0 is ready
 07:21:48.755 [DASHBOARD] Dashboard  http://127.0.0.1:8000/ (Streamlit)
 07:21:48.755 [MCP] MCP        http://127.0.0.1:8000/mcp

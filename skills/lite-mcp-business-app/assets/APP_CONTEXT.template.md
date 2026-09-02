@@ -69,6 +69,10 @@ has consciously accepted the local exposure.
   startup-loaded files].
 - Dashboard refresh behavior: [browser refresh/rerun expectation].
 - Diagnosis: [first check command and the relevant log/console location].
+- MCP unavailable contract: [workflow pauses without changing business state;
+  response uses the installed skill's
+  `assets/MCP_UNAVAILABLE_ISSUE.template.md`; name the owner/next scheduler
+  action].
 
 ## Source map
 

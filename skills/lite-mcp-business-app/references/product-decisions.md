@@ -369,3 +369,32 @@ recommendation, answer, and rationale before implementation.
 - **Rationale/tradeoff:** A fresh distribution remains reproducible and existing
   data remains protected, even when a repair needs a new migration or explicit
   recovery plan.
+
+## Round 8 — integration recovery and skill delivery (Q31–Q32)
+
+### Q31 — What should a workflow return when MCP cannot be reached?
+
+- **Question:** Should an unreachable LAN MCP endpoint become a Job failure, a
+  silent scheduler retry, or a visible integration warning?
+- **Recommendation:** Pause before business-state handling, return a visible
+  warning, and include one self-contained Markdown issue the owner can copy.
+  Record exact observed connection evidence and leave unknown fields explicit.
+- **Product-owner answer:** Warn in the workflow response and provide a
+  copyable issue whenever the server is stopped or the agent cannot access MCP.
+- **Rationale/tradeoff:** The agent cannot know or mutate the current Job state
+  without MCP. A fixed handoff gives the owner actionable evidence while
+  avoiding a false business failure or a silent missed schedule.
+
+### Q32 — How should the bundled skill become discoverable?
+
+- **Question:** Must the owner manually install the shipped handbook, or should
+  normal server startup place a production copy in the app's agent-skill path?
+- **Recommendation:** Atomically create
+  `.agents/skills/lite-mcp-business-app` beside the executable on normal server
+  startup. Preserve an existing directory, fail on unsafe path types, and keep
+  source/evaluation material separate.
+- **Product-owner answer:** Auto-install the skill under `.agents/skills`; omit
+  `evals/` and `evaluations/` because they are not required to run the skill.
+- **Rationale/tradeoff:** Coding agents discover the handbook without a manual
+  setup step. Create-once behavior protects local edits; a later release does
+  not silently upgrade an existing installed copy.

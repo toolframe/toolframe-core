@@ -35,6 +35,45 @@ const DEFAULT_BOOTSTRAP_MIGRATION: &str = include_str!("../migrations/0000_boots
 const DEFAULT_MIGRATION_README: &str = include_str!("../migrations/README.md");
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+const EMBEDDED_BUSINESS_SKILL_FILES: &[(&str, &[u8])] = &[
+    (
+        "SKILL.md",
+        include_bytes!("../skills/lite-mcp-business-app/SKILL.md"),
+    ),
+    (
+        "agents/openai.yaml",
+        include_bytes!("../skills/lite-mcp-business-app/agents/openai.yaml"),
+    ),
+    (
+        "assets/APP_CONTEXT.template.md",
+        include_bytes!("../skills/lite-mcp-business-app/assets/APP_CONTEXT.template.md"),
+    ),
+    (
+        "assets/DOMAIN_MODEL.template.md",
+        include_bytes!("../skills/lite-mcp-business-app/assets/DOMAIN_MODEL.template.md"),
+    ),
+    (
+        "assets/MCP_UNAVAILABLE_ISSUE.template.md",
+        include_bytes!("../skills/lite-mcp-business-app/assets/MCP_UNAVAILABLE_ISSUE.template.md"),
+    ),
+    (
+        "references/development-handbook.md",
+        include_bytes!("../skills/lite-mcp-business-app/references/development-handbook.md"),
+    ),
+    (
+        "references/job-domain-model.md",
+        include_bytes!("../skills/lite-mcp-business-app/references/job-domain-model.md"),
+    ),
+    (
+        "references/operations-handbook.md",
+        include_bytes!("../skills/lite-mcp-business-app/references/operations-handbook.md"),
+    ),
+    (
+        "references/product-decisions.md",
+        include_bytes!("../skills/lite-mcp-business-app/references/product-decisions.md"),
+    ),
+];
+
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub database: PathBuf,
@@ -85,6 +124,177 @@ pub fn executable_root() -> Result<PathBuf> {
         .parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| anyhow!("the lite-mcp executable has no parent directory"))
+}
+
+/// Install the bundled, business-first skill beside the executable.
+///
+/// The skill is deliberately a create-once artifact. A real existing target
+/// is user-owned and is never inspected, completed, or upgraded. A complete
+/// temporary tree is published with no-replace rename so a second launcher can
+/// either observe the existing tree or safely lose the race without exposing
+/// a partially written skill.
+pub fn install_business_skill(executable_root: &Path) -> Result<bool> {
+    let agents = executable_root.join(".agents");
+    let skills = agents.join("skills");
+    let target = skills.join("lite-mcp-business-app");
+
+    ensure_real_directory(&agents, ".agents")?;
+    ensure_real_directory(&skills, ".agents/skills")?;
+
+    match inspect_skill_path(&target)? {
+        SkillPathState::Directory => return Ok(false),
+        SkillPathState::File => {
+            bail!(
+                "cannot install business skill: target path {} is a file; expected a real directory",
+                target.display()
+            );
+        }
+        SkillPathState::Symlink => {
+            bail!(
+                "cannot install business skill: target path {} is a symlink; refusing to follow it",
+                target.display()
+            );
+        }
+        SkillPathState::Missing => {}
+    }
+
+    let staging_directory = tempfile::Builder::new()
+        .prefix(".lite-mcp-business-app-")
+        .suffix(".tmp")
+        .tempdir_in(&skills)
+        .with_context(|| {
+            format!(
+                "could not create a unique temporary business skill directory in {}",
+                skills.display()
+            )
+        })?;
+    let staging = staging_directory.path().to_path_buf();
+
+    let result = (|| -> Result<bool> {
+        for (relative, content) in EMBEDDED_BUSINESS_SKILL_FILES {
+            let destination = staging.join(relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "could not create business skill directory {}",
+                        parent.display()
+                    )
+                })?;
+            }
+            write_embedded_skill_file(&destination, content)?;
+        }
+
+        // Publishing only happens after every file has been written and
+        // synced. The platform-specific helper uses RENAME_EXCL/
+        // RENAME_NOREPLACE where available, so two launchers cannot replace
+        // one another's user-owned skill directory.
+        let published = rename_directory_if_absent(&staging, &target)?;
+        if published {
+            Ok(true)
+        } else {
+            match inspect_skill_path(&target)? {
+                SkillPathState::Directory => Ok(false),
+                SkillPathState::File => bail!(
+                    "cannot install business skill: target path {} is a file after a concurrent install",
+                    target.display()
+                ),
+                SkillPathState::Symlink => bail!(
+                    "cannot install business skill: target path {} is a symlink after a concurrent install; refusing to follow it",
+                    target.display()
+                ),
+                SkillPathState::Missing => bail!(
+                    "cannot install business skill: target path {} disappeared during a concurrent install",
+                    target.display()
+                ),
+            }
+        }
+    })();
+
+    if staging.exists() {
+        fs::remove_dir_all(&staging).with_context(|| {
+            format!(
+                "could not remove temporary business skill directory {}",
+                staging.display()
+            )
+        })?;
+    }
+
+    result
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkillPathState {
+    Missing,
+    Directory,
+    File,
+    Symlink,
+}
+
+fn inspect_skill_path(path: &Path) -> Result<SkillPathState> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SkillPathState::Missing);
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not inspect path {}", path.display()));
+        }
+    };
+
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        Ok(SkillPathState::Symlink)
+    } else if metadata.is_dir() {
+        Ok(SkillPathState::Directory)
+    } else {
+        Ok(SkillPathState::File)
+    }
+}
+
+fn ensure_real_directory(path: &Path, label: &str) -> Result<()> {
+    loop {
+        match inspect_skill_path(path)? {
+            SkillPathState::Directory => return Ok(()),
+            SkillPathState::File => {
+                bail!(
+                    "cannot install business skill: {label} path {} is a file; expected a real directory",
+                    path.display()
+                );
+            }
+            SkillPathState::Symlink => {
+                bail!(
+                    "cannot install business skill: {label} path {} is a symlink; refusing to follow it",
+                    path.display()
+                );
+            }
+            SkillPathState::Missing => match fs::create_dir(path) {
+                Ok(()) => return Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "could not create {label} directory {}; expected a real directory",
+                            path.display()
+                        )
+                    });
+                }
+            },
+        }
+    }
+}
+
+fn write_embedded_skill_file(path: &Path, content: &[u8]) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .with_context(|| format!("could not create embedded skill file {}", path.display()))?;
+    file.write_all(content)
+        .with_context(|| format!("could not write embedded skill file {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("could not sync embedded skill file {}", path.display()))?;
+    Ok(())
 }
 
 pub fn resolve_paths(
@@ -546,6 +756,211 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn installed_skill_files(root: &Path) -> BTreeSet<PathBuf> {
+        fn visit(path: &Path, root: &Path, files: &mut BTreeSet<PathBuf>) {
+            for entry in fs::read_dir(path).expect("read installed skill directory") {
+                let entry = entry.expect("read installed skill entry");
+                let path = entry.path();
+                if path.is_dir() {
+                    visit(&path, root, files);
+                } else {
+                    files.insert(path.strip_prefix(root).expect("relative skill path").into());
+                }
+            }
+        }
+
+        let mut files = BTreeSet::new();
+        visit(root, root, &mut files);
+        files
+    }
+
+    #[test]
+    fn installs_exact_runtime_skill_files_without_evals_and_only_once() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let root = directory.path();
+        let target = root.join(".agents/skills/lite-mcp-business-app");
+
+        assert!(install_business_skill(root).expect("install business skill"));
+
+        let expected_files: BTreeSet<PathBuf> = EMBEDDED_BUSINESS_SKILL_FILES
+            .iter()
+            .map(|(relative, _)| PathBuf::from(relative))
+            .collect();
+        let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("skills")
+            .join("lite-mcp-business-app");
+        let source_production_files = installed_skill_files(&source_root)
+            .into_iter()
+            .filter(|relative| {
+                !relative.starts_with("evals") && !relative.starts_with("evaluations")
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            source_production_files, expected_files,
+            "embedded production file list must follow the source skill"
+        );
+        assert!(EMBEDDED_BUSINESS_SKILL_FILES.iter().all(|(relative, _)| {
+            !relative.starts_with("evals/") && !relative.starts_with("evaluations/")
+        }));
+        assert_eq!(installed_skill_files(&target), expected_files);
+        for (relative, expected) in EMBEDDED_BUSINESS_SKILL_FILES {
+            assert_eq!(
+                fs::read(target.join(relative)).expect("read installed skill file"),
+                *expected,
+                "installed bytes differ for {relative}"
+            );
+        }
+        assert!(!target.join("evals").exists());
+        assert!(!target.join("evaluations").exists());
+
+        let before = installed_skill_files(&target)
+            .into_iter()
+            .map(|relative| {
+                let bytes = fs::read(target.join(&relative)).expect("read installed bytes");
+                (relative, bytes)
+            })
+            .collect::<Vec<_>>();
+        assert!(!install_business_skill(root).expect("skip existing business skill"));
+        let after = installed_skill_files(&target)
+            .into_iter()
+            .map(|relative| {
+                let bytes = fs::read(target.join(&relative)).expect("read preserved bytes");
+                (relative, bytes)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn preserves_an_existing_real_skill_directory_without_repairing_it() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let root = directory.path();
+        let target = root.join(".agents/skills/lite-mcp-business-app");
+        fs::create_dir_all(&target).expect("create existing skill directory");
+        fs::write(target.join("SKILL.md"), b"owner version\n").expect("write owner skill");
+        fs::create_dir(target.join("custom")).expect("create owner directory");
+        fs::write(target.join("custom/notes.md"), b"owner notes\n").expect("write owner notes");
+
+        assert!(!install_business_skill(root).expect("preserve existing skill"));
+        assert_eq!(
+            fs::read(target.join("SKILL.md")).expect("read owner skill"),
+            b"owner version\n"
+        );
+        assert_eq!(
+            fs::read(target.join("custom/notes.md")).expect("read owner notes"),
+            b"owner notes\n"
+        );
+        assert!(!target.join("agents").exists());
+        assert!(!target.join("references").exists());
+    }
+
+    #[test]
+    fn rejects_file_paths_in_the_skill_install_chain() {
+        let cases = [
+            (".agents", ".agents"),
+            (".agents/skills", ".agents/skills"),
+            (".agents/skills/lite-mcp-business-app", "target path"),
+        ];
+        for (relative, label) in cases {
+            let directory = tempfile::tempdir().expect("create temp directory");
+            let path = directory.path().join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create path parent");
+            }
+            fs::write(&path, b"occupied").expect("create invalid file path");
+
+            let error = install_business_skill(directory.path())
+                .expect_err("file path should be rejected")
+                .to_string();
+            assert!(error.contains(&path.display().to_string()), "{error}");
+            assert!(error.contains("is a file"), "{error}");
+            if label == ".agents" {
+                assert!(error.contains(".agents path"), "{error}");
+            } else if label == ".agents/skills" {
+                assert!(error.contains(".agents/skills path"), "{error}");
+            } else {
+                assert!(error.contains("target path"), "{error}");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinks_in_the_skill_install_chain() {
+        use std::os::unix::fs::symlink;
+
+        let cases = [
+            (".agents", ".agents"),
+            (".agents/skills", ".agents/skills"),
+            (".agents/skills/lite-mcp-business-app", "target path"),
+        ];
+        for (relative, label) in cases {
+            let directory = tempfile::tempdir().expect("create temp directory");
+            let path = directory.path().join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create symlink parent");
+            }
+            let destination = directory.path().join("real-destination");
+            fs::create_dir_all(&destination).expect("create symlink destination");
+            symlink(&destination, &path).expect("create invalid symlink path");
+
+            let error = install_business_skill(directory.path())
+                .expect_err("symlink path should be rejected")
+                .to_string();
+            assert!(error.contains(&path.display().to_string()), "{error}");
+            assert!(error.contains("is a symlink"), "{error}");
+            if label == ".agents" {
+                assert!(error.contains(".agents path"), "{error}");
+            } else if label == ".agents/skills" {
+                assert!(error.contains(".agents/skills path"), "{error}");
+            } else {
+                assert!(error.contains("target path"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn concurrent_skill_install_has_one_winner_and_no_partial_tree() {
+        use std::sync::{Arc, Barrier};
+
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let root = Arc::new(directory.path().to_path_buf());
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|_| {
+                let root = Arc::clone(&root);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    install_business_skill(&root)
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("join installer"))
+            .collect::<Result<Vec<_>>>()
+            .expect("concurrent installers should succeed");
+        assert_eq!(results.iter().filter(|installed| **installed).count(), 1);
+        assert_eq!(results.iter().filter(|installed| !**installed).count(), 1);
+
+        let target = root.join(".agents/skills/lite-mcp-business-app");
+        let expected_files: BTreeSet<PathBuf> = EMBEDDED_BUSINESS_SKILL_FILES
+            .iter()
+            .map(|(relative, _)| PathBuf::from(relative))
+            .collect();
+        assert_eq!(installed_skill_files(&target), expected_files);
+        for entry in fs::read_dir(root.join(".agents/skills")).expect("read skill parent") {
+            let entry = entry.expect("read skill parent entry");
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            assert!(
+                !name.starts_with(".lite-mcp-business-app-") || !name.ends_with(".tmp"),
+                "partial staging directory remains: {name}"
+            );
+        }
+    }
 
     #[test]
     fn materializes_both_tool_support_modules_in_the_managed_runtime() {
