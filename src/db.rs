@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 
 const BOOTSTRAP_FILENAME: &str = "0000_bootstrap.sql";
 const LEDGER_TABLE: &str = "_lite_mcp_migrations";
+const IDEMPOTENCY_TABLE: &str = "_lite_mcp_idempotency";
 const MAX_MIGRATION_BYTES: u64 = 4 * 1024 * 1024;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const LEDGER_SCHEMA: &str = r#"
@@ -25,6 +26,19 @@ CREATE TABLE IF NOT EXISTS _lite_mcp_migrations (
     sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
     applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ'))
 ) STRICT;
+"#;
+const IDEMPOTENCY_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS _lite_mcp_idempotency (
+    namespace TEXT NOT NULL,
+    business_key TEXT NOT NULL,
+    input_sha256 TEXT NOT NULL CHECK (length(input_sha256) = 64),
+    result_json BLOB NOT NULL,
+    result_sha256 TEXT NOT NULL CHECK (length(result_sha256) = 64),
+    result_bytes INTEGER NOT NULL CHECK (result_bytes BETWEEN 1 AND 1048576),
+    original_operation_id TEXT NOT NULL,
+    completed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    PRIMARY KEY (namespace, business_key)
+) STRICT, WITHOUT ROWID;
 "#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +119,18 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
         )
     })?;
     validate_ledger_schema(&transaction, database_path)?;
+    transaction
+        .execute_batch(IDEMPOTENCY_SCHEMA)
+        .map_err(|error| {
+            sqlite_failure(
+                "idempotency-schema",
+                None,
+                database_path,
+                &error,
+                "Restore the internal idempotency receipt schema; do not edit it manually.",
+            )
+        })?;
+    validate_idempotency_schema(&transaction, database_path)?;
 
     let applied = load_applied(&transaction, database_path)?;
     validate_applied_history(&migrations, &applied)?;
@@ -337,6 +363,31 @@ fn validate_ledger_schema(transaction: &Transaction<'_>, database_path: &Path) -
     if schema_signature(&actual) != schema_signature(LEDGER_SCHEMA) {
         bail!(
             "internal migration ledger has an incompatible schema (phase=migration-ledger, path={}, retryable=false, recoveryHint=restore the original _lite_mcp_migrations table; do not drop or edit migration history)",
+            database_path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_idempotency_schema(transaction: &Transaction<'_>, database_path: &Path) -> Result<()> {
+    let actual = transaction
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+            [IDEMPOTENCY_TABLE],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| {
+            sqlite_failure(
+                "idempotency-schema",
+                None,
+                database_path,
+                &error,
+                "Restore the internal idempotency receipt schema; do not edit it manually.",
+            )
+        })?;
+    if schema_signature(&actual) != schema_signature(IDEMPOTENCY_SCHEMA) {
+        bail!(
+            "internal idempotency receipt table has an incompatible schema (phase=idempotency-schema, path={}, retryable=false, recoveryHint=restore the original _lite_mcp_idempotency table; do not edit durable receipts manually)",
             database_path.display()
         );
     }
@@ -586,10 +637,10 @@ fn authorize_migration(
             Some("ATTACH and DETACH are not allowed in migrations")
         }
         AuthAction::CreateTrigger { .. } | AuthAction::CreateTempTrigger { .. } => Some(
-            "CREATE TRIGGER is not allowed because deferred trigger bodies can bypass migration ledger protection",
+            "CREATE TRIGGER is not allowed because deferred trigger bodies can bypass internal table protection",
         ),
-        action if action_targets_ledger(action) => {
-            Some("migration SQL must not read or modify the internal migration ledger")
+        action if action_targets_internal_table(action) => {
+            Some("migration SQL must not read or modify lite-mcp internal tables")
         }
         _ => None,
     };
@@ -606,7 +657,7 @@ fn authorize_migration(
     }
 }
 
-fn action_targets_ledger(action: AuthAction<'_>) -> bool {
+fn action_targets_internal_table(action: AuthAction<'_>) -> bool {
     let table_name = match action {
         AuthAction::CreateIndex { table_name, .. }
         | AuthAction::CreateTable { table_name }
@@ -630,7 +681,9 @@ fn action_targets_ledger(action: AuthAction<'_>) -> bool {
         AuthAction::AlterTable { table_name, .. } => Some(table_name),
         _ => None,
     };
-    table_name.is_some_and(|name| name.eq_ignore_ascii_case(LEDGER_TABLE))
+    table_name.is_some_and(|name| {
+        name.eq_ignore_ascii_case(LEDGER_TABLE) || name.eq_ignore_ascii_case(IDEMPOTENCY_TABLE)
+    })
 }
 
 fn sqlite_failure(
@@ -933,7 +986,45 @@ mod tests {
     }
 
     #[test]
-    fn rejects_transaction_pragmas_external_databases_and_ledger_access() {
+    fn rejects_an_incompatible_internal_idempotency_schema() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let migrations = directory.path().join("migrations");
+        fs::create_dir(&migrations).expect("create migrations");
+        bootstrap(&migrations);
+        let database = directory.path().join("data.db");
+        let connection = Connection::open(&database).expect("create database");
+        connection
+            .execute_batch(
+                "CREATE TABLE _lite_mcp_idempotency (
+                    namespace TEXT NOT NULL,
+                    business_key TEXT NOT NULL,
+                    result_json BLOB NOT NULL,
+                    PRIMARY KEY (namespace, business_key)
+                ) STRICT, WITHOUT ROWID;",
+            )
+            .expect("create incompatible idempotency table");
+        drop(connection);
+
+        let error = migrate(&database, &migrations)
+            .expect_err("incompatible idempotency schema fails")
+            .to_string();
+        assert!(error.contains("internal idempotency receipt table"));
+        assert!(error.contains("phase=idempotency-schema"));
+        assert!(error.contains("retryable=false"));
+
+        let connection = Connection::open(database).expect("reopen database");
+        let bootstrap_table: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name = 'example'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check bootstrap was not applied");
+        assert_eq!(bootstrap_table, 0);
+    }
+
+    #[test]
+    fn rejects_transaction_pragmas_external_databases_and_internal_table_access() {
         let forbidden = [
             ("BEGIN;", "transaction statements"),
             ("COMMIT;", "transaction statements"),
@@ -945,7 +1036,11 @@ mod tests {
             ("DETACH other;", "ATTACH and DETACH"),
             (
                 "DELETE FROM _lite_mcp_migrations;",
-                "internal migration ledger",
+                "lite-mcp internal tables",
+            ),
+            (
+                "DELETE FROM _lite_mcp_idempotency;",
+                "lite-mcp internal tables",
             ),
             (
                 "CREATE TABLE trigger_target(value); \
@@ -1033,8 +1128,16 @@ mod tests {
         let value: String = connection
             .query_row("SELECT value FROM user_data", [], |row| row.get(0))
             .expect("read user data");
+        let idempotency_table: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='_lite_mcp_idempotency'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read internal idempotency schema");
         assert_eq!(legacy, 1);
         assert_eq!(value, "preserved");
+        assert_eq!(idempotency_table, 1);
     }
 
     #[test]

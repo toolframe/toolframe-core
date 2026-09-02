@@ -30,9 +30,23 @@ __all__ = [
 
 _LOGGER = logging.getLogger("lite_mcp.idempotency")
 _TABLE = "_lite_mcp_idempotency"
+_RECEIPT_SCHEMA = """
+CREATE TABLE _lite_mcp_idempotency (
+    namespace TEXT NOT NULL,
+    business_key TEXT NOT NULL,
+    input_sha256 TEXT NOT NULL CHECK (length(input_sha256) = 64),
+    result_json BLOB NOT NULL,
+    result_sha256 TEXT NOT NULL CHECK (length(result_sha256) = 64),
+    result_bytes INTEGER NOT NULL CHECK (result_bytes BETWEEN 1 AND 1048576),
+    original_operation_id TEXT NOT NULL,
+    completed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    PRIMARY KEY (namespace, business_key)
+) STRICT, WITHOUT ROWID;
+"""
 _BUSY_TIMEOUT_MS = 5_000
 _DEFAULT_INPUT_LIMIT_BYTES = 1024 * 1024
-_DEFAULT_RESULT_LIMIT_BYTES = 1024 * 1024
+_DURABLE_RESULT_LIMIT_BYTES = 1024 * 1024
+_DEFAULT_RESULT_LIMIT_BYTES = _DURABLE_RESULT_LIMIT_BYTES
 _MAX_NAMESPACE_BYTES = 128
 _MAX_KEY_BYTES = 512
 _NAMESPACE = re.compile(r"^[a-z0-9][a-z0-9._:-]*$")
@@ -45,6 +59,7 @@ _REJECTED_CODES = frozenset(
         "idempotency_key_mismatch",
         "idempotency_nested",
         "idempotency_input_too_large",
+        "idempotency_private_table",
         "idempotency_result_too_large",
     }
 )
@@ -90,6 +105,7 @@ class IdempotencyTransaction:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
         self._open = True
+        self._denied_private_table = False
         connection.set_authorizer(self._authorize)
 
     def execute(
@@ -151,14 +167,20 @@ class IdempotencyTransaction:
                 recovery_hint="Use the transaction only inside the run_once callback.",
             )
 
-    @staticmethod
     def _authorize(
+        self,
         action: int,
-        _argument_one: str | None,
-        _argument_two: str | None,
+        argument_one: str | None,
+        argument_two: str | None,
         _database_name: str | None,
         _trigger_name: str | None,
     ) -> int:
+        if any(
+            isinstance(value, str) and value.casefold() == _TABLE.casefold()
+            for value in (argument_one, argument_two)
+        ):
+            self._denied_private_table = True
+            return sqlite3.SQLITE_DENY
         forbidden = {
             value
             for value in (
@@ -171,6 +193,15 @@ class IdempotencyTransaction:
             if isinstance(value, int)
         }
         return sqlite3.SQLITE_DENY if action in forbidden else sqlite3.SQLITE_OK
+
+    def _policy_error(self) -> IdempotencyError | None:
+        if not self._denied_private_table:
+            return None
+        return IdempotencyError(
+            "idempotency_private_table",
+            "Business mutation SQL cannot access the private idempotency receipt table.",
+            recovery_hint="Read and write only business tables inside the run_once callback.",
+        )
 
 
 _audit_fields: contextvars.ContextVar[Mapping[str, Any]] = contextvars.ContextVar(
@@ -206,8 +237,10 @@ class IdempotencyStore:
     ) -> None:
         self.database_path = Path(database_path).expanduser().resolve(strict=False)
         self.input_limit_bytes = _positive_limit("input_limit_bytes", input_limit_bytes)
-        self.result_limit_bytes = _positive_limit(
-            "result_limit_bytes", result_limit_bytes
+        self.result_limit_bytes = _bounded_limit(
+            "result_limit_bytes",
+            result_limit_bytes,
+            maximum=_DURABLE_RESULT_LIMIT_BYTES,
         )
         self.audit_sink = audit_sink
         self.logger = logger or _LOGGER
@@ -370,11 +403,16 @@ class IdempotencyStore:
                 _rollback_quietly(connection, self.logger)
             raise
         except sqlite3.Error as error:
+            policy_error = (
+                transaction._policy_error() if transaction is not None else None
+            )
             if transaction is not None:
                 transaction._finish()
                 transaction = None
             if connection is not None:
                 _rollback_quietly(connection, self.logger)
+            if policy_error is not None:
+                raise policy_error from error
             self._log_database_failure(error)
             raise _sqlite_error(error) from error
         except BaseException:
@@ -405,7 +443,7 @@ class IdempotencyStore:
                 sqlite3, "SQLITE_DBCONFIG_DEFENSIVE"
             ):
                 connection.setconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE, True)
-            connection.execute("PRAGMA journal_mode = WAL")
+            _configure_wal(connection)
             return connection
         except BaseException:
             connection.close()
@@ -515,6 +553,38 @@ def _positive_limit(name: str, value: int) -> int:
     return value
 
 
+def _bounded_limit(name: str, value: int, *, maximum: int) -> int:
+    value = _positive_limit(name, value)
+    if value > maximum:
+        raise ValueError(
+            f"{name} must be no greater than the {maximum}-byte durable schema limit"
+        )
+    return value
+
+
+def _configure_wal(connection: sqlite3.Connection) -> None:
+    deadline = time.monotonic() + (_BUSY_TIMEOUT_MS / 1000)
+    while True:
+        try:
+            row = connection.execute("PRAGMA journal_mode = WAL").fetchone()
+            mode = str(row[0]).casefold() if row is not None else ""
+            if mode != "wal":
+                raise sqlite3.OperationalError(
+                    f"SQLite did not enter WAL journal mode (reported {mode or 'no mode'})"
+                )
+            return
+        except sqlite3.OperationalError as error:
+            remaining = deadline - time.monotonic()
+            if not _is_busy_error(error) or remaining <= 0:
+                raise
+            time.sleep(min(0.01, remaining))
+
+
+def _is_busy_error(error: sqlite3.Error) -> bool:
+    text = str(error).casefold()
+    return "locked" in text or "busy" in text
+
+
 def _validate_namespace(value: Any) -> str:
     if (
         not isinstance(value, str)
@@ -619,7 +689,7 @@ def _validate_json_value(value: Any, *, seen: set[int] | None = None) -> None:
 
 def _sqlite_error(error: sqlite3.Error) -> IdempotencyError:
     text = str(error).casefold()
-    if "locked" in text or "busy" in text:
+    if _is_busy_error(error):
         return IdempotencyError(
             "idempotency_database_busy",
             "The database is busy while claiming the idempotency key.",

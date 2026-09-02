@@ -29,7 +29,6 @@ const DASHBOARD_COMPONENTS_INIT: &str = include_str!("../dashboard/components/__
 const DASHBOARD_WIDGETS_INIT: &str = include_str!("../dashboard/widgets/__init__.py");
 const DASHBOARD_EXAMPLE_CARD: &str = include_str!("../dashboard/widgets/example_card.py");
 const DEFAULT_BOOTSTRAP_MIGRATION: &str = include_str!("../migrations/0000_bootstrap.sql");
-const DEFAULT_IDEMPOTENCY_MIGRATION: &str = include_str!("../migrations/0001_idempotency.sql");
 const DEFAULT_MIGRATION_README: &str = include_str!("../migrations/README.md");
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -309,7 +308,6 @@ fn scaffold_migrations_if_missing(path: &Path) -> Result<bool> {
         "migrations",
         &[
             ("0000_bootstrap.sql", DEFAULT_BOOTSTRAP_MIGRATION),
-            ("0001_idempotency.sql", DEFAULT_IDEMPOTENCY_MIGRATION),
             ("README.md", DEFAULT_MIGRATION_README),
         ],
     )
@@ -647,11 +645,6 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&bootstrap).expect("read bootstrap"),
             DEFAULT_BOOTSTRAP_MIGRATION
-        );
-        assert_eq!(
-            fs::read_to_string(paths.migrations.join("0001_idempotency.sql"))
-                .expect("read idempotency migration"),
-            DEFAULT_IDEMPOTENCY_MIGRATION
         );
         assert_eq!(
             fs::read_to_string(paths.migrations.join("README.md"))

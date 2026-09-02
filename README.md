@@ -41,7 +41,6 @@ lite-mcp/
 │       └── example_card.py
 ├── migrations/
 │   ├── 0000_bootstrap.sql
-│   ├── 0001_idempotency.sql
 │   └── README.md
 ├── tools/
 │   └── execute_sql.py
@@ -71,7 +70,7 @@ to stderr. A typical terminal shows:
 07:21:48.755 [BOOT] lite-mcp 0.1.0 is ready
 07:21:48.755 [DASHBOARD] Dashboard  http://127.0.0.1:8000/ (Streamlit)
 07:21:48.755 [MCP] MCP        http://127.0.0.1:8000/mcp
-07:21:48.755 [DB] Migrations /path/to/lite-mcp/migrations (current 0001; 2 applied this start; 2 total)
+07:21:48.755 [DB] Migrations /path/to/lite-mcp/migrations (current 0000; 1 applied this start; 1 total)
 07:21:48.755 [NETWORK] LAN        http://192.168.1.20:8000/
 07:21:48.755 [SECURITY] WARNING no authentication: LAN clients can read and mutate data and call trusted tools
 ```
@@ -103,16 +102,17 @@ client-facing stdio transport, hot reload service, reload API, or reload UI.
 
 `migrations/` is the source of truth for the `data.db` schema and includes an
 agent-facing [authoring reference](migrations/README.md). The default
-`0000_bootstrap.sql` creates the table used by the example dashboard widget;
-`0001_idempotency.sql` creates the private durable-result table used by the
-idempotency helper. The launcher applies migrations before it binds the HTTP
-listener or starts Python, so a migration failure fails the whole application.
+`0000_bootstrap.sql` creates the table used by the example dashboard widget.
+The launcher also creates and validates its private migration ledger and
+idempotency receipt table as runtime-owned internal schema. These startup
+steps happen before it binds the HTTP listener or starts Python, so a migration
+or incompatible internal schema fails the whole application.
 
 To change the schema, add the next direct migration file and update the widget
 or tool that uses it in the same code change:
 
 ```sql
--- migrations/0002_add_status.sql
+-- migrations/0001_add_status.sql
 ALTER TABLE dashboard_example_entries
 ADD COLUMN status TEXT NOT NULL DEFAULT 'open';
 
@@ -121,7 +121,7 @@ ON dashboard_example_entries(status);
 ```
 
 Files must form one contiguous sequence starting with the exact
-`0000_bootstrap.sql`, using names such as `0002_add_status.sql`. Descriptions
+`0000_bootstrap.sql`, using names such as `0001_add_status.sql`. Descriptions
 may contain lowercase ASCII letters, digits, `_`, and `-`. Only direct,
 regular, non-symlink UTF-8 `.sql` files are migrations, and each file is
 limited to 4 MiB. Hidden/private files, non-SQL files, and nested files are
@@ -136,14 +136,15 @@ original file and add the next migration instead.
 Migration SQL may contain multiple schema or data statements. It must not
 contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PRAGMA`,
 `ATTACH`, `DETACH`, or `CREATE TRIGGER`; the launcher owns the transaction,
-SQLite configuration, and migration ledger protection. Migrations run only at
+SQLite configuration, and internal table protection. Migrations run only at
 process startup, so restart `lite-mcp` after adding one. Back up `data.db`
 before destructive migrations.
 
-If the entire migrations directory is absent, the launcher creates both
-default migrations and the reference without overwriting anything. An
-existing empty or incomplete directory is user-owned and fails validation
-rather than being silently repaired.
+If the entire migrations directory is absent, the launcher creates the
+bootstrap and reference without overwriting anything. An existing empty or
+incomplete directory is user-owned and fails validation rather than being
+silently repaired. Runtime-owned internal tables do not consume user migration
+numbers and are created or validated for both new and existing databases.
 
 ## Dashboard
 
@@ -303,6 +304,12 @@ failures roll back both and leave the key unclaimed. A crash before commit
 does the same; a retry after a commit replays the stored result. Do not call
 `run_once` inside `context.db.transaction()` or nest it in another `run_once`;
 put the complete business mutation in its callback instead.
+
+The launcher owns `_lite_mcp_idempotency` and validates its exact schema at
+every startup. User migrations and `run_once` callback SQL cannot read, alter,
+or write that table; only the helper inserts receipts after the business
+callback succeeds. Configure result limits at or below the table's fixed
+1 MiB durable ceiling.
 
 `IdempotencyError` has `code`, `message`, `retryable`, `trace_id`, `details`,
 and a recovery hint. MCP middleware converts it to the normal structured tool

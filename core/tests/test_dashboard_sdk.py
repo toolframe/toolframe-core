@@ -16,6 +16,7 @@ if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
 import lite_mcp_dashboard as dashboard
+import lite_mcp_idempotency as idempotency
 
 
 class FakeAuditSink:
@@ -219,11 +220,8 @@ class DashboardDatabaseTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "nested_transaction")
 
     def test_run_once_uses_durable_helper_and_rejects_transaction_nesting(self):
-        migration = (
-            REPOSITORY_ROOT / "migrations" / "0001_idempotency.sql"
-        ).read_text(encoding="utf-8")
         with sqlite3.connect(self.database_path) as connection:
-            connection.executescript(migration)
+            connection.executescript(idempotency._RECEIPT_SCHEMA)
             connection.execute("CREATE TABLE idempotent_rows (value TEXT)")
 
         calls = 0
