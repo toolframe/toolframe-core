@@ -13,7 +13,7 @@ Streamlit `st.App` is mounted at `/`; FastMCP serves modern Streamable HTTP at
 > use the writable workspace. Dashboard results and submitted data are visible
 > to anyone who can reach the LAN address. Use it only on a trusted LAN.
 
-## Package and run
+## Build a release
 
 The distributable is one editable folder and one launch command—not literally
 one executable—because it includes a platform-matched `uv` binary, dashboard
@@ -22,20 +22,44 @@ source, tools, workspace, and runtime directories.
 The MVP targets macOS first and currently uses Unix inherited file descriptors
 for race-free handoff to Uvicorn.
 
+Install these prerequisites on the build machine:
+
+- Rust 1.88 or newer, including Cargo
+- GNU Make
+- `uv` 0.12.8 or newer
+
+The build intentionally refuses to overwrite `dist/lite-mcp`, because that
+folder can contain user data. Move or archive an existing release first.
+
+Then build the complete release folder from the repository root:
+
 ```sh
-UV_BIN=/path/to/uv ./scripts/package.sh
+make release
 ./dist/lite-mcp/lite-mcp
 ```
+
+The release target uses `UV_BIN` when it is set and otherwise finds `uv` on
+`PATH`. To package a specific executable, pass its path to Make:
+
+```sh
+make release UV_BIN=/path/to/uv
+```
+
+`make release` runs [`scripts/package.sh`](scripts/package.sh), which builds the
+optimized Rust binary and assembles the complete distribution at
+`dist/lite-mcp`. To compile only the optimized Rust binary at
+`target/release/lite-mcp`, run `make build` instead. Run `make help` to list
+the available targets.
 
 The package contains the complete editable dashboard scaffold and the
 `lite-mcp-business-app` coding-agent handbook shipped beside the binary. After
 the first normal server start, its production copy also exists under
 `.agents/skills/`:
 
-The packaging script refuses to overwrite an existing `dist/lite-mcp` and
-copies the editable dashboard, migrations, LAN agent-discovery documents, and
-full skill source. Dashboard and skill `__pycache__`, `.pyc`, and `.pyo` files
-are excluded. It does not alter the source tree. At runtime, a missing entire
+The packaging script copies the editable dashboard, migrations, LAN
+agent-discovery documents, and full skill source. Dashboard and skill
+`__pycache__`, `.pyc`, and `.pyo` files are excluded. It does not alter the
+source tree. At runtime, a missing entire
 `dashboard/`, `llms/`, or `migrations/` directory is created from the embedded
 scaffold, and a missing `llms.txt` is created with it. Existing directories and
 files are never overwritten, completed, repaired, or automatically upgraded.
