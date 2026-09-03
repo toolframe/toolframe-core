@@ -28,7 +28,7 @@ pub fn scaffold(kind: ScaffoldKind, name: &str, root: &Path) -> Result<PathBuf> 
             validate_module_name(name)?;
             let filename = format!("{name}.py");
             let content = format!(
-                "# /// script\n# requires-python = \">=3.14,<3.15\"\n# dependencies = []\n# ///\n\nfrom fastmcp.tools import tool\n\n\n@tool\ndef {name}() -> dict[str, bool]:\n    \"\"\"Describe what this tool does.\"\"\"\n    return {{\"ok\": True}}\n"
+                "# /// script\n# requires-python = \">=3.14,<3.15\"\n# dependencies = []\n# ///\n\nfrom fastmcp.tools import tool\n\n\n@tool\ndef {name}() -> dict[str, bool]:\n    \"\"\"TODO: implement one business command or bounded business query.\"\"\"\n    return {{\"ok\": True}}\n"
             );
             (filename, content)
         }
@@ -140,6 +140,11 @@ mod tests {
             fs::read_to_string(tool)
                 .unwrap()
                 .contains("def fetch_status()")
+        );
+        assert!(
+            fs::read_to_string(tools.join("fetch_status.py"))
+                .unwrap()
+                .contains("one business command or bounded business query")
         );
         assert!(
             fs::read_to_string(widget)

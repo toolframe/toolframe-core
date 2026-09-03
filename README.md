@@ -784,6 +784,19 @@ Create a direct `tools/<lower_snake_case>.py` child with standard PEP 723
 metadata and exactly one standalone FastMCP `@tool`. The filename and function
 name must match.
 
+For a business app, the published files collectively form a small Business RPC
+surface, not a REST-like resource or database CRUD layer. A business query
+answers one bounded workflow question; a business command completes one named,
+guarded outcome or legal state transition. One command may hide several reads,
+writes, invariant checks, events, and receipts in its private implementation.
+Inputs and results use domain terms rather than table, column, generic patch,
+status, filter, sort, or SQL controls. When an intent is missing, add a verified
+business tool instead of asking a peer to compose storage primitives. The
+[Business RPC design rubric](skills/lite-mcp-business-app/references/development-handbook.md#c-publish-a-small-business-rpc-surface)
+contains the complete acceptance check.
+
+This minimal example demonstrates source and dependency mechanics only:
+
 ```python
 # /// script
 # requires-python = ">=3.14,<3.15"
@@ -860,8 +873,8 @@ and result-limit errors are not. A result over 100 rows or 1 MiB fails instead
 of being silently truncated.
 
 This is a fallback data read/write tool and implementation reference, not a
-business workflow API. A peer agent should prefer the app's narrow tools and
-use `execute_sql` only when the app-specific capability guide explicitly
+business workflow API. A peer agent should prefer the app's Business RPC tools
+and use `execute_sql` only when the app-specific capability guide explicitly
 allows that fallback. The primary coding agent owns schema changes through a
 new `migrations/NNNN_description.sql`, followed by check and restart.
 

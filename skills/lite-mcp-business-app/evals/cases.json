@@ -163,7 +163,7 @@
         "APP_CONTEXT.md and DOMAIN_MODEL.md are created or reconciled before implementation completes.",
         "The Job FSM, transition guards, leases, attempts, context versions, results, reviews, and events are explicit.",
         "Applied migration history is preserved and schema changes use the next contiguous migration.",
-        "Business MCP tools are named and narrow; retriable mutations are idempotent and stale leases are rejected.",
+        "The MCP catalog is a small Business RPC surface: queries answer bounded workflow questions, commands complete guarded business outcomes, retriable commands are idempotent, and stale leases are rejected.",
         "Dashboard writes use parameterized supported helpers and expose actionable errors.",
         "The full create-to-review loop is verified through check, invoke or MCP, and the dashboard.",
         "LAN connection instructions use the tested printed LAN address and /mcp.",
@@ -177,6 +177,7 @@
         "The agent notices the fresh Unnamed identity, proposes business-specific app names with one recommendation, and does not use Lite MCP as the app name.",
         "The agent uses the business-first workflow without forcing the canonical Job domain onto the app.",
         "The schema, tools, widget, and local docs use visitor-log language.",
+        "The MCP surface exposes only intent-shaped business queries or commands required by the visitor workflow; it does not mirror visitor tables as generic CRUD tools.",
         "The agent still applies migration, parameterization, validation, check, startup, LAN, and escalation rules.",
         "The chosen or explicitly provisional app name replaces Unnamed consistently in the Dashboard, APP_CONTEXT.md, llms.txt, and llms/context.md while Lite MCP remains the framework name."
       ]
@@ -210,7 +211,7 @@
         "The agent identifies the same-origin /mcp endpoint as an unauthenticated trusted-LAN MCP server using Streamable HTTP, without inventing SSE, stdio, authentication, or a client-specific command.",
         "It follows the linked context, capability, workflow, and operations documents progressively instead of expecting every detail in llms.txt.",
         "It configures or asks the user to configure the current client's MCP registry, then proves the connection by listing actual tools before claiming installation success.",
-        "It maps the user's request only to published narrow business tools and documented state rules; it does not treat execute_sql or a demo widget as a production workflow API.",
+        "It maps the user's request only to published Business RPC commands/queries and documented state rules; it does not treat table CRUD, execute_sql, or a demo widget as a production workflow API.",
         "It distinguishes a client-side workflow using existing capabilities from server-side app development that requires filesystem access, migrations, tools, dashboard code, and documentation changes.",
         "It produces a bounded workflow with trigger, reads, guarded mutations, retry/error handling, human review, and completion evidence, or states the exact missing server capability instead of inventing one."
       ]
@@ -237,8 +238,23 @@
         "The shipped execute_sql reference obtains database access from lite_mcp_db instead of importing sqlite3 or opening LITE_MCP_DB itself.",
         "execute_sql is explicitly a fallback data tool: read mode accepts bounded row-returning SQL, write mode accepts parameterized DML, and both return structured retryable errors.",
         "DDL, PRAGMA, ATTACH, SQLite maintenance operations, and mutations of runtime-owned _lite_mcp_* or sqlite_* tables are rejected without changing schema or internal state.",
-        "The handbook teaches coding agents to use the shared adapter for narrow business tools and reserves every durable schema change for the next contiguous migration written by the primary development agent.",
-        "Peer or scheduled agents prefer published narrow business tools and may use execute_sql only when the app explicitly documents that fallback; they never use it for schema administration."
+        "The handbook teaches coding agents to use the shared adapter behind Business RPC tools and reserves every durable schema change for the next contiguous migration written by the primary development agent.",
+        "Peer or scheduled agents prefer published Business RPC commands/queries and may use execute_sql only when the app explicitly documents that fallback; they never use it for schema administration."
+      ]
+    }
+  ],
+  "business_rpc": [
+    {
+      "id": "business-rpc-instead-of-storage-crud",
+      "prompt": "Design the MCP tool catalog for a local scheduled-work app. A peer agent must find eligible work, claim it, read the owner's context, report progress, submit a result, and leave it for human review.",
+      "assertions": [
+        "The proposed public surface is a small Business RPC catalog split into business queries and business commands, with names that express caller intent rather than database tables or HTTP resource operations.",
+        "Each command completes one guarded business outcome or state transition and may hide multiple reads, writes, events, and receipts in one transaction; it is not one tool per SQL statement or column update.",
+        "Each query answers one bounded workflow question or returns one task-oriented view; it does not expose arbitrary table, column, filter, sort, join, or pagination plumbing as a generic interface.",
+        "Inputs and results use the app's domain vocabulary and include the state, evidence, version or lease, next-action information, and structured retry meaning needed by the calling agent.",
+        "The catalog does not publish generic create_record, update_record, delete_record, set_status, patch_fields, list_table_rows, or get_row CRUD tools, and callers cannot compose low-level operations to bypass a domain invariant.",
+        "execute_sql remains an explicitly documented data fallback outside the normal business surface; a missing business command or query is escalated to the primary development agent instead of being synthesized from CRUD or raw SQL calls.",
+        "The capability register and tests trace every published tool to a user or agent intent, its authoritative rule, and an observable business outcome."
       ]
     }
   ],

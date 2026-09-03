@@ -1,12 +1,12 @@
 # Workflow
 
-Build or execute the smallest workflow that satisfies the user's request. Start with the business outcome and the app's documented state rules; do not make a generic queue model fit an ordinary CRUD or lookup request.
+Build or execute the smallest workflow that satisfies the user's request. Start with the business outcome and the app's documented state rules; use the published Business RPC surface rather than treating tools as database resources. Do not make a generic queue model fit an ordinary register or lookup request.
 
 ## Default sequence
 
 1. **Trigger** — A human request, external scheduler, or peer-agent invocation starts the work. Scheduling is outside Lite MCP; record the trigger and correlation key.
-2. **Read** — List actual tools, read the relevant context, find the authoritative record, and check eligibility, current state, version, and any existing result before writing.
-3. **Guarded mutation** — Call only a published narrow business mutation. Honor its schema and preconditions; use a transaction, version/fence/lease guard, and idempotency key when the documented domain requires them. Use `execute_sql` only for a data fallback explicitly allowed by this app's capability register; never substitute it for a missing business operation or schema change.
+2. **Business query** — List actual tools, read the relevant context, and call the bounded query that answers the workflow question: eligibility, current state, context, evidence, or review need.
+3. **Business command** — Call the command whose named intent matches the requested outcome. Honor its preconditions, version/fence/lease guard, idempotency key, and returned next action. Let the command own its guarded outcome and local transaction; do not assemble table CRUD or generic status/field writes. Use `execute_sql` only for a data fallback explicitly allowed by this app's capability register; never substitute it for a missing business operation or schema change.
 4. **Review** — Make the result and next decision visible through the documented dashboard or review tool. Preserve the returned state, trace ID, artifact reference, and any owner decision needed.
 5. **Completion** — Claim completion only when the tool result and authoritative read show the intended terminal or review state. Report what changed, what remains for a human, and the evidence used.
 
@@ -25,7 +25,7 @@ If `/mcp` cannot be reached or the client cannot list tools, pause before busine
 Replace this section with the app's actual mapping from user intent to tools and states:
 
 - Trigger: `[CUSTOMIZE: event/request and external owner]`
-- Reads: `[CUSTOMIZE: exact tool names, filters, and evidence]`
-- Guarded mutations: `[CUSTOMIZE: exact tool names, preconditions, idempotency/version/lease keys]`
+- Business queries: `[CUSTOMIZE: exact tool names, question answered, bounded evidence]`
+- Business commands: `[CUSTOMIZE: exact tool names, outcome, preconditions, idempotency/version/lease keys]`
 - Review: `[CUSTOMIZE: dashboard/tool, reviewer, and visible result]`
 - Completion: `[CUSTOMIZE: terminal state, audit/result/artifact evidence, and next owner action]`

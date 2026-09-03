@@ -115,7 +115,8 @@ def _frame_payload(frame: _Any) -> dict[str, _Any]:
         "Use read mode for one parameterized row-returning statement or write mode "
         "for one parameterized INSERT, UPDATE, DELETE, or REPLACE. This tool cannot "
         "change schema, run PRAGMA/ATTACH/maintenance SQL, or mutate runtime-owned "
-        "tables. Prefer the app's narrow business tools whenever they exist."
+        "tables. Prefer the app's Business RPC commands and queries whenever they "
+        "exist."
     )
 )
 def execute_sql(

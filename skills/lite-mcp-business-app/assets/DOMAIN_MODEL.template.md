@@ -90,13 +90,16 @@ reject stale writes after expiry or replacement.
 
 ## MCP and dashboard contract
 
-One tool should represent one business action. List read tools and mutation
-tools separately, including required actor, expected version/lease, idempotency
-key, return value, and error/retry meaning.
+Define the smallest Business RPC catalog that completes the business loop.
+Separate bounded business queries from guarded business commands. A query
+answers one workflow question; a command completes one intent or legal state
+transition and hides every required read, write, invariant, event, receipt, and
+transaction. Do not mirror tables with create/read/update/delete tools or
+expose generic field/status patching and arbitrary storage filters.
 
-| Tool/action | Caller | Inputs | Success state/output | Failure and recovery |
-| --- | --- | --- | --- | --- |
-| `<name>` | `<human/agent/system>` | `<validated inputs>` | `<state/value/version>` | `<code, retryable?, next action>` |
+| Tool | Kind | Caller intent | Business inputs | Outcome/evidence | Guard, failure, and recovery |
+| --- | --- | --- | --- | --- | --- |
+| `<intent-shaped name>` | `<query/command>` | `<decision or result sought>` | `<domain values, version/lease/idempotency when needed>` | `<state/view/version/event/next action>` | `<precondition, code, retryable?, recovery>` |
 
 Dashboard widgets project the same model for humans and use parameterized
 helpers. They must show validation, conflict, and retryable errors clearly; they
@@ -105,11 +108,13 @@ must not accept arbitrary SQL from a browser. The app’s MCP endpoint is
 
 ## Tests and completion evidence
 
+Trace every published tool to a caller intent and observable business outcome.
 Test each allowed and forbidden transition, concurrent claims or edits, lease
 expiry/stale writes, idempotent replay and key mismatch, immutable context,
-append-only history, and the complete business loop. Verify the result with
-`./lite-mcp check --format json`, a fresh startup, dashboard interaction, and an
-MCP/tool call. Record the date, command, and observed evidence here:
+append-only history, and the complete business loop. Verify that public tools
+cannot be composed to bypass an invariant. Then run
+`./lite-mcp check --format json`, a fresh startup, dashboard interaction, and
+an MCP/tool call. Record the date, command, and observed evidence here:
 
 - Migration/check evidence: `<...>`
 - MCP evidence: `<...>`

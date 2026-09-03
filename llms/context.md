@@ -24,7 +24,7 @@ Use this as the compact LAN-facing projection of the app's `APP_CONTEXT.md`. Rep
 
 1. Trigger or intake: `[CUSTOMIZE: who/what starts an item]`.
 2. Read: `[CUSTOMIZE: authoritative record, context, and eligibility]`.
-3. Act: `[CUSTOMIZE: narrow tool or dashboard action and its guard]`.
+3. Act: `[CUSTOMIZE: intent-shaped business query/command or dashboard action and its guard]`.
 4. Review: `[CUSTOMIZE: who reviews, which state/result is visible]`.
 5. Completion: `[CUSTOMIZE: terminal evidence and owner follow-up]`.
 
@@ -34,14 +34,14 @@ Use this as the compact LAN-facing projection of the app's `APP_CONTEXT.md`. Rep
 | --- | --- | --- |
 | `[CUSTOMIZE]` | `[CUSTOMIZE]` | `[CUSTOMIZE]` |
 
-`[CUSTOMIZE: If work is genuinely polled, claimed, leased, retried, or human-reviewed, link the app's queue/domain rules. Otherwise state that this is ordinary CRUD or another non-queue workflow.]`
+`[CUSTOMIZE: If work is genuinely polled, claimed, leased, retried, or human-reviewed, link the app's queue/domain rules. Otherwise state that this is a simple register, lookup, approval, or another non-queue workflow.]`
 
 ## Interfaces
 
 - Dashboard: `/` — `[CUSTOMIZE: human entry, review, and status]`.
 - Built-in diagnostics: `/info` — use for runtime facts and safe diagnosis.
 - Readiness: `/healthz` — server readiness only, not business success.
-- MCP: same-origin `/mcp` — `[CUSTOMIZE: actual narrow business tools and purpose]`.
+- MCP: same-origin `/mcp` — `[CUSTOMIZE: smallest Business RPC catalog; separate bounded business queries from guarded business commands and state each caller intent]`.
 - Database and artifacts: `[CUSTOMIZE: data.db, app-prefixed tables, and managed artifact references]`.
 - Scheduler boundary: external — `[CUSTOMIZE: trigger owner/cadence, or None]`.
 

@@ -13,13 +13,13 @@ This page is for an agent that received an origin URL ending in `/llms.txt` and 
 
 After receiving a user request, read [Application context](/llms/context.md), then [Capabilities](/llms/capabilities.md), then [Workflow](/llms/workflow.md). Read [Operations](/llms/operations.md) when a restart, error, retry, or security boundary matters. These pages are intentionally split so an agent can fetch only the needed context.
 
-Use the actual narrow business tools returned by the connected server. Check each tool's published input schema, current-state preconditions, result shape, idempotency or version guard, and retryability before calling it. Never infer a business tool from a filename, dashboard label, example, or this template.
+Use the actual Business RPC tools returned by the connected server. Map the user's intent to one bounded business query or guarded business command, then check its published input schema, current-state preconditions, result shape, idempotency or version guard, and retryability before calling it. Treat one command as the complete business outcome it names; do not decompose it into table/resource CRUD or compose low-level writes around its rules. Never infer a business tool from a filename, dashboard label, example, or this template.
 
 `execute_sql` is a trusted, data-only fallback and adapter reference in a fresh scaffold, not a production business API. It supports bounded parameterized reads and DML, but no schema or runtime-internal changes. Use it only when this app's capability register explicitly permits the fallback; do not use it to bypass a missing business capability or invent a workflow. `example_card` is a dashboard demonstration, not an agent tool or a business contract.
 
 ## When the request needs new server capability
 
-If the current tool list does not cover the user's requested business action, say which capability is missing. A server-side coding agent with filesystem access must add and verify the narrow migration, MCP tool, dashboard behavior, and app-local documentation; an online peer agent cannot create that capability through an arbitrary SQL call. Treat an existing client workflow and server-side app development as different tasks.
+If the current tool list does not cover the user's requested business query or command, say which intent and outcome are missing. A server-side coding agent with filesystem access must add and verify the migration, Business RPC tool, dashboard behavior, and app-local documentation; an online peer agent cannot create that capability through CRUD composition or an arbitrary SQL call. Treat an existing client workflow and server-side app development as different tasks.
 
 ## Handoff result
 

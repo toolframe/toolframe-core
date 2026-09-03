@@ -196,10 +196,12 @@ Use `version` as an optimistic fence for dashboard edits and review actions.
 An update with an old version must make no change and show a conflict asking
 the person to refresh. Do not silently overwrite a peer LAN agent or human.
 
-## Narrow MCP tool contracts
+## Business RPC tool contracts
 
-Names may be adapted to the business vocabulary, but tools should keep one
-business action per contract and return structured data:
+Keep this as a small command/query catalog, not one CRUD interface per Job
+table. Names may be adapted to the business vocabulary, but each tool completes
+one business intent or answers one bounded workflow question and returns
+structured business data:
 
 - `create_job` — create a draft with its initial ContextVersion.
 - `publish_job` — validate and make a draft ready.
@@ -216,15 +218,18 @@ business action per contract and return structured data:
 - `submit_result` — append a Result and move the Job to `review`.
 - `report_job_blocked` — record a blocker and release the active Lease into
   `blocked`.
-- `list_jobs`/`get_job` — provide human/agent status and history views.
+- `list_jobs_needing_attention`/`get_job_workbench` — provide bounded status,
+  context, progress, result, and history views for a concrete decision.
 - `review_job` — accept, request changes, or explicitly reject a Result.
 - `unblock_job`, `cancel_job`, and `mark_business_failed` — guarded operator
   actions with a required reason.
 
-All write tools validate business input, use bound parameters, return the new
-state/version and Event/operation identifiers, and document retryability. A
-generic SQL tool remains a trusted reference/diagnostic escape hatch, not the
-workflow API.
+All command tools validate business input, use bound parameters, atomically
+enforce the transition, and return the new state/version, Event/operation
+identifiers, evidence, and next allowed action. Query tools return only the
+bounded business view needed by their named purpose. `execute_sql` remains an
+explicitly documented data fallback outside the normal Business RPC surface;
+it is not the workflow interface.
 
 ## Dashboard responsibilities
 

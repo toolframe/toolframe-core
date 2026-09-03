@@ -69,7 +69,7 @@ user asked for repair; diagnosis alone is read-only.
 For Develop, read the [development handbook](references/development-handbook.md).
 When work is claimed by scheduled or peer agents, also read the canonical
 [Job domain model](references/job-domain-model.md). Do not load that model for
-an unrelated CRUD, reporting, or lookup app.
+an unrelated register, reporting, or lookup app.
 
 For Develop, create or reconcile `APP_CONTEXT.md` from
 [the app-context template](assets/APP_CONTEXT.template.md) and
@@ -85,14 +85,21 @@ unresolved business choices are visible rather than buried in implementation.
 
 ## 3. Implement one vertical business loop
 
-Build in dependency order: migration, private domain/storage helpers, narrow
-named MCP tools, Streamlit widgets, then the progressive `llms.txt` agent
-guide. Use the binary's scaffold commands
-where they apply; inspect their generated file before filling it. Keep one
-published tool per public tool file and place shared support behind private
-underscore-prefixed modules.
+Build in dependency order: migration, private domain/storage helpers, a small
+Business RPC surface, Streamlit widgets, then the progressive `llms.txt` agent
+guide. Use the binary's scaffold commands where they apply; inspect their
+generated file before filling it. Keep one published tool per public tool file
+and place shared support behind private underscore-prefixed modules.
 
-Make business mutations parameterized, transactional where invariants span
+Split the Business RPC surface into commands and queries. A business command
+completes one named intent or state transition; a business query answers one
+bounded workflow question. Let one tool hide every read, write, invariant
+check, event, and receipt needed for that outcome. Use domain inputs and return
+business state, evidence, and next-action details. Keep table/resource CRUD,
+generic field/status patching, and arbitrary storage filters out of the public
+tool interface.
+
+Make business commands parameterized, transactional where invariants span
 rows, idempotent where retries or reruns can duplicate intent, and guarded by
 versions or leases where stale writers matter. Return structured, actionable
 errors with retryability and correlation details. Store large durable output as
@@ -104,8 +111,9 @@ business tools. Keep the shipped `execute_sql` as a bounded data-only fallback
 and adapter example, and allow a peer to use it only when the app-specific
 capability guide explicitly documents that fallback.
 
-Advance only when the migration, tool surface, dashboard actions, domain docs,
-and tests describe the same business loop with no orphaned action or state.
+Advance only when every public tool traces to a caller intent and observable
+business outcome, and the migration, tool surface, dashboard actions, domain
+docs, and tests describe the same loop with no orphaned action or state.
 
 ## 4. Prove the application
 
@@ -182,8 +190,8 @@ do not invent implementation work.
   Dashboard source may rerun on browser interaction; this is not tool hot reload.
 - Keep the shipped `execute_sql` as a trusted, data-only fallback and adapter
   reference. It must reject schema, PRAGMA, maintenance, and runtime-owned table
-  changes. Give operational agents narrow business tools; permit the fallback
-  only when the app-specific capability guide says so.
+  changes. Give operational agents Business RPC commands and queries; permit
+  the fallback only when the app-specific capability guide says so.
 - The first tested private LAN address is for peers; `127.0.0.1` is only for the
   host machine. Use that same LAN host and port for `/llms.txt` and `/mcp`.
 - Give a new peer agent the tested LAN `/llms.txt` URL first. That guide can

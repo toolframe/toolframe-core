@@ -41,9 +41,9 @@ If work is polled, claimed, or leased by a scheduled or peer agent, link the
 chosen queue-lifecycle rules here: this app's `DOMAIN_MODEL.md` and the
 installed `lite-mcp-business-app` skill's `references/job-domain-model.md`.
 If the skill is bundled in this app folder, record its actual relative path;
-do not assume one when it was installed separately. Ordinary CRUD results or
-approval alone do not require that model. Do not invent a second meaning for a
-canonical term.
+do not assume one when it was installed separately. Simple record keeping,
+lookup, or approval alone does not require that model. Do not invent a second
+meaning for a canonical term.
 
 ## Interfaces
 
@@ -51,7 +51,8 @@ canonical term.
 - Built-in information: `/info` — [when to use it].
 - Agent guide: `/llms.txt` — [what a new LAN agent should discover and which
   linked pages apply to this business app].
-- MCP: `/mcp` — [trusted peer-agent tools and their business purpose].
+- MCP: `/mcp` — [the small Business RPC catalog, separated into bounded
+  business queries and guarded business commands; state each caller intent].
 - Database: `data.db` — [business data owned by this app].
 - Scheduler boundary: [external trigger, cadence, or “none”].
 
@@ -90,7 +91,7 @@ has consciously accepted the local exposure.
 | Business capability | Source of truth | Notes for the next agent |
 | --- | --- | --- |
 | Schema | `migrations/` | [latest migration and immutable-history note] |
-| MCP tools | `tools/` | [public tool names and private helper modules] |
+| MCP tools | `tools/` | [Business RPC commands/queries, their intents, and private helper modules] |
 | Dashboard | `dashboard/app.py`, `dashboard/widgets/` | [entry point and widget list] |
 | LAN agent discovery | `llms.txt`, `llms/` | [linked capability/context/workflow pages and last reconciliation] |
 | Large results/files | `workspace/artifacts/` | [artifact naming and retrieval convention] |

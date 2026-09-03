@@ -127,8 +127,8 @@ invariants, and state rules remain explicit. Read
 or leased by a scheduled or peer agent and its execution/review belongs to that
 queue lifecycle. It defines the recommended finite-state machine and
 Job/Context/Attempt/Result/Review vocabulary. Progress, results, or approval in
-an ordinary CRUD app do not trigger the Job model by themselves. Do not force
-that model onto an unrelated business app such as a catalogue, register, or
+an ordinary register or lookup app do not trigger the Job model by themselves.
+Do not force that model onto an unrelated business app such as a catalogue or
 approval form; use the smallest domain language that fits in its own
 `DOMAIN_MODEL.md` and record the choice in `APP_CONTEXT.md`.
 
@@ -192,7 +192,7 @@ even when two LAN clients write close together. Do not store a large report or
 binary payload in every MCP response; use a managed artifact reference when the
 result is a file.
 
-### C. Publish one useful tool per file
+### C. Publish a small Business RPC surface
 
 Create a direct `tools/<lower_snake_case>.py` file with
 `./lite-mcp scaffold tool <name>`, then give it one public FastMCP `@tool`
@@ -203,12 +203,50 @@ the Python constraint and only the dependencies the tool needs, and write a
 docstring that tells an agent the business purpose, required inputs, output,
 and retry meaning.
 
-Good tool boundaries are business actions, not database plumbing. For a task
-desk this commonly means “claim the next eligible item”, “get the item's
-instruction and context”, “record progress”, “submit a result”, and “review
-or request changes”. The exact names and fields belong to the app's domain
-model; the principle is that an agent can understand one operation from its
-schema and description.
+Treat the published catalog as Business RPC with command/query separation; no
+separate CQRS infrastructure is required. A **business command** completes one
+named intent or legal state transition. A **business query** answers one
+bounded question the caller needs to decide or act. Start with the smallest
+catalog that completes the business loop rather than generating symmetrical
+create/read/update/delete operations for every table.
+
+Each tool is a deep module: its small interface hides eligibility checks,
+database reads and writes, state-machine enforcement, Event/receipt creation,
+and transaction handling. One business outcome may therefore require several
+SQL operations behind one tool. Use `run_once` around the complete mutation
+when transport replay is possible; never make the peer reconstruct an atomic
+outcome by calling low-level write tools in sequence.
+
+| Storage-shaped interface | Business RPC interface |
+| --- | --- |
+| `create_record` | `submit_work_request` |
+| `update_job` or `patch_fields` | `record_progress` or `revise_instruction` |
+| `set_status` | `claim_next_job`, `submit_result`, or `request_changes` |
+| `delete_result` | `withdraw_submission` |
+| `list_table_rows(filters, sort)` | `list_work_ready_for_review` |
+| `get_row(table, id)` | `get_assignment_context` |
+
+Names alone are not enough. Inputs use business concepts rather than table,
+column, join, arbitrary filter/sort, or SQL parameters. A command returns its
+new state, version/lease, durable evidence, and next allowed action. A query
+returns a bounded task-oriented view rather than a database row dump. Errors
+state the rejected business rule, retryability, trace ID, and recovery action.
+
+Before publishing a tool, verify all of these:
+
+1. A human can describe the caller's intent without mentioning storage.
+2. The tool has one observable business outcome or answers one bounded
+   workflow question.
+3. The tool enforces every applicable invariant atomically; callers cannot
+   compose public primitives to reach an illegal state.
+4. Its result gives the calling agent enough state, evidence, and next-action
+   information to continue safely.
+5. The capability register and tests trace the tool to this intent and outcome.
+
+For a task desk this commonly produces commands and queries such as “claim the
+next eligible item”, “get the assignment context”, “record progress”, “submit
+a result”, and “review or request changes”. Exact names and fields belong to
+the app's domain model.
 
 Use the supported helpers before importing lower-level infrastructure:
 
@@ -235,7 +273,7 @@ fallback data read/write capability, not a domain tool and never a schema tool.
 A peer workflow agent should use a named business tool by default and may use
 this fallback only after `llms/capabilities.md` documents the permitted query
 or DML path. A missing business operation requires implementation; do not turn
-the fallback into an undocumented API.
+the fallback or a CRUD collection into an undocumented workflow interface.
 
 ### D. Make the dashboard a human decision surface
 

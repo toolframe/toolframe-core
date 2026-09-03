@@ -492,3 +492,26 @@ recommendation, answer, and rationale before implementation.
   guards, idempotency, audit logs, and explicit capability documentation remain
   the normal operating path. This decision narrows Q16's earlier reference-tool
   scope.
+
+## Round 12 — Business RPC tool surface (Q38)
+
+### Q38 — Should MCP tools expose resource CRUD or business intent?
+
+- **Question:** Should a development agent publish REST-like database
+  operations such as generic create/update/delete/list and field/status
+  patching, or a smaller RPC-like surface centered on the work an agent must
+  accomplish?
+- **Recommendation:** Publish Business RPC with command/query separation. A
+  command completes one guarded business outcome or state transition; a query
+  answers one bounded workflow question. Let each tool hide the database
+  operations, invariants, events, receipts, and transaction needed for that
+  outcome. Keep `execute_sql` as an explicitly documented fallback outside the
+  normal business catalog.
+- **Product-owner answer:** Approved. Agents should use task-oriented tools for
+  business requirements and must not generate a REST-like raw database or CRUD
+  layer.
+- **Rationale/tradeoff:** A smaller intent-shaped interface gives peer agents
+  more leverage and prevents them from assembling low-level calls into an
+  illegal state. It may require a primary development change when a new
+  business intent appears, which is preferable to leaking schema and business
+  invariants into every caller.

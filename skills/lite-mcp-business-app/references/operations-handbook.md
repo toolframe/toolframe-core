@@ -95,7 +95,8 @@ built-in info page and compatibility tooling.
    progress, and the result or review request.
 4. Give the peer agent the printed LAN Agent guide URL. It reads only the
    linked pages relevant to the request, registers same-origin `/mcp`, proves
-   the connection by listing tools, then uses the app's narrow business tools.
+   the connection by listing tools, then uses the app's Business RPC commands
+   and queries.
 5. Review the item in the dashboard. The owner or an agent can write the next
    business action through a widget or a controlled tool.
 
