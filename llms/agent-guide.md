@@ -5,7 +5,7 @@ This page is for an agent that received an origin URL ending in `/llms.txt` and 
 ## Connect and prove the server
 
 1. Derive the origin from the URL that supplied this page. Register the same origin with the path `/mcp` in the agent client's own MCP registration flow. Do not replace the host or port with a guessed value.
-2. Use a clear server name chosen by the client or user (for example, `lite-mcp`) and transport `Streamable HTTP`. If the client cannot register an MCP server, report the required name, exact `/mcp` URL, transport, and the client-side blocker. Do not invent a client-specific command, config format, or installation result.
+2. Use the application name from the `/llms.txt` H1 as the client-visible server name and transport `Streamable HTTP`. Lite MCP is the framework name, not the app identity. If the H1 is still `Unnamed`, keep that limitation visible rather than inventing a business name. If the client cannot register an MCP server, report the required name, exact `/mcp` URL, transport, and the client-side blocker. Do not invent a client-specific command, config format, or installation result.
 3. After registration, list tools through the client. Only a successful tool listing proves that the agent is connected. A page fetch, `/healthz` response, or registration record alone is not proof of MCP connectivity.
 4. If connection fails, use the safe diagnostics in [Operations](/llms/operations.md). Keep the user's business workflow paused and report the exact URL, observed error, and unknowns; do not claim that the server is stopped based only on peer reachability.
 

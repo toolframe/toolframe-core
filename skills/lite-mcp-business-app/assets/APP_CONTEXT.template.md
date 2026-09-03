@@ -4,6 +4,12 @@
 > coding agent. Replace every bracketed prompt with a concrete fact; delete
 > prompts that do not apply.
 
+## App identity
+
+- App name: [a short business-specific name; never use Lite MCP as the app name]
+- Naming rationale: [the business noun or outcome that makes this app recognizable]
+- Framework: Lite MCP
+
 ## Purpose
 
 What business outcome does this local app make easier? What should be true

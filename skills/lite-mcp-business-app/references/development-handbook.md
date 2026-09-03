@@ -45,6 +45,31 @@ loop and give safe defaults. Ask again only when two plausible choices would
 change the business result (for example, whether a review is required before
 completion).
 
+### Name the app, not the framework
+
+A fresh scaffold deliberately displays `Unnamed`. Lite MCP is the framework
+and executable name; it is not the identity of the owner's business app. Once
+the business loop is understood, proactively suggest two or three short names
+grounded in the main business noun or outcome, mark one recommendation, and
+explain it in one sentence. Avoid generic labels such as “Dashboard”, “Tool”,
+or “Lite MCP App” that will not distinguish multiple servers on the same LAN.
+
+Let the owner choose when they respond. If implementation must continue before
+they answer, use the recommendation as an explicitly provisional, reversible
+assumption and record that status in `APP_CONTEXT.md`; do not stop otherwise
+safe development only for naming. Before handing off a developed app, make its
+chosen or provisional name consistent in all owner- and peer-facing identity
+surfaces:
+
+- `APP_CONTEXT.md` App identity — authoritative name and rationale;
+- `dashboard/app.py` `APP_NAME` — browser title and visible heading;
+- `llms.txt` H1 and summary — LAN agent identity; and
+- `llms/context.md` App identity — app name, framework attribution, and rationale.
+
+Completion requires all four surfaces to use the same app name and none to
+remain `Unnamed`. Framework diagnostics, package names, CLI commands, and
+technical attribution continue to use `lite-mcp` or Lite MCP.
+
 ## 2. Inspect the installed contract before editing
 
 Work in the directory that contains the executable. Treat that editable folder
@@ -91,9 +116,10 @@ document instead of repeating volatile details here.
 
 Create `APP_CONTEXT.md` in the application folder before the first substantial
 change. Begin with the [APP_CONTEXT template](../assets/APP_CONTEXT.template.md)
-and replace its prompts with facts. It must explain the purpose in business
-language, the actors, the business loop, vocabulary, interfaces, boundaries,
-operating instructions, source map, decisions/open issues, and handoff notes.
+and replace its prompts with facts. Its App identity is authoritative for the
+owner-facing name. It must also explain the purpose in business language, the
+actors, the business loop, vocabulary, interfaces, boundaries, operating
+instructions, source map, decisions/open issues, and handoff notes.
 
 Create `DOMAIN_MODEL.md` for every business app so its terms, entities,
 invariants, and state rules remain explicit. Read
@@ -111,7 +137,8 @@ Keep each fact authoritative in one place:
 - runtime behavior: root `README.md` and source;
 - schema history: `migrations/*.sql` and `migrations/README.md`;
 - business vocabulary and state rules: app-local `DOMAIN_MODEL.md`;
-- why the app exists and how another agent takes over: `APP_CONTEXT.md`;
+- app identity, why the app exists, and how another agent takes over:
+  `APP_CONTEXT.md`;
 - implementation details: the tool/widget source and their docstrings.
 - what a remote LAN agent may discover: the short `llms.txt` index and its
   linked `llms/*.md` projection of those authoritative facts.
@@ -231,8 +258,9 @@ environment, or network access.
 ### E. Publish progressive LAN-agent discovery
 
 Treat `llms.txt` as the copy/paste entry point for a peer agent that cannot
-read this folder. Keep the root file short: identify the app, state the trusted
-LAN boundary, point to same-origin `/mcp`, then link the relevant detail pages.
+read this folder. Keep the root file short: identify the app by its business
+name, attribute Lite MCP only as the framework, state the trusted LAN boundary,
+point to same-origin `/mcp`, then link the relevant detail pages.
 Put business context, actual capabilities, the operating workflow, and
 diagnosis behind root-relative links under `llms/`. Do not copy the whole
 README into the root file or link to local filesystem paths a peer cannot open.
@@ -332,8 +360,9 @@ Run these stages in order and record evidence in `APP_CONTEXT.md`:
    source file is present, then restore it and rerun the checks.
 8. **Handoff:** update `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, and the progressive
    `llms.txt` document set; list the commands run and their outcomes, name known
-   limitations, and state the next business decision. Keep this evidence short
-   and reproducible.
+   limitations, and state the next business decision. Confirm the Dashboard and
+   LAN-facing documents show the same non-`Unnamed` app identity. Keep this
+   evidence short and reproducible.
 
 Completion means every capability in the agreed scope works: a nontechnical
 owner can understand the relevant dashboard path; a peer agent can use any MCP

@@ -1,13 +1,14 @@
 # MCP unavailable workflow response
 
 Use this response contract when a scheduled workflow or peer agent cannot reach
-the configured lite-mcp `/mcp` endpoint. Replace every bracketed field with an
-observed value or `Unknown`; never guess. Keep the issue self-contained so the
-owner can copy it without the surrounding chat.
+the configured app's `/mcp` endpoint. Replace every bracketed field with an
+observed value or `Unknown`; never guess. Use the business app name from its
+context or `/llms.txt`, not Lite MCP's framework name. Keep the issue
+self-contained so the owner can copy it without the surrounding chat.
 
 ## Warning shown before the issue
 
-> ⚠️ **Lite MCP unavailable — workflow paused.** I could not reach the MCP
+> ⚠️ **[app name] MCP unavailable — workflow paused.** I could not reach the MCP
 > endpoint, so I did not query pending work or write progress/results. No
 > business-status change by this attempt is known. This is currently an
 > integration-availability issue; the copyable report below contains the
@@ -22,12 +23,12 @@ availability failures before the intended business action completed.
 Render the following as one fenced `markdown` block in the workflow response:
 
 ````markdown
-# Lite MCP unavailable: [workflow name]
+# [app name] MCP unavailable: [workflow name]
 
 ## Summary
 
-The workflow could not access the configured Lite MCP endpoint. It paused
-before reading or changing a business item.
+The workflow could not access the configured [app name] MCP endpoint. It
+paused before reading or changing a business item.
 
 - Observed at: [ISO-8601 date/time and timezone]
 - Workflow or scheduled trigger: [name or Unknown]

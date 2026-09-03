@@ -2,6 +2,12 @@
 
 Use this as the compact LAN-facing projection of the app's `APP_CONTEXT.md`. Replace each `[CUSTOMIZE: ...]` value with a concrete fact after inspecting the current source, migration, dashboard, and tool list. Keep unknown owner decisions explicit; do not turn placeholders into promises.
 
+## App identity
+
+- Application name: `Unnamed` — replace this with a short, business-specific name selected by the owner or proposed by the development agent.
+- Framework: Lite MCP. Keep this as technical attribution rather than using it as the application name.
+- Naming rationale: `[CUSTOMIZE: which business noun or outcome makes this app recognizable among other LAN apps?]`
+
 ## Purpose
 
 `[CUSTOMIZE: What business outcome does this app make easier, and what proves a successful interaction?]`

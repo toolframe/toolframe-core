@@ -133,7 +133,7 @@ direct detail files, never follows symlinks, and does not include unrelated
 nested content.
 
 If a scheduled workflow cannot reach that URL, it should pause before changing
-business state, show a clear **Lite MCP unavailable** warning, and return the
+business state, show a clear **[app name] MCP unavailable** warning, and return the
 self-contained copyable issue from
 `.agents/skills/lite-mcp-business-app/assets/MCP_UNAVAILABLE_ISSUE.template.md`.
 The issue preserves the attempted URL, exact error, workflow impact, unknowns,
@@ -312,7 +312,10 @@ numbers and are created or validated for both new and existing databases.
 
 The root page is the user dashboard. `dashboard/app.py` is its Python loader
 and can be edited or completely replaced by a Coding Agent. The default loader
-discovers direct public Python files in `dashboard/widgets/` and renders them.
+uses `APP_NAME = "Unnamed"` for both the browser title and visible heading and
+shows a naming notice until that value is replaced. Lite MCP remains the
+framework attribution. The loader discovers direct public Python files in
+`dashboard/widgets/` and renders them.
 Each discovered module must export a synchronous `render(context)` function.
 The filename stem is the stable widget ID. A widget may optionally export a
 string `TITLE` and integer `ORDER`; widgets are rendered by `ORDER`, then by

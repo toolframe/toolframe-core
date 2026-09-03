@@ -1337,6 +1337,8 @@ mod tests {
             fs::read_to_string(&paths.llms_file).expect("read default llms file"),
             DEFAULT_LLMS_FILE
         );
+        assert!(DEFAULT_LLMS_FILE.starts_with("# Unnamed\n"));
+        assert!(DEFAULT_LLMS_FILE.contains("built on the Lite MCP framework"));
         for (relative, expected) in EMBEDDED_LLMS_FILES {
             let child = paths.llms_dir.join(relative);
             assert!(child.is_file(), "missing llms scaffold file {relative}");

@@ -174,9 +174,11 @@
       "id": "e2e-non-queue-app",
       "prompt": "Build a tiny LAN-only visitor log in lite-mcp for one receptionist. It needs data entry, a daily dashboard, and a peer agent tool for summaries, but no job queue.",
       "assertions": [
+        "The agent notices the fresh Unnamed identity, proposes business-specific app names with one recommendation, and does not use Lite MCP as the app name.",
         "The agent uses the business-first workflow without forcing the canonical Job domain onto the app.",
         "The schema, tools, widget, and local docs use visitor-log language.",
-        "The agent still applies migration, parameterization, validation, check, startup, LAN, and escalation rules."
+        "The agent still applies migration, parameterization, validation, check, startup, LAN, and escalation rules.",
+        "The chosen or explicitly provisional app name replaces Unnamed consistently in the Dashboard, APP_CONTEXT.md, llms.txt, and llms/context.md while Lite MCP remains the framework name."
       ]
     },
     {
@@ -224,6 +226,17 @@
         "An existing real target directory is preserved byte for byte and is never completed or upgraded automatically.",
         "A file or symlink in any managed installation path fails startup with the offending path and reason.",
         "check, invoke, and scaffold do not install the skill."
+      ]
+    }
+  ],
+  "default_app_identity": [
+    {
+      "id": "fresh-app-is-visibly-unnamed",
+      "assertions": [
+        "A freshly scaffolded dashboard uses Unnamed as its browser title and visible heading.",
+        "The fresh dashboard visibly explains that Unnamed must be replaced with the app's business name.",
+        "The default llms.txt H1 identifies the application as Unnamed and describes Lite MCP only as its framework.",
+        "Existing Dashboard and llms source remain user-owned and are never overwritten during startup."
       ]
     }
   ],

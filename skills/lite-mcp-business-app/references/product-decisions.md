@@ -432,3 +432,23 @@ recommendation, answer, and rationale before implementation.
   the guide cannot guarantee automatic installation or invent one universal
   command. It can provide the exact name, same-origin URL, transport, proof
   step, and a precise blocker when the current client cannot register it.
+
+## Round 10 — application identity (Q35)
+
+### Q35 — Is Lite MCP the app name or the framework name?
+
+- **Question:** Should every fresh local app present itself as Lite MCP, or
+  should Lite MCP remain framework attribution while each owner's business app
+  receives a distinct name?
+- **Recommendation:** Initialize owner-facing identity as the visible sentinel
+  `Unnamed`. During development, proactively propose two or three
+  business-specific names with one recommendation, then apply the owner's
+  choice or a clearly recorded provisional recommendation consistently across
+  the Dashboard, app context, and LAN agent guide.
+- **Product-owner answer:** Lite MCP is only the framework name. The Dashboard
+  starts as `Unnamed` so the missing identity is noticeable, and the
+  development agent must suggest an app name automatically.
+- **Rationale/tradeoff:** Distinct names let humans and peer agents identify
+  several LAN apps without confusing framework branding for business purpose.
+  A provisional recommendation keeps development moving, while the owner
+  retains the final naming decision.

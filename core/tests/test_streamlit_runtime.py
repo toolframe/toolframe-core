@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import runpy
 import signal
 import sys
 import tempfile
@@ -20,6 +21,43 @@ if str(CORE_DIRECTORY) not in sys.path:
 import lite_mcp_dashboard_runner as runner
 import lite_mcp_runtime as runtime
 import server as runtime_server
+
+
+class DefaultDashboardIdentityTests(unittest.TestCase):
+    def test_fresh_dashboard_is_visibly_unnamed(self):
+        calls = []
+        fake_streamlit = SimpleNamespace(
+            set_page_config=lambda **kwargs: calls.append(("page_config", kwargs)),
+            title=lambda value: calls.append(("title", value)),
+            caption=lambda value: calls.append(("caption", value)),
+            warning=lambda value: calls.append(("warning", value)),
+        )
+        fake_dashboard = SimpleNamespace(
+            render_widgets=lambda: calls.append(("render_widgets", None))
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "streamlit": fake_streamlit,
+                "lite_mcp_dashboard": fake_dashboard,
+            },
+        ):
+            runpy.run_path(str(REPOSITORY_ROOT / "dashboard" / "app.py"))
+
+        page_config = next(value for kind, value in calls if kind == "page_config")
+        self.assertEqual(page_config["page_title"], "Unnamed")
+        self.assertIn(("title", "Unnamed"), calls)
+        self.assertTrue(
+            any(
+                kind == "warning"
+                and "app" in value.lower()
+                and "name" in value.lower()
+                for kind, value in calls
+            ),
+            "the fresh dashboard must make the missing app name visible",
+        )
+        self.assertIn(("render_widgets", None), calls)
 
 
 class ServerEntrypointTests(unittest.TestCase):

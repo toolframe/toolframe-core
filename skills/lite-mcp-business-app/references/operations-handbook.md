@@ -114,8 +114,9 @@ turn missing access into `failed`, `blocked`, `done`, or another business state.
 
 Return two things in the workflow response:
 
-1. a visible **Lite MCP unavailable — workflow paused** warning stating which
-   reads/writes did not happen and that no business-state change is known; and
+1. a visible **[app name] MCP unavailable — workflow paused** warning stating
+   which reads/writes did not happen and that no business-state change is
+   known; and
 2. one fenced Markdown issue the owner can copy as-is to the maintainer.
 
 Read and fill the

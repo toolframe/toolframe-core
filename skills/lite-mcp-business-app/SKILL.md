@@ -5,14 +5,17 @@ description: Load when a user wants a coding agent to create, extend, operate, c
 
 # Lite MCP business app
 
-Turn a business outcome into one small, inspectable lite-mcp application that a
-nontechnical owner can operate and another agent can inherit.
+Turn a business outcome into one small, named, inspectable application built on
+lite-mcp that a nontechnical owner can operate and another agent can inherit.
 
 ## Non-negotiables
 
 - Lead with the business loop: who submits what, who acts, what the owner sees,
   and what proves completion. Translate technical choices into their business
   consequence.
+- Treat Lite MCP as the framework name. Give every business app its own short,
+  recognizable name; keep the authoritative identity in `APP_CONTEXT.md` and
+  project it consistently into the Dashboard and LAN agent documents.
 - Perform repository and runtime legwork directly. Ask the owner only for a
   business decision that materially changes behavior, risk, or data meaning;
   choose and record safe technical defaults.
@@ -47,9 +50,12 @@ folder is version-controlled. Classify the request as one of:
 
 Read [operations and limits](references/operations-handbook.md) for Doctor,
 Operate, or Fit. Continue only after the application root, intended business
-outcome, current state, data at risk, and any hard escalation trigger are
-explicit. For a Fit request, report the decision without implementing unless
-the user also requested a change.
+outcome, current app identity, data at risk, and any hard escalation trigger
+are explicit. On the Develop path, follow the development handbook's naming
+step whenever the app is still `Unnamed` or uses Lite MCP as its product name;
+propose the name without waiting for the owner to ask. For a Fit request,
+report the decision without implementing unless the user also requested a
+change.
 
 Sections 2–5 are the Develop path. For Doctor, Operate, or Fit, stay in the
 requested operations workflow: do not create handoff documents, redesign the
@@ -132,11 +138,12 @@ detail behind links unless it changes how the owner operates the app.
 For Develop, finish only when every agreed human and peer-agent path works and a
 future coding agent can continue safely from `APP_CONTEXT.md` and
 `DOMAIN_MODEL.md`, while a peer LAN agent can discover the supported workflow
-from `/llms.txt`. For Doctor, finish with an evidence-backed cause and, only
-when repair was requested, a verified repair. For Operate, finish when the
-requested run, connection, backup, or explanation outcome is proven. For Fit,
-finish with a clear keep/escalate decision and the business reason; do not
-invent implementation work.
+from `/llms.txt`. A developed app must no longer present `Unnamed` or Lite MCP
+as its owner-facing app name. For Doctor, finish with an evidence-backed cause
+and, only when repair was requested, a verified repair. For Operate, finish
+when the requested run, connection, backup, or explanation outcome is proven.
+For Fit, finish with a clear keep/escalate decision and the business reason;
+do not invent implementation work.
 
 ## Conditional references
 
