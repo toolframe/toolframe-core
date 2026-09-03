@@ -25,8 +25,9 @@ lite-mcp that a nontechnical owner can operate and another agent can inherit.
 - Keep one app centered on one bounded business workflow. Closely related item
   types may share it only when lifecycle, actors, and data rules remain coherent.
 - Preserve user data and applied migration bytes. Express every durable schema
-  change as the next contiguous migration and back up state before destructive
-  data work.
+  change as the next contiguous migration owned by the primary development
+  agent; never delegate schema administration to a peer workflow agent or MCP
+  SQL call. Back up state before destructive data work.
 - Treat actor names as attribution, not identity. This product is trusted-LAN,
   unauthenticated application code; a need for security boundaries triggers the
   dedicated-app escalation path.
@@ -96,6 +97,12 @@ rows, idempotent where retries or reruns can duplicate intent, and guarded by
 versions or leases where stale writers matter. Return structured, actionable
 errors with retryability and correlation details. Store large durable output as
 managed artifacts and keep bounded summaries/references in SQLite.
+
+In MCP tools, obtain database access from `lite_mcp_db.get_database()`; do not
+open `sqlite3` connections or read `LITE_MCP_DB` in tool source. Prefer narrow
+business tools. Keep the shipped `execute_sql` as a bounded data-only fallback
+and adapter example, and allow a peer to use it only when the app-specific
+capability guide explicitly documents that fallback.
 
 Advance only when the migration, tool surface, dashboard actions, domain docs,
 and tests describe the same business loop with no orphaned action or state.
@@ -173,9 +180,10 @@ do not invent implementation work.
   recurrence.
 - MCP tools, migrations, and dependency changes take effect on process startup.
   Dashboard source may rerun on browser interaction; this is not tool hot reload.
-- Keep the shipped `execute_sql` as a trusted development/reference tool unless
-  the owner explicitly changes that product decision. Give operational agents
-  narrow business tools instead of arbitrary SQL instructions.
+- Keep the shipped `execute_sql` as a trusted, data-only fallback and adapter
+  reference. It must reject schema, PRAGMA, maintenance, and runtime-owned table
+  changes. Give operational agents narrow business tools; permit the fallback
+  only when the app-specific capability guide says so.
 - The first tested private LAN address is for peers; `127.0.0.1` is only for the
   host machine. Use that same LAN host and port for `/llms.txt` and `/mcp`.
 - Give a new peer agent the tested LAN `/llms.txt` URL first. That guide can

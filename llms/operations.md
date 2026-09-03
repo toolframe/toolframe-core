@@ -14,7 +14,7 @@ The scheduler and durable worker loop are external. Lite MCP stores and exposes 
 - MCP `/mcp`: use the client registration flow and list tools; do not infer availability from this page.
 - A coding agent with filesystem access may run `./lite-mcp check --format json` before a restart and inspect the app's local logs. Keep the exact command output, URL, and trace IDs with the report.
 
-Do not use arbitrary SQL as a business diagnostic or repair shortcut. `execute_sql` is a trusted coding/repair reference that can mutate schema and data. Back up or preserve the database before consequential repair, and let a server-side coding agent inspect migrations, tools, and dashboard source.
+Do not use SQL as an undocumented business diagnostic or repair shortcut. `execute_sql` is a bounded data read/write fallback: it can permanently mutate app rows but rejects schema, PRAGMA, maintenance, and runtime-owned table changes. Back up or preserve the database before consequential data repair. A server-side primary coding agent must inspect source and implement every schema repair as the next migration.
 
 ## Errors and retryability
 

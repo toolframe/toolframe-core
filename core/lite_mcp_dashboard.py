@@ -115,7 +115,9 @@ _POLICY_REJECTION_CODES = frozenset(
         "invalid_parameters",
         "invalid_sql",
         "multi_statement",
+        "protected_table_forbidden",
         "read_only_required",
+        "schema_change_forbidden",
         "sql_too_long",
         "write_statement_required",
     }
@@ -123,7 +125,7 @@ _POLICY_REJECTION_CODES = frozenset(
 
 
 class DashboardDatabaseError(RuntimeError):
-    """A browser-safe, structured dashboard database failure."""
+    """An agent/browser-safe, structured database-helper failure."""
 
     def __init__(
         self,
@@ -186,6 +188,8 @@ class _SdkConfiguration:
 @dataclass(slots=True)
 class _PolicyState:
     mode: str
+    allow_schema_changes: bool = True
+    protected_table_prefixes: tuple[str, ...] = ()
     statement_keyword: str = ""
     saw_write: bool = False
     saw_user_insert: bool = False
@@ -213,8 +217,8 @@ class _PolicyState:
             code = "read_only_required" if self.mode == "query" else "forbidden_sql"
             return self.deny(
                 code,
-                "The SQL statement is not allowed by the dashboard database policy.",
-                "Use query() for reads and execute() only for regular DML or DDL.",
+                "The SQL statement is not allowed by the database policy.",
+                "Use query() for reads and execute() only for regular data mutations.",
             )
 
         if action == _FUNCTION_ACTION:
@@ -235,15 +239,47 @@ class _PolicyState:
             return self.deny(
                 "forbidden_sql",
                 "Explicit SQLite maintenance statements are not allowed.",
-                "Use regular DML or DDL instead of REINDEX.",
+                (
+                    "Use regular DML or DDL instead of REINDEX."
+                    if self.allow_schema_changes
+                    else "Use regular app-data DML instead of REINDEX."
+                ),
             )
 
-        if action in _DML_ACTIONS or action in _DDL_ACTIONS:
+        if action in _DDL_ACTIONS:
             if self.mode == "query":
                 return self.deny(
                     "read_only_required",
                     "query() accepts read-only SQL only.",
-                    "Move the mutation to execute() or transaction().",
+                    "Move the mutation to the supported write helper.",
+                )
+            if not self.allow_schema_changes:
+                return self.deny(
+                    "schema_change_forbidden",
+                    "Schema changes are not allowed through the runtime database adapter.",
+                    "Add the next contiguous migration and restart Lite MCP.",
+                )
+            self.saw_write = True
+            if trigger_name is not None:
+                self.saw_trigger_write = True
+            return sqlite3.SQLITE_OK
+
+        if action in _DML_ACTIONS:
+            if self.mode == "query":
+                return self.deny(
+                    "read_only_required",
+                    "query() accepts read-only SQL only.",
+                    "Move the mutation to the supported write helper.",
+                )
+            table_name = (argument_one or "").casefold()
+            if any(
+                table_name.startswith(prefix)
+                for prefix in self.protected_table_prefixes
+            ):
+                return self.deny(
+                    "protected_table_forbidden",
+                    "Runtime-owned SQLite tables cannot be changed through this adapter.",
+                    "Write only app-owned data tables; use migrations for schema changes.",
                 )
             self.saw_write = True
             if trigger_name is not None:
@@ -262,7 +298,11 @@ class _PolicyState:
         return self.deny(
             "forbidden_sql",
             "The SQL statement uses an unsupported SQLite operation.",
-            "Use ordinary SELECT, DML, or non-virtual persistent DDL.",
+            (
+                "Use ordinary SELECT, DML, or non-virtual persistent DDL."
+                if self.allow_schema_changes
+                else "Use an ordinary row-returning query or app-data DML."
+            ),
         )
 
 
@@ -300,12 +340,18 @@ class DashboardDatabase:
         max_rows: int = _DEFAULT_MAX_ROWS,
         max_bytes: int = _DEFAULT_MAX_BYTES,
         audit_sink: Any | None = None,
+        allow_schema_changes: bool = True,
+        protected_table_prefixes: Sequence[str] = (),
     ) -> None:
         self.path = Path(path).expanduser().resolve(strict=False)
         self.logger = logger or _LOGGER
         self.max_rows = _validate_hard_limit("max_rows", max_rows)
         self.max_bytes = _validate_hard_limit("max_bytes", max_bytes)
         self.audit_sink = audit_sink
+        self.allow_schema_changes = bool(allow_schema_changes)
+        self.protected_table_prefixes = tuple(
+            _validate_table_prefix(prefix) for prefix in protected_table_prefixes
+        )
         self._idempotency = IdempotencyStore(
             self.path, audit_sink=audit_sink, logger=self.logger
         )
@@ -534,7 +580,11 @@ class DashboardDatabase:
         max_rows: int | None,
         max_bytes: int | None,
     ) -> pd.DataFrame:
-        policy = _PolicyState("query")
+        policy = _PolicyState(
+            "query",
+            allow_schema_changes=self.allow_schema_changes,
+            protected_table_prefixes=self.protected_table_prefixes,
+        )
         try:
             normalized_sql = _validate_sql(sql)
             normalized_params = _validate_params(params, max_bytes=self.max_bytes)
@@ -565,22 +615,46 @@ class DashboardDatabase:
         sql: str,
         params: Mapping[str, Any] | Sequence[Any],
     ) -> tuple[ExecuteResult, _PolicyState]:
-        policy = _PolicyState("execute")
+        policy = _PolicyState(
+            "execute",
+            allow_schema_changes=self.allow_schema_changes,
+            protected_table_prefixes=self.protected_table_prefixes,
+        )
         try:
             normalized_sql = _validate_sql(sql)
             normalized_params = _validate_params(params, max_bytes=self.max_bytes)
             policy.statement_keyword = _leading_keyword(normalized_sql)
+            if not policy.allow_schema_changes and policy.statement_keyword in {
+                "ALTER",
+                "CREATE",
+                "DROP",
+            }:
+                raise _SdkFailure(
+                    "schema_change_forbidden",
+                    "Schema changes are not allowed through the runtime database adapter.",
+                    recovery_hint=(
+                        "Add the next contiguous migration and restart Lite MCP."
+                    ),
+                )
             if policy.statement_keyword == "EXPLAIN":
                 raise _SdkFailure(
                     "write_statement_required",
-                    "execute() accepts DML or DDL statements only.",
+                    (
+                        "execute() accepts DML or DDL statements only."
+                        if policy.allow_schema_changes
+                        else "execute() accepts app-data DML statements only."
+                    ),
                     recovery_hint="Use query() for read-only query plans.",
                 )
             if policy.statement_keyword in {"ANALYZE", "REINDEX"}:
                 raise _SdkFailure(
                     "forbidden_sql",
                     "Explicit SQLite maintenance statements are not allowed.",
-                    recovery_hint="Use regular DML or persistent non-virtual DDL.",
+                    recovery_hint=(
+                        "Use regular DML or persistent non-virtual DDL."
+                        if policy.allow_schema_changes
+                        else "Use regular app-data DML."
+                    ),
                 )
             connection.set_authorizer(policy.authorize)
             before_changes = connection.total_changes
@@ -589,7 +663,11 @@ class DashboardDatabase:
                 if not policy.saw_write:
                     raise _SdkFailure(
                         "write_statement_required",
-                        "execute() accepts DML or DDL statements only.",
+                        (
+                            "execute() accepts DML or DDL statements only."
+                            if policy.allow_schema_changes
+                            else "execute() accepts app-data DML statements only."
+                        ),
                         recovery_hint="Use query() for read-only SQL.",
                     )
                 rows = (
@@ -634,7 +712,7 @@ class DashboardDatabase:
             traceback.format_exception(type(error), error, error.__traceback__)
         )
         self.logger.error(
-            "dashboard SQL failure traceId=%s sql=%r exception_type=%s\n%s",
+            "database helper SQL failure traceId=%s sql=%r exception_type=%s\n%s",
             trace_id,
             safe_sql,
             type(error).__name__,
@@ -928,6 +1006,12 @@ def _validate_hard_limit(name: str, value: int) -> int:
     return value
 
 
+def _validate_table_prefix(value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("protected table prefixes must be non-empty strings")
+    return value.casefold()
+
+
 def _validate_call_limit(name: str, value: int | None, hard_limit: int) -> int:
     if value is None:
         return hard_limit
@@ -964,7 +1048,7 @@ def _validate_sql(sql: Any) -> str:
     if encoded_size > _MAX_SQL_BYTES:
         raise _SdkFailure(
             "sql_too_long",
-            "SQL exceeds the dashboard statement size limit.",
+            "SQL exceeds the database-helper statement size limit.",
             recovery_hint="Shorten the SQL statement.",
             details={"limit_bytes": _MAX_SQL_BYTES},
         )
@@ -1026,7 +1110,7 @@ def _validate_params(
             )
         if measured_bytes > max_bytes:
             raise _invalid_parameters(
-                "SQL parameters exceed the dashboard byte limit.",
+                "SQL parameters exceed the database-helper byte limit.",
                 "Submit smaller text/blob values or fewer parameters.",
                 details={"limit_bytes": max_bytes},
             )
@@ -1104,7 +1188,7 @@ def _dataframe_from_cursor(
         if len(rows) >= max_rows:
             raise _SdkFailure(
                 "result_too_large",
-                "The SQL result exceeds the dashboard row limit.",
+                "The SQL result exceeds the database-helper row limit.",
                 recovery_hint="Filter, aggregate, or paginate the query.",
                 details={"limit_rows": max_rows},
             )
@@ -1112,7 +1196,7 @@ def _dataframe_from_cursor(
         if measured_bytes > max_bytes:
             raise _SdkFailure(
                 "result_too_large",
-                "The SQL result exceeds the dashboard byte limit.",
+                "The SQL result exceeds the database-helper byte limit.",
                 recovery_hint="Select fewer columns or reduce large text/blob values.",
                 details={"limit_bytes": max_bytes},
             )
@@ -1123,7 +1207,7 @@ def _dataframe_from_cursor(
     if frame_bytes > max_bytes:
         raise _SdkFailure(
             "result_too_large",
-            "The SQL result exceeds the dashboard byte limit.",
+            "The SQL result exceeds the database-helper byte limit.",
             recovery_hint="Select fewer columns or reduce large text/blob values.",
             details={"limit_bytes": max_bytes},
         )
@@ -1213,7 +1297,7 @@ def _classify_error(error: Exception, policy: _PolicyState | None) -> _SdkFailur
     ):
         return _SdkFailure(
             "result_too_large",
-            "The SQL result exceeds the dashboard byte limit.",
+            "The SQL result exceeds the database-helper byte limit.",
             recovery_hint="Select fewer columns or reduce large text/blob values.",
         )
     if isinstance(error, sqlite3.Error) and any(
@@ -1222,7 +1306,7 @@ def _classify_error(error: Exception, policy: _PolicyState | None) -> _SdkFailur
     ):
         return _SdkFailure(
             "database_unavailable",
-            "The configured dashboard database is unavailable.",
+            "The configured database is unavailable.",
             recovery_hint="Inspect the server log and repair or restore data.db.",
         )
     if isinstance(error, sqlite3.Error):
@@ -1233,7 +1317,7 @@ def _classify_error(error: Exception, policy: _PolicyState | None) -> _SdkFailur
         )
     return _SdkFailure(
         "internal_error",
-        "The dashboard database helper encountered an unexpected error.",
+        "The database helper encountered an unexpected error.",
         recovery_hint="Inspect the server log using the trace ID.",
     )
 
@@ -1242,7 +1326,7 @@ def _rollback_quietly(connection: sqlite3.Connection, logger: logging.Logger) ->
     try:
         connection.rollback()
     except Exception:
-        logger.exception("dashboard database rollback failed")
+        logger.exception("database helper rollback failed")
 
 
 def _statement_payload(

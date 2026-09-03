@@ -29,6 +29,18 @@ def echo(value: str) -> str:
     return value
 '''
 
+DATABASE_CONTEXT_TOOL_SOURCE = '''from fastmcp.tools import tool
+from lite_mcp_db import get_database
+
+DATABASE = get_database()
+
+@tool
+def echo(value: str) -> str:
+    """Return the supplied value after startup database configuration."""
+    assert DATABASE.path.name == "data.db"
+    return value
+'''
+
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
@@ -287,6 +299,29 @@ def second() -> str:
         self.assertFalse(result.structured_content["error"]["retryable"])
         self.assertEqual(result.structured_content["error"]["traceId"], error.trace_id)
 
+    def test_database_error_preserves_structured_contract(self):
+        middleware = runtime.RuntimeGuardMiddleware(0, 60, 4096)
+        error = runtime.database_sdk.DatabaseError(
+            "database_busy",
+            "The database is busy.",
+            retryable=True,
+            recovery_hint="Wait briefly, then retry once.",
+        )
+
+        async def call_next(_):
+            raise error
+
+        result = anyio.run(middleware.on_call_tool, None, call_next)
+
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["error"]["code"], "database_busy")
+        self.assertTrue(result.structured_content["error"]["retryable"])
+        self.assertEqual(
+            result.structured_content["error"]["details"]["recoveryHint"],
+            "Wait briefly, then retry once.",
+        )
+        self.assertEqual(result.structured_content["error"]["traceId"], error.trace_id)
+
     def test_artifact_error_preserves_structured_contract(self):
         from lite_mcp_artifacts import ArtifactExistsError
 
@@ -366,7 +401,7 @@ def second() -> str:
         self.assertFalse(result.structured_content["error"]["retryable"])
 
     def test_application_has_startup_only_routes(self):
-        manifest_path, _ = self.write_manifest()
+        manifest_path, _ = self.write_manifest(DATABASE_CONTEXT_TOOL_SOURCE)
         llms_file, llms_dir = self.write_llms_source()
         database = self.root / "data.db"
         sqlite3.connect(database).close()

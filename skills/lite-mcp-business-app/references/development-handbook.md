@@ -173,14 +173,15 @@ the scaffold command:
 ./lite-mcp scaffold migration add_business_fields
 ```
 
-Put schema/data statements in the generated file, then update the tools and
-widgets that use them in the same change. Migrations run in numeric order at
-startup inside the launcher-owned transaction. Never edit, rename, or delete
-an applied migration; restore its exact bytes and add a new migration. Do not
-put transaction statements, connection-level PRAGMAs, `ATTACH`, `DETACH`, or
-`CREATE TRIGGER` in migration SQL. Back up `data.db` before a destructive
-change. Read the app folder's local `migrations/README.md` for the full
-authoring restrictions.
+The primary development agent puts schema/data statements in the generated
+file, then updates the tools and widgets that use them in the same change.
+Migrations run in numeric order at startup inside the launcher-owned
+transaction. Never edit, rename, or delete an applied migration; restore its
+exact bytes and add a new migration. Never administer schema through
+`execute_sql`, another MCP tool, or a Dashboard action. Do not put transaction
+statements, connection-level PRAGMAs, `ATTACH`, `DETACH`, or `CREATE TRIGGER`
+in migration SQL. Back up `data.db` before a destructive change. Read the app
+folder's local `migrations/README.md` for the full authoring restrictions.
 
 Prefer tables that make the business history visible: an enduring business
 record, explicit timestamps, an actor or source, and append-only progress or
@@ -211,6 +212,12 @@ schema and description.
 
 Use the supported helpers before importing lower-level infrastructure:
 
+- `from lite_mcp_db import get_database` for bounded parameterized reads and
+  one-statement app-data DML. The runtime configures it before importing tools;
+  do not import `sqlite3`, open a connection, or read `LITE_MCP_DB` in tool
+  source. `query()` returns a bounded DataFrame and `execute()` accepts only
+  `INSERT`, `UPDATE`, `DELETE`, or `REPLACE`; it rejects DDL, PRAGMA,
+  maintenance, attached databases, and writes to `_lite_mcp_*`/`sqlite_*`;
 - `from lite_mcp_idempotency import run_once` for a tool mutation that may be
   repeated after a transport retry;
 - `from lite_mcp_artifacts import get_artifact_store` for create-once,
@@ -222,6 +229,13 @@ The runtime imports every public tool and materializes its schema before HTTP
 readiness. A broken tool therefore fails the whole application at startup.
 An invocation failure is different: it returns an MCP error and does not stop
 the process. The packaged README is the portable loader and error reference.
+
+Use the shipped `tools/execute_sql.py` as the copyable adapter example. It is a
+fallback data read/write capability, not a domain tool and never a schema tool.
+A peer workflow agent should use a named business tool by default and may use
+this fallback only after `llms/capabilities.md` documents the permitted query
+or DML path. A missing business operation requires implementation; do not turn
+the fallback into an undocumented API.
 
 ### D. Make the dashboard a human decision surface
 
@@ -277,8 +291,10 @@ Reconcile these default editable files as one set:
 - `llms/operations.md` — restart, retry, outage, security, and diagnosis rules.
 
 Replace every `CUSTOMIZE` placeholder that the business design resolves. Do
-not present the shipped `execute_sql` reference or `example_card` demo as the
-production workflow. For a non-queue app, explicitly omit the Job model; use
+not present the shipped `execute_sql` fallback or `example_card` demo as the
+production workflow. If the app intentionally permits one fallback data path,
+document its bounded purpose, inputs, mutation guard, and review consequence.
+For a non-queue app, explicitly omit the Job model; use
 claim, lease, retry, and review language only when the domain really owns those
 concepts. Whenever a tool, schema, widget, business state, or operating rule
 changes, update the relevant linked document in the same change.

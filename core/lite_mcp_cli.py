@@ -18,6 +18,7 @@ from lite_mcp_artifacts import (
     DEFAULT_MAX_ARTIFACT_BYTES,
     configure_artifact_store,
 )
+from lite_mcp_db import _configure as _configure_database
 from lite_mcp_idempotency import _configure as _configure_idempotency
 from lite_mcp_runtime import (
     RuntimeGuardMiddleware,
@@ -65,6 +66,7 @@ def _require_python() -> None:
 def _configure_tool_support(database: Path, workspace: Path) -> Any:
     """Configure startup-loaded tool helpers before importing user tools."""
 
+    _configure_database(database, logger=logging.getLogger("lite_mcp.database"))
     _configure_idempotency(database)
     return configure_artifact_store(
         workspace,

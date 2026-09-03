@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import lite_mcp_db as database_sdk
 import lite_mcp_idempotency as idempotency
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
@@ -382,11 +383,15 @@ class RuntimeGuardMiddleware(Middleware):
                     structured_error.retryable,
                     exc_info=True,
                 )
+                details = dict(structured_error.details)
+                recovery_hint = getattr(structured_error, "recovery_hint", None)
+                if recovery_hint:
+                    details.setdefault("recoveryHint", recovery_hint)
                 return error_result(
                     structured_error.code,
                     structured_error.message,
                     retryable=structured_error.retryable,
-                    details=dict(structured_error.details),
+                    details=details,
                     exception=structured_error,
                     trace_id=getattr(structured_error, "trace_id", None),
                 )
@@ -1189,6 +1194,10 @@ def _build_application(
     if not ready_token:
         raise RuntimeError("LITE_MCP_READY_TOKEN is required")
 
+    database_sdk._configure(
+        database_path,
+        logger=logging.getLogger("lite_mcp.database"),
+    )
     idempotency._configure(database_path, audit_sink=audit_sink)
     artifact_store = configure_artifact_store(
         workspace_path,
@@ -2232,13 +2241,24 @@ def _sanitized_stack(error: BaseException) -> list[str]:
 
 def _find_structured_tool_error(
     error: BaseException,
-) -> LiteMcpError | idempotency.IdempotencyError | ArtifactError | None:
+) -> (
+    LiteMcpError
+    | idempotency.IdempotencyError
+    | ArtifactError
+    | database_sdk.DatabaseError
+    | None
+):
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         if isinstance(
             current,
-            (LiteMcpError, idempotency.IdempotencyError, ArtifactError),
+            (
+                LiteMcpError,
+                idempotency.IdempotencyError,
+                ArtifactError,
+                database_sdk.DatabaseError,
+            ),
         ):
             return current
         seen.add(id(current))

@@ -43,8 +43,10 @@ bypass internal table protection. The launcher owns transactions and SQLite
 configuration. Back up `data.db` before a destructive schema or data
 migration.
 
-`tools/execute_sql.py` is useful for ad hoc inspection and repair, but it is not
-schema history. Durable schema changes belong here.
+`tools/execute_sql.py` is a bounded fallback for app-data reads and DML. Its
+runtime adapter rejects DDL and schema administration. Durable schema changes
+belong here and must be authored by the primary coding agent, checked, and
+applied on restart.
 
 ## Runtime-owned internal schema
 

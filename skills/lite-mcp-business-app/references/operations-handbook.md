@@ -181,8 +181,9 @@ existing file:
 ./lite-mcp scaffold widget status_card
 ```
 
-Schema history belongs in a new numbered migration, not in ad hoc SQL run
-through the reference `execute_sql` tool. Never edit, rename, or delete an
+Schema history belongs in a new numbered migration authored by the primary
+development agent. The `execute_sql` fallback rejects schema changes and is
+only for bounded app-data reads/DML. Never edit, rename, or delete an
 already-applied migration. Back up the app folder, especially `data.db`, its
 SQLite `-wal`/`-shm` sidecars when present, `migrations/`, `tools/`,
 `dashboard/`, `workspace/`, and `logs/`, before a consequential change. Stop
@@ -336,8 +337,10 @@ it.
 
 No. There is no browser API for arbitrary SQL. Dashboard widgets should use
 the shared database helper and parameterized SQL for controlled reads and
-writes. `tools/execute_sql.py` is a trusted coding reference for one
-statement, not a replacement for migration history.
+writes. `tools/execute_sql.py` is a trusted, bounded data read/write fallback
+and adapter reference. It rejects schema, PRAGMA, maintenance, attached
+database, and runtime-owned table changes; migration history is the only schema
+path.
 
 ### Why did my new tool not appear?
 

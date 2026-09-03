@@ -22,9 +22,10 @@ The current product contract is:
 - The app binds for LAN use without authentication. Treat every tool and
   dashboard mutation as trusted-code access. `data.db` is the only supported
   database in this MVP.
-- `tools/execute_sql.py` is a trusted-LAN reference tool for inspection and
-  repair. Business agents should use narrow, parameterized tools that enforce
-  this model instead of bypassing its invariants with arbitrary SQL.
+- `tools/execute_sql.py` is a trusted-LAN, data-only fallback and shared-adapter
+  reference. It rejects schema/runtime-internal changes. Business agents use
+  narrow, parameterized tools that enforce this model unless the app-specific
+  capability guide explicitly permits a bounded fallback data operation.
 - Tool and mutation failures expose a stable reason, a trace identifier, and
   whether retrying is safe. Detailed diagnostics remain in the local logs.
 

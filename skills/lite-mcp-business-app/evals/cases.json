@@ -229,6 +229,19 @@
       ]
     }
   ],
+  "database_adapter": [
+    {
+      "id": "shared-data-adapter-and-schema-boundary",
+      "assertions": [
+        "The runtime configures one lite_mcp_db adapter before importing startup-loaded tools, and the same contract is available during check and invoke.",
+        "The shipped execute_sql reference obtains database access from lite_mcp_db instead of importing sqlite3 or opening LITE_MCP_DB itself.",
+        "execute_sql is explicitly a fallback data tool: read mode accepts bounded row-returning SQL, write mode accepts parameterized DML, and both return structured retryable errors.",
+        "DDL, PRAGMA, ATTACH, SQLite maintenance operations, and mutations of runtime-owned _lite_mcp_* or sqlite_* tables are rejected without changing schema or internal state.",
+        "The handbook teaches coding agents to use the shared adapter for narrow business tools and reserves every durable schema change for the next contiguous migration written by the primary development agent.",
+        "Peer or scheduled agents prefer published narrow business tools and may use execute_sql only when the app explicitly documents that fallback; they never use it for schema administration."
+      ]
+    }
+  ],
   "default_app_identity": [
     {
       "id": "fresh-app-is-visibly-unnamed",

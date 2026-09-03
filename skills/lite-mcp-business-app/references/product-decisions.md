@@ -452,3 +452,43 @@ recommendation, answer, and rationale before implementation.
   several LAN apps without confusing framework branding for business purpose.
   A provisional recommendation keeps development moving, while the owner
   retains the final naming decision.
+
+## Round 11 — database adapter and schema authority (Q36–Q37)
+
+### Q36 — How should MCP tools access `data.db`?
+
+- **Question:** Should each Python tool import `sqlite3`, read `LITE_MCP_DB`,
+  and create its own connection, or should it consume database access supplied
+  by the application runtime?
+- **Recommendation:** FastAPI has no built-in database-access implementation;
+  use its application lifecycle to configure one `lite_mcp_db` adapter before
+  tool import. Expose bounded `query()` and DML-only `execute()` methods so
+  `execute_sql` and narrow tools share the same policy and error contract.
+- **Product-owner answer:** Do not let `execute_sql` create a SQLite connection
+  manually. Supply database access through the running app and use the same
+  adapter as the reference for other read/write tools.
+- **Rationale/tradeoff:** Tools stop duplicating connection, limit, and error
+  logic while remaining simple Python. This is process-level dependency
+  configuration rather than FastAPI request injection because FastMCP tool
+  arguments are not FastAPI route dependencies.
+
+### Q37 — Who may change schema through MCP?
+
+- **Question:** Is `execute_sql` a general SQLite administrator, or a backup
+  data path for a peer workflow agent while a primary development agent owns
+  schema evolution?
+- **Recommendation:** Keep `execute_sql`, but restrict it to bounded
+  parameterized reads and `INSERT`/`UPDATE`/`DELETE`/`REPLACE`. Reject DDL,
+  PRAGMA, attached databases, maintenance operations, multiple statements, and
+  runtime-owned table mutations. Prefer narrow business tools and document any
+  allowed fallback in the app-specific capability guide.
+- **Product-owner answer:** A peer/slave agent may use `execute_sql` only as a
+  backup data reader/writer. It must not create/drop tables or update schema;
+  the primary/master development agent performs those changes under the skill's
+  migration workflow.
+- **Rationale/tradeoff:** The fallback remains useful before every business
+  operation has a dedicated tool, but cannot create invisible schema drift.
+  DML is still powerful and unauthenticated on the trusted LAN, so narrow tools,
+  guards, idempotency, audit logs, and explicit capability documentation remain
+  the normal operating path. This decision narrows Q16's earlier reference-tool
+  scope.

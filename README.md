@@ -214,9 +214,10 @@ exists, `data.db` and any existing `-wal`/`-shm` files are copied before SQLite
 opens the temporary snapshot; hashes and the source file set are checked before
 and after the copy. Stop the server and other database writers first: a change
 during copying fails preflight and asks the caller to retry. A missing database
-uses a new in-memory database. Tool imports receive a separate temporary
-`LITE_MCP_DB` path. Check may provision Python and dependencies and update
-managed content under `runtime/`; imported tools and widgets remain trusted
+uses a new in-memory database. Tool imports receive the shared database adapter
+configured against a separate temporary database. Check may provision Python
+and dependencies and update managed content under `runtime/`; imported tools
+and widgets remain trusted
 Python code and can perform other import-time side effects. Their stdout is
 forwarded to stderr so stdout remains one JSON document. The report includes
 the exact paths, Python and UV versions, migration range and pending count,
@@ -230,7 +231,8 @@ prints one JSON result:
 
 ```sh
 ./lite-mcp invoke fetch_title --json '{"url":"https://example.com"}'
-./lite-mcp invoke execute_sql --json '{"sql":"SELECT 1 AS ready"}'
+./lite-mcp invoke execute_sql --json \
+  '{"sql":"SELECT label FROM dashboard_example_entries WHERE id = ?","params":[1],"mode":"read"}'
 ```
 
 Arguments must be one JSON object. A successful call exits `0`; an MCP
@@ -238,9 +240,10 @@ Arguments must be one JSON object. A successful call exits `0`; an MCP
 machine-readable JSON response when one is available. Invocation starts no
 HTTP server and performs no hot reload. It strictly loads all tools once, does
 not apply migrations automatically, and does not write the server audit logs.
-The invoked tool retains its normal trusted capabilities, so a tool such as
-`execute_sql` can intentionally mutate the configured database. Tool import
-and invocation prints are forwarded to stderr; stdout remains the single JSON
+The invoked tool retains its normal trusted capabilities. `execute_sql` can
+intentionally mutate app data in `write` mode, but its adapter rejects schema,
+PRAGMA, maintenance, and runtime-owned table changes. Tool import and
+invocation prints are forwarded to stderr; stdout remains the single JSON
 result.
 
 ### Safe scaffolding
@@ -417,6 +420,70 @@ statements together or rolls them back together; nested transactions and
 automatic write retries are not supported. The helper configures WAL,
 foreign-key enforcement, and a bounded busy timeout for concurrent LAN
 sessions.
+
+### MCP tool database adapter
+
+FastAPI provides application lifecycle and dependency injection, not a
+database-access implementation. FastMCP tool calls are not FastAPI route
+parameters, so Lite MCP configures one process-level adapter before importing
+any tool. Tool code obtains it with `get_database()` instead of opening
+`sqlite3` or reading `LITE_MCP_DB`:
+
+```python
+from fastmcp.tools import tool
+from lite_mcp_db import get_database
+from lite_mcp_runtime import LiteMcpError
+
+_DB = get_database()
+
+
+@tool
+def rename_example_entry(
+    entry_id: int, expected_version: int, label: str
+) -> dict[str, object]:
+    """Rename one existing entry with an optimistic-concurrency guard."""
+
+    current = _DB.query(
+        "SELECT id, version FROM dashboard_example_entries WHERE id = ?",
+        (entry_id,),
+        max_rows=1,
+    )
+    if current.empty:
+        raise LiteMcpError(
+            "entry_not_found",
+            "The entry does not exist.",
+            details={"recoveryHint": "Refresh the authoritative entry list."},
+        )
+
+    result = _DB.execute(
+        """
+        UPDATE dashboard_example_entries
+        SET label = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND version = ?
+        """,
+        (label, entry_id, expected_version),
+    )
+    if result.affected_rows != 1:
+        raise LiteMcpError(
+            "entry_conflict",
+            "The entry changed after it was read.",
+            details={"recoveryHint": "Read the entry again before retrying."},
+        )
+    return {"id": entry_id, "updated": True}
+```
+
+The adapter's `query(sql, params)` returns a bounded `pandas.DataFrame`.
+`execute(sql, params)` atomically commits one `INSERT`, `UPDATE`, `DELETE`, or
+`REPLACE` and returns `affected_rows`, `last_insert_rowid`, and optional
+`RETURNING` rows. Values must be bound; default results are limited to 100 rows
+and 1 MiB, and a tool may request only smaller per-query limits.
+
+The adapter rejects DDL, PRAGMA, `ATTACH`/`DETACH`, maintenance operations, and
+writes to `_lite_mcp_*` or `sqlite_*` tables. `DatabaseError` carries `code`,
+`message`, `retryable`, `trace_id`, details, and a recovery hint; runtime
+middleware preserves that contract when a narrow tool lets it propagate.
+Durable schema changes are never a tool call: the primary coding agent authors
+the next contiguous migration, runs `check`, and restarts the app.
 
 ### Explicit durable idempotency
 
@@ -779,16 +846,24 @@ tool SQL.
 when the launcher creates a brand-new tools directory. Existing directories
 and files are never overwritten.
 
-The tool executes exactly one arbitrary SQLite statement against `LITE_MCP_DB`.
-Writes, DDL, PRAGMA, and `RETURNING` are allowed. SQL input is capped at 1 MiB;
-query output is capped at 100 rows. Mutations report `affected_rows` and
-`last_insert_rowid`. Busy/locked and transient disk I/O errors are marked
-retryable; syntax, constraint, empty, oversized, missing-environment, and
-multi-statement errors are not.
+The tool demonstrates the shared `lite_mcp_db` adapter and accepts `sql`,
+optional positional-list or named-object `params`, and `mode` (`read` by
+default or `write`). Read mode permits one bounded row-returning statement.
+Write mode permits one `INSERT`, `UPDATE`, `DELETE`, or `REPLACE`, including
+bounded `RETURNING` rows. It never opens a connection or reads the database
+path itself.
 
-This tool is for ad hoc inspection and repair, not schema history. A durable
-schema change must be a new `migrations/NNNN_description.sql` file so every
-database receives the same ordered change and drift remains detectable.
+Schema/DDL, PRAGMA, `ATTACH`/`DETACH`, maintenance SQL, multiple statements,
+and runtime-owned table mutations are rejected. Busy/locked and temporary
+storage errors are marked retryable; validation, syntax, constraint, policy,
+and result-limit errors are not. A result over 100 rows or 1 MiB fails instead
+of being silently truncated.
+
+This is a fallback data read/write tool and implementation reference, not a
+business workflow API. A peer agent should prefer the app's narrow tools and
+use `execute_sql` only when the app-specific capability guide explicitly
+allows that fallback. The primary coding agent owns schema changes through a
+new `migrations/NNNN_description.sql`, followed by check and restart.
 
 ## HTTP routes
 

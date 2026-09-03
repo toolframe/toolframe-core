@@ -6,7 +6,7 @@ Build or execute the smallest workflow that satisfies the user's request. Start 
 
 1. **Trigger** — A human request, external scheduler, or peer-agent invocation starts the work. Scheduling is outside Lite MCP; record the trigger and correlation key.
 2. **Read** — List actual tools, read the relevant context, find the authoritative record, and check eligibility, current state, version, and any existing result before writing.
-3. **Guarded mutation** — Call only a published narrow business mutation. Honor its schema and preconditions; use a transaction, version/fence/lease guard, and idempotency key when the documented domain requires them. Never substitute `execute_sql` for a missing business operation.
+3. **Guarded mutation** — Call only a published narrow business mutation. Honor its schema and preconditions; use a transaction, version/fence/lease guard, and idempotency key when the documented domain requires them. Use `execute_sql` only for a data fallback explicitly allowed by this app's capability register; never substitute it for a missing business operation or schema change.
 4. **Review** — Make the result and next decision visible through the documented dashboard or review tool. Preserve the returned state, trace ID, artifact reference, and any owner decision needed.
 5. **Completion** — Claim completion only when the tool result and authoritative read show the intended terminal or review state. Report what changed, what remains for a human, and the evidence used.
 

@@ -15,7 +15,7 @@ After receiving a user request, read [Application context](/llms/context.md), th
 
 Use the actual narrow business tools returned by the connected server. Check each tool's published input schema, current-state preconditions, result shape, idempotency or version guard, and retryability before calling it. Never infer a business tool from a filename, dashboard label, example, or this template.
 
-`execute_sql` is a trusted coding and repair reference in a fresh scaffold, not a production business API. Do not use it to bypass a missing business capability or to invent a workflow. `example_card` is a dashboard demonstration, not an agent tool or a business contract.
+`execute_sql` is a trusted, data-only fallback and adapter reference in a fresh scaffold, not a production business API. It supports bounded parameterized reads and DML, but no schema or runtime-internal changes. Use it only when this app's capability register explicitly permits the fallback; do not use it to bypass a missing business capability or invent a workflow. `example_card` is a dashboard demonstration, not an agent tool or a business contract.
 
 ## When the request needs new server capability
 

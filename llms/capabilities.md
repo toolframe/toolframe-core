@@ -12,9 +12,11 @@ This page separates the fixed Lite MCP server contract from the editable busines
 
 ## Fresh scaffold
 
-A fresh scaffold starts with the trusted `execute_sql` MCP tool and the `example_card` dashboard widget. `execute_sql` executes one SQLite statement and can read, write, alter schema, or run PRAGMA statements; it is intentionally a trusted coding/repair reference and can permanently change data. `example_card` demonstrates the dashboard API against example entries; it is not a production workflow or MCP tool.
+A fresh scaffold starts with the trusted `execute_sql` MCP tool and the `example_card` dashboard widget. `execute_sql` is a bounded fallback for parameterized data reads and DML through the shared runtime adapter. It cannot alter schema, run PRAGMA/maintenance SQL, attach databases, or mutate runtime-owned tables. Writes can still permanently change app data. `example_card` demonstrates the dashboard API against example entries; it is not a production workflow or MCP tool.
 
 Do not claim that the scaffold already supports a user's business workflow. A workflow is available only when its narrow business tools are present in the connected tool list and its state rules are documented below.
+
+Peer workflow agents should use `execute_sql` only when this app-specific register explicitly documents the fallback query or mutation. A coding agent with filesystem access owns schema changes through the next migration; no MCP tool is a schema-administration path.
 
 ## CUSTOMIZE: business capability register
 

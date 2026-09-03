@@ -32,8 +32,10 @@ def echo(value: str) -> str:
 CONTEXT_TOOL_SOURCE = '''from fastmcp.tools import tool
 import lite_mcp_idempotency
 from lite_mcp_artifacts import get_artifact_store
+from lite_mcp_db import get_database
 
 ARTIFACT_STORE = get_artifact_store()
+DATABASE = get_database()
 if lite_mcp_idempotency._configured_store is None:
     raise RuntimeError("idempotency helper was not configured before tool import")
 
@@ -41,7 +43,7 @@ if lite_mcp_idempotency._configured_store is None:
 def echo() -> dict[str, str]:
     """Return configured helper paths."""
     return {
-        "database": str(lite_mcp_idempotency._configured_store.database_path),
+        "database": str(DATABASE.path),
         "artifacts": str(ARTIFACT_STORE.root),
     }
 '''
@@ -212,6 +214,7 @@ class CliRunnerTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(json.loads(output.getvalue())["loadedToolCount"], 1)
         self.assertFalse((self.workspace / "artifacts").exists())
+        self.assertFalse((self.root / "data.db").exists())
 
     def test_invoke_returns_the_actual_fastmcp_result_encoding(self):
         output = io.StringIO()

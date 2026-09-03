@@ -18,6 +18,7 @@ use crate::tools::{
 const CORE_SERVER: &str = include_str!("../core/server.py");
 const CORE_SUPPORT: &str = include_str!("../core/lite_mcp_runtime.py");
 const CORE_DASHBOARD: &str = include_str!("../core/lite_mcp_dashboard.py");
+const CORE_DATABASE: &str = include_str!("../core/lite_mcp_db.py");
 const CORE_IDEMPOTENCY: &str = include_str!("../core/lite_mcp_idempotency.py");
 const CORE_ARTIFACTS: &str = include_str!("../core/lite_mcp_artifacts.py");
 const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/lite_mcp_dashboard_runner.py");
@@ -430,6 +431,7 @@ pub fn prepare_runtime(
             CORE_SERVER.as_bytes(),
             CORE_SUPPORT.as_bytes(),
             CORE_DASHBOARD.as_bytes(),
+            CORE_DATABASE.as_bytes(),
             CORE_IDEMPOTENCY.as_bytes(),
             CORE_ARTIFACTS.as_bytes(),
             CORE_DASHBOARD_RUNNER.as_bytes(),
@@ -450,6 +452,7 @@ pub fn prepare_runtime(
     let core_server = core_dir.join("server.py");
     let core_support = core_dir.join("lite_mcp_runtime.py");
     let dashboard_sdk = core_dir.join("lite_mcp_dashboard.py");
+    let database_sdk = core_dir.join("lite_mcp_db.py");
     let idempotency = core_dir.join("lite_mcp_idempotency.py");
     let artifacts_sdk = core_dir.join("lite_mcp_artifacts.py");
     let dashboard_runner = core_dir.join("lite_mcp_dashboard_runner.py");
@@ -459,6 +462,7 @@ pub fn prepare_runtime(
     write_managed(&core_server, CORE_SERVER)?;
     write_managed(&core_support, CORE_SUPPORT)?;
     write_managed(&dashboard_sdk, CORE_DASHBOARD)?;
+    write_managed(&database_sdk, CORE_DATABASE)?;
     write_managed(&idempotency, CORE_IDEMPOTENCY)?;
     write_managed(&artifacts_sdk, CORE_ARTIFACTS)?;
     write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
@@ -1239,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn materializes_both_tool_support_modules_in_the_managed_runtime() {
+    fn materializes_tool_support_modules_in_the_managed_runtime() {
         let directory = tempfile::tempdir().expect("create temp directory");
         let runtime = directory.path().join("runtime");
         let catalog = ToolCatalog {
@@ -1262,6 +1266,10 @@ mod tests {
             .parent()
             .expect("managed core directory");
 
+        assert_eq!(
+            fs::read_to_string(core.join("lite_mcp_db.py")).expect("read database support"),
+            CORE_DATABASE
+        );
         assert_eq!(
             fs::read_to_string(core.join("lite_mcp_idempotency.py"))
                 .expect("read idempotency support"),
