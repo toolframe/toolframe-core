@@ -8,7 +8,7 @@
 """Reference MCP tool using explicit durable idempotency."""
 
 from fastmcp.tools import tool
-from lite_mcp_idempotency import IdempotencyTransaction, run_once
+from toolframe_idempotency import IdempotencyTransaction, run_once
 
 
 @tool

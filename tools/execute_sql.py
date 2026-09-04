@@ -5,7 +5,7 @@
 # ]
 # ///
 
-"""Fallback data-access example built on Lite MCP's shared database adapter."""
+"""Fallback data-access example built on Toolframe's shared database adapter."""
 
 import logging as _logging
 import math as _math
@@ -15,8 +15,8 @@ from typing import Literal as _Literal
 
 from fastmcp.tools import ToolResult as _ToolResult
 from fastmcp.tools import tool as _tool
-from lite_mcp_db import DatabaseError as _DatabaseError
-from lite_mcp_db import get_database as _get_database
+from toolframe_db import DatabaseError as _DatabaseError
+from toolframe_db import get_database as _get_database
 
 _LOGGER = _logging.getLogger(__name__)
 _SqlValue = str | int | float | bool | None
@@ -111,7 +111,7 @@ def _frame_payload(frame: _Any) -> dict[str, _Any]:
 
 @_tool(
     description=(
-        "Fallback access to app data through Lite MCP's bounded database adapter. "
+        "Fallback access to app data through Toolframe's bounded database adapter. "
         "Use read mode for one parameterized row-returning statement or write mode "
         "for one parameterized INSERT, UPDATE, DELETE, or REPLACE. This tool cannot "
         "change schema, run PRAGMA/ATTACH/maintenance SQL, or mutate runtime-owned "
@@ -128,7 +128,7 @@ def execute_sql(
 
     This is a fallback and implementation reference, not a schema-management
     tool. A primary coding agent must put durable schema changes in the next
-    migration and restart Lite MCP.
+    migration and restart Toolframe.
     """
 
     if mode not in {"read", "write"}:

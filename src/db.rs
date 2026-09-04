@@ -15,12 +15,12 @@ use rusqlite::{
 use sha2::{Digest, Sha256};
 
 const BOOTSTRAP_FILENAME: &str = "0000_bootstrap.sql";
-const LEDGER_TABLE: &str = "_lite_mcp_migrations";
-const IDEMPOTENCY_TABLE: &str = "_lite_mcp_idempotency";
+const LEDGER_TABLE: &str = "_toolframe_migrations";
+const IDEMPOTENCY_TABLE: &str = "_toolframe_idempotency";
 const MAX_MIGRATION_BYTES: u64 = 4 * 1024 * 1024;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const LEDGER_SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS _lite_mcp_migrations (
+CREATE TABLE IF NOT EXISTS _toolframe_migrations (
     version INTEGER PRIMARY KEY CHECK (version BETWEEN 0 AND 9999),
     filename TEXT NOT NULL UNIQUE,
     sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS _lite_mcp_migrations (
 ) STRICT;
 "#;
 const IDEMPOTENCY_SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS _lite_mcp_idempotency (
+CREATE TABLE IF NOT EXISTS _toolframe_idempotency (
     namespace TEXT NOT NULL,
     business_key TEXT NOT NULL,
     input_sha256 TEXT NOT NULL CHECK (length(input_sha256) = 64),
@@ -178,7 +178,7 @@ fn migrate_connection(
                 migrations.last(),
                 database_path,
                 &error,
-                "Restart lite-mcp; the ledger will determine whether the transaction committed.",
+                "Restart toolframe; the ledger will determine whether the transaction committed.",
             )
         })?;
     } else {
@@ -231,13 +231,13 @@ pub fn validate_migrations(
 fn copy_database_snapshot(database_path: &Path) -> Result<DatabaseSnapshot> {
     let stability_context = || {
         format!(
-            "could not obtain stable database files for validation (phase=migration-validation-snapshot, path={}, retryable=true, recoveryHint=inspect file permissions, stop lite-mcp and other database writers, then retry)",
+            "could not obtain stable database files for validation (phase=migration-validation-snapshot, path={}, retryable=true, recoveryHint=inspect file permissions, stop toolframe and other database writers, then retry)",
             database_path.display()
         )
     };
     let before = fingerprint_database_files(database_path).with_context(stability_context)?;
     let directory = tempfile::Builder::new()
-        .prefix("lite-mcp-database-check-")
+        .prefix("toolframe-database-check-")
         .tempdir()
         .context("could not create a temporary database validation directory")?;
     let filename = database_path.file_name().ok_or_else(|| {
@@ -261,7 +261,7 @@ fn copy_database_snapshot(database_path: &Path) -> Result<DatabaseSnapshot> {
         let copied = fingerprint_file(&destination).with_context(stability_context)?;
         if copied.bytes != source.bytes || copied.sha256 != source.sha256 {
             bail!(
-                "database files changed while check copied {} (phase=migration-validation-snapshot, path={}, retryable=true, recoveryHint=stop lite-mcp and other database writers, then retry)",
+                "database files changed while check copied {} (phase=migration-validation-snapshot, path={}, retryable=true, recoveryHint=stop toolframe and other database writers, then retry)",
                 source.path.display(),
                 database_path.display()
             );
@@ -271,7 +271,7 @@ fn copy_database_snapshot(database_path: &Path) -> Result<DatabaseSnapshot> {
     let after = fingerprint_database_files(database_path).with_context(stability_context)?;
     if before != after {
         bail!(
-            "database files changed while check prepared a validation snapshot (phase=migration-validation-snapshot, path={}, retryable=true, recoveryHint=stop lite-mcp and other database writers, then retry)",
+            "database files changed while check prepared a validation snapshot (phase=migration-validation-snapshot, path={}, retryable=true, recoveryHint=stop toolframe and other database writers, then retry)",
             database_path.display()
         );
     }
@@ -582,7 +582,7 @@ fn validate_ledger_schema(transaction: &Transaction<'_>, database_path: &Path) -
         })?;
     if schema_signature(&actual) != schema_signature(LEDGER_SCHEMA) {
         bail!(
-            "internal migration ledger has an incompatible schema (phase=migration-ledger, path={}, retryable=false, recoveryHint=restore the original _lite_mcp_migrations table; do not drop or edit migration history)",
+            "internal migration ledger has an incompatible schema (phase=migration-ledger, path={}, retryable=false, recoveryHint=restore the original _toolframe_migrations table; do not drop or edit migration history)",
             database_path.display()
         );
     }
@@ -607,7 +607,7 @@ fn validate_idempotency_schema(transaction: &Transaction<'_>, database_path: &Pa
         })?;
     if schema_signature(&actual) != schema_signature(IDEMPOTENCY_SCHEMA) {
         bail!(
-            "internal idempotency receipt table has an incompatible schema (phase=idempotency-schema, path={}, retryable=false, recoveryHint=restore the original _lite_mcp_idempotency table; do not edit durable receipts manually)",
+            "internal idempotency receipt table has an incompatible schema (phase=idempotency-schema, path={}, retryable=false, recoveryHint=restore the original _toolframe_idempotency table; do not edit durable receipts manually)",
             database_path.display()
         );
     }
@@ -796,7 +796,7 @@ fn apply_one(transaction: &Transaction<'_>, migration: &Migration) -> Result<()>
                 Some(migration),
                 &migration.path,
                 &error,
-                "Restart lite-mcp before attempting another migration.",
+                "Restart toolframe before attempting another migration.",
             )
         })?;
 
@@ -860,7 +860,7 @@ fn authorize_migration(
             "CREATE TRIGGER is not allowed because deferred trigger bodies can bypass internal table protection",
         ),
         action if action_targets_internal_table(action) => {
-            Some("migration SQL must not read or modify lite-mcp internal tables")
+            Some("migration SQL must not read or modify toolframe internal tables")
         }
         _ => None,
     };
@@ -1012,7 +1012,7 @@ mod tests {
             .expect("read preserved row");
         assert_eq!(value, "kept");
         let recorded: i64 = connection
-            .query_row("SELECT COUNT(*) FROM _lite_mcp_migrations", [], |row| {
+            .query_row("SELECT COUNT(*) FROM _toolframe_migrations", [], |row| {
                 row.get(0)
             })
             .expect("count migrations");
@@ -1169,7 +1169,7 @@ mod tests {
             .expect("check rollback");
         assert_eq!(table_count, 0);
         let ledger_count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM _lite_mcp_migrations", [], |row| {
+            .query_row("SELECT COUNT(*) FROM _toolframe_migrations", [], |row| {
                 row.get(0)
             })
             .expect("check ledger rollback");
@@ -1273,7 +1273,7 @@ mod tests {
         let connection = Connection::open(&database).expect("create database");
         connection
             .execute_batch(
-                "CREATE TABLE _lite_mcp_migrations (
+                "CREATE TABLE _toolframe_migrations (
                     version INTEGER PRIMARY KEY,
                     filename TEXT NOT NULL,
                     sha256 TEXT NOT NULL,
@@ -1310,7 +1310,7 @@ mod tests {
         let connection = Connection::open(&database).expect("create database");
         connection
             .execute_batch(
-                "CREATE TABLE _lite_mcp_idempotency (
+                "CREATE TABLE _toolframe_idempotency (
                     namespace TEXT NOT NULL,
                     business_key TEXT NOT NULL,
                     result_json BLOB NOT NULL,
@@ -1350,17 +1350,17 @@ mod tests {
             ("ATTACH ':memory:' AS other;", "ATTACH and DETACH"),
             ("DETACH other;", "ATTACH and DETACH"),
             (
-                "DELETE FROM _lite_mcp_migrations;",
-                "lite-mcp internal tables",
+                "DELETE FROM _toolframe_migrations;",
+                "toolframe internal tables",
             ),
             (
-                "DELETE FROM _lite_mcp_idempotency;",
-                "lite-mcp internal tables",
+                "DELETE FROM _toolframe_idempotency;",
+                "toolframe internal tables",
             ),
             (
                 "CREATE TABLE trigger_target(value); \
                  CREATE TRIGGER mutate_ledger AFTER INSERT ON trigger_target BEGIN \
-                   DELETE FROM _lite_mcp_migrations; \
+                   DELETE FROM _toolframe_migrations; \
                  END;",
                 "CREATE TRIGGER is not allowed",
             ),
@@ -1425,8 +1425,8 @@ mod tests {
         let connection = Connection::open(&database).expect("create legacy database");
         connection
             .execute_batch(
-                "CREATE TABLE _lite_mcp_meta(schema_version INTEGER PRIMARY KEY);\n\
-                 INSERT INTO _lite_mcp_meta VALUES (1);\n\
+                "CREATE TABLE _toolframe_meta(schema_version INTEGER PRIMARY KEY);\n\
+                 INSERT INTO _toolframe_meta VALUES (1);\n\
                  CREATE TABLE user_data(value TEXT);\n\
                  INSERT INTO user_data VALUES ('preserved');",
             )
@@ -1436,7 +1436,7 @@ mod tests {
         migrate(&database, &migrations).expect("migrate legacy database");
         let connection = Connection::open(database).expect("open migrated database");
         let legacy: i64 = connection
-            .query_row("SELECT schema_version FROM _lite_mcp_meta", [], |row| {
+            .query_row("SELECT schema_version FROM _toolframe_meta", [], |row| {
                 row.get(0)
             })
             .expect("read legacy metadata");
@@ -1445,7 +1445,7 @@ mod tests {
             .expect("read user data");
         let idempotency_table: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='_lite_mcp_idempotency'",
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='_toolframe_idempotency'",
                 [],
                 |row| row.get(0),
             )
@@ -1504,7 +1504,7 @@ mod tests {
         assert_eq!(exists, 1);
         let idempotency_exists: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='_lite_mcp_idempotency'",
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='_toolframe_idempotency'",
                 [],
                 |row| row.get(0),
             )

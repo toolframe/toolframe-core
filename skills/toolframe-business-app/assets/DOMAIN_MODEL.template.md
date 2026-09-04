@@ -48,8 +48,8 @@ Rules that must remain true across every write:
 
 User tables use the `app_` prefix. The migration directory is the schema source
 of truth. Applied migrations are immutable; add the next contiguous migration
-for a change. Keep launcher-owned `_lite_mcp_migrations` and
-`_lite_mcp_idempotency` tables out of user migrations.
+for a change. Keep launcher-owned `_toolframe_migrations` and
+`_toolframe_idempotency` tables out of user migrations.
 
 | Table | Columns and constraints | Indexes | Created/changed by |
 | --- | --- | --- | --- |
@@ -113,7 +113,7 @@ Test each allowed and forbidden transition, concurrent claims or edits, lease
 expiry/stale writes, idempotent replay and key mismatch, immutable context,
 append-only history, and the complete business loop. Verify that public tools
 cannot be composed to bypass an invariant. Then run
-`./lite-mcp check --format json`, a fresh startup, dashboard interaction, and
+`./toolframe check --format json`, a fresh startup, dashboard interaction, and
 an MCP/tool call. Record the date, command, and observed evidence here:
 
 - Migration/check evidence: `<...>`

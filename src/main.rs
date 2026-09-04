@@ -11,17 +11,17 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use lite_mcp::{
-    db,
-    development::{self, ScaffoldKind},
-    runtime, tools, uv,
-};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpListener,
     process::Command,
     sync::{Mutex, oneshot},
     time,
+};
+use toolframe::{
+    db,
+    development::{self, ScaffoldKind},
+    runtime, tools, uv,
 };
 use tracing::{Event, Subscriber, info, warn};
 use tracing_subscriber::{
@@ -31,8 +31,8 @@ use tracing_subscriber::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-const READY_SENTINEL: &str = "LITE_MCP_READY";
-const FATAL_SENTINEL: &str = "LITE_MCP_FATAL ";
+const READY_SENTINEL: &str = "TOOLFRAME_READY";
+const FATAL_SENTINEL: &str = "TOOLFRAME_FATAL ";
 const STDERR_HISTORY_LINES: usize = 80;
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -82,15 +82,15 @@ impl ConsoleCategory {
 
     fn from_tracing_target(target: &str) -> Self {
         match target {
-            "lite_mcp::uv" => Self::Uv,
-            "lite_mcp::db" => Self::Db,
-            "lite_mcp::python" => Self::Python,
-            "lite_mcp::dashboard" => Self::Dashboard,
-            "lite_mcp::mcp" => Self::Mcp,
-            "lite_mcp::network" => Self::Network,
-            "lite_mcp::security" => Self::Security,
-            "lite_mcp::skill" => Self::Skill,
-            "lite_mcp::shutdown" => Self::Shutdown,
+            "toolframe::uv" => Self::Uv,
+            "toolframe::db" => Self::Db,
+            "toolframe::python" => Self::Python,
+            "toolframe::dashboard" => Self::Dashboard,
+            "toolframe::mcp" => Self::Mcp,
+            "toolframe::network" => Self::Network,
+            "toolframe::security" => Self::Security,
+            "toolframe::skill" => Self::Skill,
+            "toolframe::shutdown" => Self::Shutdown,
             _ => Self::Boot,
         }
     }
@@ -215,108 +215,118 @@ struct Cli {
     command: Option<CliCommand>,
 
     /// Interface to listen on. The default intentionally exposes the server to the LAN.
-    #[arg(long, env = "LITE_MCP_HOST", default_value_t = DEFAULT_HOST, global = true)]
+    #[arg(long, env = "TOOLFRAME_HOST", default_value_t = DEFAULT_HOST, global = true)]
     host: IpAddr,
 
     /// Preferred port. Busy ports are skipped; 0 asks the OS for any available port.
-    #[arg(long, env = "LITE_MCP_PORT", default_value_t = 8000, global = true)]
+    #[arg(long, env = "TOOLFRAME_PORT", default_value_t = 8000, global = true)]
     port: u16,
 
     /// Number of sequential ports to try before asking the OS for a free port.
     #[arg(
         long,
-        env = "LITE_MCP_PORT_SEARCH_SPAN",
+        env = "TOOLFRAME_PORT_SEARCH_SPAN",
         default_value_t = 100,
         global = true
     )]
     port_search_span: u16,
 
     /// SQLite database path. Relative overrides are resolved from the current directory.
-    #[arg(long, env = "LITE_MCP_DB", global = true)]
+    #[arg(long, env = "TOOLFRAME_DB", global = true)]
     database: Option<PathBuf>,
 
     /// Startup-only SQL migration directory.
-    #[arg(long, env = "LITE_MCP_MIGRATIONS_DIR", global = true)]
+    #[arg(long, env = "TOOLFRAME_MIGRATIONS_DIR", global = true)]
     migrations_dir: Option<PathBuf>,
 
     /// Startup-only Python tool directory.
-    #[arg(long, env = "LITE_MCP_TOOLS", global = true)]
+    #[arg(long, env = "TOOLFRAME_TOOLS", global = true)]
     tools_dir: Option<PathBuf>,
 
     /// Editable Streamlit dashboard directory. Source changes load on browser rerun.
-    #[arg(long, env = "LITE_MCP_DASHBOARD_DIR", global = true)]
+    #[arg(long, env = "TOOLFRAME_DASHBOARD_DIR", global = true)]
     dashboard_dir: Option<PathBuf>,
 
     /// Working directory and trusted read/write area for Python tools.
-    #[arg(long, env = "LITE_MCP_WORKSPACE", global = true)]
+    #[arg(long, env = "TOOLFRAME_WORKSPACE", global = true)]
     workspace_dir: Option<PathBuf>,
 
-    /// Private runtime state directory. Defaults to .lite-mcp beside the executable.
-    #[arg(long, env = "LITE_MCP_RUNTIME", global = true)]
+    /// Private runtime state directory. Defaults to .toolframe beside the executable.
+    #[arg(long, env = "TOOLFRAME_RUNTIME", global = true)]
     runtime_dir: Option<PathBuf>,
 
     /// LAN agent context index. Defaults to llms/llms.txt beside the executable.
-    #[arg(long, env = "LITE_MCP_LLMS_FILE", global = true)]
+    #[arg(long, env = "TOOLFRAME_LLMS_FILE", global = true)]
     llms_file: Option<PathBuf>,
 
     /// LAN agent context detail directory. Relative paths resolve from the current directory.
-    #[arg(long, env = "LITE_MCP_LLMS_DIR", global = true)]
+    #[arg(long, env = "TOOLFRAME_LLMS_DIR", global = true)]
     llms_dir: Option<PathBuf>,
 
     /// Structured audit and MCP JSONL directory. Relative paths resolve from the executable root.
-    #[arg(long, env = "LITE_MCP_LOGS_DIR", global = true)]
+    #[arg(long, env = "TOOLFRAME_LOGS_DIR", global = true)]
     logs_dir: Option<PathBuf>,
 
     /// Number of UTC date buckets retained, including today.
-    #[arg(long, env = "LITE_MCP_LOG_RETENTION_DAYS", default_value_t = 14, value_parser = positive_u64, global = true)]
+    #[arg(long, env = "TOOLFRAME_LOG_RETENTION_DAYS", default_value_t = 14, value_parser = positive_u64, global = true)]
     log_retention_days: u64,
 
     /// Combined maximum size of managed audit and MCP JSONL files.
-    #[arg(long, env = "LITE_MCP_LOG_MAX_TOTAL_MIB", default_value_t = 256, value_parser = positive_u64, global = true)]
+    #[arg(long, env = "TOOLFRAME_LOG_MAX_TOTAL_MIB", default_value_t = 256, value_parser = positive_u64, global = true)]
     log_max_total_mib: u64,
 
     /// Forward routine UV and Python diagnostics to the categorized console.
-    #[arg(long, env = "LITE_MCP_VERBOSE", default_value_t = false, global = true)]
+    #[arg(
+        long,
+        env = "TOOLFRAME_VERBOSE",
+        default_value_t = false,
+        global = true
+    )]
     verbose: bool,
 
     /// Disable ANSI colors. NO_COLOR is also honored.
     #[arg(
         long,
-        env = "LITE_MCP_NO_COLOR",
+        env = "TOOLFRAME_NO_COLOR",
         default_value_t = false,
         global = true
     )]
     no_color: bool,
 
     /// Explicit UV executable. When omitted, the pinned build is downloaded and managed.
-    #[arg(long, env = "LITE_MCP_UV", global = true)]
+    #[arg(long, env = "TOOLFRAME_UV", global = true)]
     uv_path: Option<PathBuf>,
 
     /// Disable UV, Python, and dependency downloads.
-    #[arg(long, env = "LITE_MCP_OFFLINE", default_value_t = false, global = true)]
+    #[arg(
+        long,
+        env = "TOOLFRAME_OFFLINE",
+        default_value_t = false,
+        global = true
+    )]
     offline: bool,
 
     /// Concurrent tool calls. The default is 60; explicit 0 means unlimited.
     #[arg(
         long,
-        env = "LITE_MCP_MAX_CONCURRENCY",
+        env = "TOOLFRAME_MAX_CONCURRENCY",
         default_value_t = 60,
         global = true
     )]
     max_concurrency: u32,
 
     /// Best-effort timeout for each tool call in seconds; 0 disables it.
-    #[arg(long, env = "LITE_MCP_TOOL_TIMEOUT", default_value_t = 60.0, value_parser = finite_nonnegative, global = true)]
+    #[arg(long, env = "TOOLFRAME_TOOL_TIMEOUT", default_value_t = 60.0, value_parser = finite_nonnegative, global = true)]
     tool_timeout: f64,
 
     /// Maximum encoded MCP tool result size in bytes.
-    #[arg(long, env = "LITE_MCP_RESULT_LIMIT", default_value_t = 4_194_304, value_parser = positive_usize, global = true)]
+    #[arg(long, env = "TOOLFRAME_RESULT_LIMIT", default_value_t = 4_194_304, value_parser = positive_usize, global = true)]
     result_limit: usize,
 
     /// Maximum time for Python, dependency resolution, and strict tool loading.
     #[arg(
         long,
-        env = "LITE_MCP_STARTUP_TIMEOUT",
+        env = "TOOLFRAME_STARTUP_TIMEOUT",
         default_value_t = 600,
         global = true
     )]
@@ -417,7 +427,7 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
                 executable_root
                     .join(".agents")
                     .join("skills")
-                    .join("lite-mcp-business-app")
+                    .join("toolframe-business-app")
                     .display()
             ),
         );
@@ -425,7 +435,7 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     let logs_dir = runtime::prepare_logs_dir(&executable_root, cli.logs_dir.as_deref())?;
     console.print(
         ConsoleCategory::Boot,
-        format!("lite-mcp {} starting", env!("CARGO_PKG_VERSION")),
+        format!("toolframe {} starting", env!("CARGO_PKG_VERSION")),
     );
     let paths = runtime::resolve_paths(
         &executable_root,
@@ -440,13 +450,13 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     )?;
     let directories = runtime::prepare_directories(&paths)?;
     if directories.tools_scaffolded {
-        info!(target: "lite_mcp::python", path = %paths.tools.display(), "created tools directory and SQL reference tool");
+        info!(target: "toolframe::python", path = %paths.tools.display(), "created tools directory and SQL reference tool");
     }
     if directories.dashboard_scaffolded {
-        info!(target: "lite_mcp::dashboard", path = %paths.dashboard.display(), "created editable Streamlit dashboard scaffold");
+        info!(target: "toolframe::dashboard", path = %paths.dashboard.display(), "created editable Streamlit dashboard scaffold");
     }
     if directories.migrations_scaffolded {
-        info!(target: "lite_mcp::db", path = %paths.migrations.display(), "created editable SQL migration scaffold");
+        info!(target: "toolframe::db", path = %paths.migrations.display(), "created editable SQL migration scaffold");
     }
     if directories.llms_file_scaffolded {
         console.print(
@@ -575,47 +585,47 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         .env("UV_MANAGED_PYTHON", "1")
         .env("UV_CACHE_DIR", runtime_dir.join("cache"))
         .env("UV_PYTHON_INSTALL_DIR", runtime_dir.join("python"))
-        .env("LITE_MCP_DB", &database)
-        .env("LITE_MCP_MIGRATIONS_DIR", &migrations_dir)
-        .env("LITE_MCP_TOOLS", &tools_dir)
-        .env("LITE_MCP_DASHBOARD_DIR", &dashboard_dir)
-        .env("LITE_MCP_LLMS_FILE", &paths.llms_file)
-        .env("LITE_MCP_LLMS_DIR", &paths.llms_dir)
-        .env("LITE_MCP_WORKSPACE", &workspace)
-        .env("LITE_MCP_RUNTIME", &runtime_dir)
-        .env("LITE_MCP_LOGS_DIR", &logs_dir)
+        .env("TOOLFRAME_DB", &database)
+        .env("TOOLFRAME_MIGRATIONS_DIR", &migrations_dir)
+        .env("TOOLFRAME_TOOLS", &tools_dir)
+        .env("TOOLFRAME_DASHBOARD_DIR", &dashboard_dir)
+        .env("TOOLFRAME_LLMS_FILE", &paths.llms_file)
+        .env("TOOLFRAME_LLMS_DIR", &paths.llms_dir)
+        .env("TOOLFRAME_WORKSPACE", &workspace)
+        .env("TOOLFRAME_RUNTIME", &runtime_dir)
+        .env("TOOLFRAME_LOGS_DIR", &logs_dir)
         .env(
-            "LITE_MCP_LOG_RETENTION_DAYS",
+            "TOOLFRAME_LOG_RETENTION_DAYS",
             cli.log_retention_days.to_string(),
         )
         .env(
-            "LITE_MCP_LOG_MAX_TOTAL_MIB",
+            "TOOLFRAME_LOG_MAX_TOTAL_MIB",
             cli.log_max_total_mib.to_string(),
         )
-        .env("LITE_MCP_LOG_LEVEL", python_log_level)
-        .env("LITE_MCP_UVICORN_LOG_LEVEL", uvicorn_log_level)
-        .env("LITE_MCP_MANIFEST", &prepared.manifest)
-        .env("LITE_MCP_INFO_PAGE", &prepared.info_page)
-        .env("LITE_MCP_DASHBOARD_RUNNER", &prepared.dashboard_runner)
-        .env("LITE_MCP_READY_TOKEN", ready_token)
-        .env("LITE_MCP_HOST", cli.host.to_string())
-        .env("LITE_MCP_PORT", address.port().to_string())
+        .env("TOOLFRAME_LOG_LEVEL", python_log_level)
+        .env("TOOLFRAME_UVICORN_LOG_LEVEL", uvicorn_log_level)
+        .env("TOOLFRAME_MANIFEST", &prepared.manifest)
+        .env("TOOLFRAME_INFO_PAGE", &prepared.info_page)
+        .env("TOOLFRAME_DASHBOARD_RUNNER", &prepared.dashboard_runner)
+        .env("TOOLFRAME_READY_TOKEN", ready_token)
+        .env("TOOLFRAME_HOST", cli.host.to_string())
+        .env("TOOLFRAME_PORT", address.port().to_string())
         .env(
-            "LITE_MCP_ALLOWED_HOSTS",
+            "TOOLFRAME_ALLOWED_HOSTS",
             serde_json::to_string(&allowed_hosts).context("could not encode allowed hosts")?,
         )
         .env(
-            "LITE_MCP_ALLOWED_ORIGINS",
+            "TOOLFRAME_ALLOWED_ORIGINS",
             serde_json::to_string(&allowed_origins).context("could not encode allowed origins")?,
         )
-        .env("LITE_MCP_DEPENDENCIES_JSON", dependency_json)
-        .env("LITE_MCP_MAX_CONCURRENCY", cli.max_concurrency.to_string())
+        .env("TOOLFRAME_DEPENDENCIES_JSON", dependency_json)
+        .env("TOOLFRAME_MAX_CONCURRENCY", cli.max_concurrency.to_string())
         .env(
-            "LITE_MCP_TOOL_TIMEOUT_SECONDS",
+            "TOOLFRAME_TOOL_TIMEOUT_SECONDS",
             cli.tool_timeout.to_string(),
         )
-        .env("LITE_MCP_RESULT_LIMIT_BYTES", cli.result_limit.to_string())
-        .env("LITE_MCP_VERSION", env!("CARGO_PKG_VERSION"));
+        .env("TOOLFRAME_RESULT_LIMIT_BYTES", cli.result_limit.to_string())
+        .env("TOOLFRAME_VERSION", env!("CARGO_PKG_VERSION"));
 
     let listener_guard = configure_server_listener(&mut command, standard_listener)?;
     configure_child_process(&mut command);
@@ -726,7 +736,7 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
             let status = match time::timeout(Duration::from_secs(5), &mut wait).await {
                 Ok(status) => status.context("could not wait for the Python runtime during shutdown")?,
                 Err(_) => {
-                    warn!(target: "lite_mcp::shutdown", "Python runtime did not stop in 5 seconds; forcing termination");
+                    warn!(target: "toolframe::shutdown", "Python runtime did not stop in 5 seconds; forcing termination");
                     process_tree.terminate_forcefully();
                     wait.await.context("could not wait for the Python runtime after forced shutdown")?
                 }
@@ -846,7 +856,7 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
     let report = serde_json::json!({
         "version": 1,
         "ok": true,
-        "liteMcpVersion": env!("CARGO_PKG_VERSION"),
+        "toolframeVersion": env!("CARGO_PKG_VERSION"),
         "uvVersion": development.uv_version,
         "pythonVersion": python.get("pythonVersion"),
         "agentDocuments": python
@@ -886,7 +896,7 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
             serde_json::to_string_pretty(&report).context("could not encode check report")?
         ),
         CheckFormat::Human => {
-            println!("lite-mcp check passed");
+            println!("toolframe check passed");
             println!(
                 "  migrations  {} through {:04} ({} pending; validated on {})",
                 development.migrations.total,
@@ -1044,27 +1054,27 @@ async fn run_cli_python(
             "UV_PYTHON_INSTALL_DIR",
             development.runtime_dir.join("python"),
         )
-        .env("LITE_MCP_DB", &development.paths.database)
-        .env("LITE_MCP_MIGRATIONS_DIR", &development.paths.migrations)
-        .env("LITE_MCP_TOOLS", &development.paths.tools)
-        .env("LITE_MCP_DASHBOARD_DIR", &development.paths.dashboard)
-        .env("LITE_MCP_LLMS_FILE", &development.paths.llms_file)
-        .env("LITE_MCP_LLMS_DIR", &development.paths.llms_dir)
-        .env("LITE_MCP_WORKSPACE", &development.workspace)
-        .env("LITE_MCP_RUNTIME", &development.runtime_dir)
-        .env("LITE_MCP_MANIFEST", &development.prepared.manifest)
+        .env("TOOLFRAME_DB", &development.paths.database)
+        .env("TOOLFRAME_MIGRATIONS_DIR", &development.paths.migrations)
+        .env("TOOLFRAME_TOOLS", &development.paths.tools)
+        .env("TOOLFRAME_DASHBOARD_DIR", &development.paths.dashboard)
+        .env("TOOLFRAME_LLMS_FILE", &development.paths.llms_file)
+        .env("TOOLFRAME_LLMS_DIR", &development.paths.llms_dir)
+        .env("TOOLFRAME_WORKSPACE", &development.workspace)
+        .env("TOOLFRAME_RUNTIME", &development.runtime_dir)
+        .env("TOOLFRAME_MANIFEST", &development.prepared.manifest)
         .env(
-            "LITE_MCP_DEPENDENCIES_JSON",
+            "TOOLFRAME_DEPENDENCIES_JSON",
             serde_json::to_string(&development.prepared.dependencies)
                 .context("could not encode dependency summary")?,
         )
-        .env("LITE_MCP_MAX_CONCURRENCY", "1")
+        .env("TOOLFRAME_MAX_CONCURRENCY", "1")
         .env(
-            "LITE_MCP_TOOL_TIMEOUT_SECONDS",
+            "TOOLFRAME_TOOL_TIMEOUT_SECONDS",
             cli.tool_timeout.to_string(),
         )
-        .env("LITE_MCP_RESULT_LIMIT_BYTES", cli.result_limit.to_string())
-        .env("LITE_MCP_VERSION", env!("CARGO_PKG_VERSION"));
+        .env("TOOLFRAME_RESULT_LIMIT_BYTES", cli.result_limit.to_string())
+        .env("TOOLFRAME_VERSION", env!("CARGO_PKG_VERSION"));
     if let Some(tool) = tool {
         command.arg("--tool").arg(tool);
     }
@@ -1311,7 +1321,7 @@ async fn drain_stderr_task(task: &mut tokio::task::JoinHandle<()>) {
         .await
         .is_err()
     {
-        warn!(target: "lite_mcp::python", "timed out while draining Python stderr; preserving collected diagnostics");
+        warn!(target: "toolframe::python", "timed out while draining Python stderr; preserving collected diagnostics");
         task.abort();
         let _ = task.await;
     }
@@ -1336,7 +1346,7 @@ async fn bind_available(
         match TcpListener::bind(address).await {
             Ok(listener) => {
                 if offset > 0 {
-                    warn!(target: "lite_mcp::network",
+                    warn!(target: "toolframe::network",
                         preferred_port,
                         selected_port = port,
                         "preferred port was busy"
@@ -1349,7 +1359,7 @@ async fn bind_available(
         }
     }
 
-    warn!(target: "lite_mcp::network",
+    warn!(target: "toolframe::network",
         preferred_port,
         search_span, "configured port range was busy; asking the OS for a free port"
     );
@@ -1381,7 +1391,7 @@ fn configure_server_listener(
     listener: std::net::TcpListener,
 ) -> Result<Option<std::net::TcpListener>> {
     command.env(
-        "LITE_MCP_LISTEN_FD",
+        "TOOLFRAME_LISTEN_FD",
         inherited_listener_fd(&listener)?.to_string(),
     );
     Ok(Some(listener))
@@ -1394,8 +1404,8 @@ fn configure_server_listener(
 ) -> Result<Option<std::net::TcpListener>> {
     // Windows sockets cannot be inherited as Unix file descriptors. Release
     // the selected port immediately before spawning Python, which binds the
-    // same host and port from LITE_MCP_HOST/LITE_MCP_PORT.
-    command.env_remove("LITE_MCP_LISTEN_FD");
+    // same host and port from TOOLFRAME_HOST/TOOLFRAME_PORT.
+    command.env_remove("TOOLFRAME_LISTEN_FD");
     drop(listener);
     Ok(None)
 }
@@ -1455,7 +1465,7 @@ impl ChildProcessTree {
         if result < 0 {
             let error = std::io::Error::last_os_error();
             if error.raw_os_error() != Some(libc::ESRCH) {
-                warn!(target: "lite_mcp::shutdown", %error, pid = self.pid, signal, "could not signal Python process group");
+                warn!(target: "toolframe::shutdown", %error, pid = self.pid, signal, "could not signal Python process group");
             }
         }
     }
@@ -1533,7 +1543,7 @@ impl ChildProcessTree {
         // the UV process id. CTRL_BREAK is limited to that child group.
         if unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.pid) } == 0 {
             let error = std::io::Error::last_os_error();
-            warn!(target: "lite_mcp::shutdown", %error, pid = self.pid, "could not send Ctrl-Break to the Python process tree");
+            warn!(target: "toolframe::shutdown", %error, pid = self.pid, "could not send Ctrl-Break to the Python process tree");
         }
     }
 
@@ -1544,7 +1554,7 @@ impl ChildProcessTree {
         // SAFETY: `job` is a live job handle owned by this value.
         if unsafe { TerminateJobObject(self.job.as_raw_handle() as HANDLE, 1) } == 0 {
             let error = std::io::Error::last_os_error();
-            warn!(target: "lite_mcp::shutdown", %error, pid = self.pid, "could not terminate the Windows Python process job");
+            warn!(target: "toolframe::shutdown", %error, pid = self.pid, "could not terminate the Windows Python process job");
         }
     }
 }
@@ -1601,7 +1611,7 @@ fn announce(announcement: Announcement<'_>) {
 
     console.print(
         ConsoleCategory::Boot,
-        format!("lite-mcp {} is ready", env!("CARGO_PKG_VERSION")),
+        format!("toolframe {} is ready", env!("CARGO_PKG_VERSION")),
     );
     console.print(
         ConsoleCategory::Dashboard,
@@ -1714,8 +1724,8 @@ fn lan_address_rank(address: IpAddr) -> Option<u8> {
 
 fn machine_stdout_lines(local_url: &str) -> [String; 2] {
     [
-        format!("LITE_MCP_URL={local_url}"),
-        format!("LITE_MCP_MCP_URL={local_url}/mcp"),
+        format!("TOOLFRAME_URL={local_url}"),
+        format!("TOOLFRAME_MCP_URL={local_url}/mcp"),
     ]
 }
 
@@ -1766,7 +1776,7 @@ fn initialize_logging(style: ConsoleStyle) {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "lite_mcp=info".into()),
+                .unwrap_or_else(|_| "toolframe=info".into()),
         )
         .with(
             tracing_subscriber::fmt::layer()
@@ -1836,7 +1846,7 @@ async fn shutdown_signal() {
         let mut terminate = match signal(SignalKind::terminate()) {
             Ok(signal) => signal,
             Err(error) => {
-                warn!(target: "lite_mcp::shutdown", %error, "could not install SIGTERM handler");
+                warn!(target: "toolframe::shutdown", %error, "could not install SIGTERM handler");
                 let _ = tokio::signal::ctrl_c().await;
                 return;
             }
@@ -1844,7 +1854,7 @@ async fn shutdown_signal() {
         tokio::select! {
             result = tokio::signal::ctrl_c() => {
                 if let Err(error) = result {
-                    warn!(target: "lite_mcp::shutdown", %error, "Ctrl-C handler failed");
+                    warn!(target: "toolframe::shutdown", %error, "Ctrl-C handler failed");
                 }
             }
             _ = terminate.recv() => {}
@@ -1853,7 +1863,7 @@ async fn shutdown_signal() {
 
     #[cfg(not(unix))]
     if let Err(error) = tokio::signal::ctrl_c().await {
-        warn!(target: "lite_mcp::shutdown", %error, "Ctrl-C handler failed");
+        warn!(target: "toolframe::shutdown", %error, "Ctrl-C handler failed");
     }
 }
 
@@ -1961,7 +1971,7 @@ mod tests {
     #[test]
     fn parses_logging_cli_settings_and_flags() {
         let cli = Cli::try_parse_from([
-            "lite-mcp",
+            "toolframe",
             "--logs-dir",
             "relative-logs",
             "--log-retention-days",
@@ -1978,14 +1988,14 @@ mod tests {
         assert!(cli.verbose);
         assert!(cli.no_color);
 
-        assert!(Cli::try_parse_from(["lite-mcp", "--log-retention-days", "0"]).is_err());
-        assert!(Cli::try_parse_from(["lite-mcp", "--log-max-total-mib", "0"]).is_err());
+        assert!(Cli::try_parse_from(["toolframe", "--log-retention-days", "0"]).is_err());
+        assert!(Cli::try_parse_from(["toolframe", "--log-max-total-mib", "0"]).is_err());
     }
 
     #[test]
     fn parses_development_subcommands_with_shared_flags_after_the_command() {
         let check = Cli::try_parse_from([
-            "lite-mcp",
+            "toolframe",
             "check",
             "--format",
             "json",
@@ -2002,7 +2012,7 @@ mod tests {
         assert_eq!(check.tools_dir, Some(PathBuf::from("custom-tools")));
 
         let invoke = Cli::try_parse_from([
-            "lite-mcp",
+            "toolframe",
             "invoke",
             "echo",
             "--json",
@@ -2014,7 +2024,7 @@ mod tests {
         assert!(matches!(invoke.command, Some(CliCommand::Invoke { .. })));
         assert_eq!(invoke.tool_timeout, 3.0);
 
-        let serve = Cli::try_parse_from(["lite-mcp", "serve", "--host", "127.0.0.1"])
+        let serve = Cli::try_parse_from(["toolframe", "serve", "--host", "127.0.0.1"])
             .expect("parse explicit serve command");
         assert!(matches!(serve.command, Some(CliCommand::Serve)));
         assert_eq!(serve.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
@@ -2023,7 +2033,7 @@ mod tests {
     #[test]
     fn parses_llms_flags_and_resolves_executable_root_defaults() {
         let cli = Cli::try_parse_from([
-            "lite-mcp",
+            "toolframe",
             "--llms-file",
             "custom-guide.txt",
             "--llms-dir",
@@ -2033,8 +2043,8 @@ mod tests {
         assert_eq!(cli.llms_file, Some(PathBuf::from("custom-guide.txt")));
         assert_eq!(cli.llms_dir, Some(PathBuf::from("custom-guides")));
 
-        let default_cli = Cli::try_parse_from(["lite-mcp"]).expect("parse default cli");
-        let root = Path::new("/tmp/lite-mcp-llms-defaults");
+        let default_cli = Cli::try_parse_from(["toolframe"]).expect("parse default cli");
+        let root = Path::new("/tmp/toolframe-llms-defaults");
         let paths = resolve_cli_paths(&default_cli, root).expect("resolve default paths");
         assert_eq!(paths.llms_file, root.join("llms").join("llms.txt"));
         assert_eq!(paths.llms_dir, root.join("llms"));
@@ -2056,15 +2066,15 @@ mod tests {
         assert!(colored.contains("\x1b[31m[SECURITY]\x1b[0m"));
         assert!(colored.ends_with(" warning"));
         assert_eq!(
-            ConsoleCategory::from_tracing_target("lite_mcp::network"),
+            ConsoleCategory::from_tracing_target("toolframe::network"),
             ConsoleCategory::Network
         );
         assert_eq!(
-            ConsoleCategory::from_tracing_target("lite_mcp::shutdown"),
+            ConsoleCategory::from_tracing_target("toolframe::shutdown"),
             ConsoleCategory::Shutdown
         );
         assert_eq!(
-            ConsoleCategory::from_tracing_target("lite_mcp::skill"),
+            ConsoleCategory::from_tracing_target("toolframe::skill"),
             ConsoleCategory::Skill
         );
         assert_eq!(
@@ -2141,8 +2151,8 @@ mod tests {
         assert_eq!(
             machine_stdout_lines("http://127.0.0.1:8000"),
             [
-                "LITE_MCP_URL=http://127.0.0.1:8000".to_owned(),
-                "LITE_MCP_MCP_URL=http://127.0.0.1:8000/mcp".to_owned(),
+                "TOOLFRAME_URL=http://127.0.0.1:8000".to_owned(),
+                "TOOLFRAME_MCP_URL=http://127.0.0.1:8000/mcp".to_owned(),
             ]
         );
     }
@@ -2150,7 +2160,7 @@ mod tests {
     #[test]
     fn parses_structured_dashboard_fatal_sentinel() {
         let fatal = parse_fatal_sentinel(
-            r#"LITE_MCP_FATAL {"traceId":"trace-42","phase":"render","path":"/dashboard/app.py","widget":"example_card","exceptionType":"RuntimeError","message":"boom","retryable":false}"#,
+            r#"TOOLFRAME_FATAL {"traceId":"trace-42","phase":"render","path":"/dashboard/app.py","widget":"example_card","exceptionType":"RuntimeError","message":"boom","retryable":false}"#,
         )
         .expect("parse fatal sentinel");
 
@@ -2162,12 +2172,12 @@ mod tests {
 
     #[test]
     fn malformed_fatal_sentinel_is_still_fatal_and_normal_lines_are_ignored() {
-        let fatal =
-            parse_fatal_sentinel("LITE_MCP_FATAL {not-json").expect("recognize malformed sentinel");
+        let fatal = parse_fatal_sentinel("TOOLFRAME_FATAL {not-json")
+            .expect("recognize malformed sentinel");
         assert!(matches!(fatal.payload, FatalPayload::Malformed(_)));
         assert!(fatal.summary().contains("malformed"));
 
-        assert!(parse_fatal_sentinel("LITE_MCP_FATALITY {}").is_none());
+        assert!(parse_fatal_sentinel("TOOLFRAME_FATALITY {}").is_none());
         assert!(parse_fatal_sentinel("ordinary Python diagnostic").is_none());
     }
 }

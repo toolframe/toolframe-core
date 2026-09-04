@@ -3,9 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DESTINATION="${DESTINATION:-$REPOSITORY_ROOT/dist/lite-mcp}"
+DESTINATION="${DESTINATION:-$REPOSITORY_ROOT/dist/toolframe}"
 CARGO_TARGET="${CARGO_TARGET:-}"
-STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/lite-mcp-package.XXXXXX")"
+STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/toolframe-package.XXXXXX")"
 
 cleanup() {
   rm -rf "$STAGING_ROOT"
@@ -21,9 +21,9 @@ cd "$REPOSITORY_ROOT"
 CARGO_BUILD_ARGS=(build --locked --release)
 if [[ -n "$CARGO_TARGET" ]]; then
   CARGO_BUILD_ARGS+=(--target "$CARGO_TARGET")
-  RELEASE_BINARY="$REPOSITORY_ROOT/target/$CARGO_TARGET/release/lite-mcp"
+  RELEASE_BINARY="$REPOSITORY_ROOT/target/$CARGO_TARGET/release/toolframe"
 else
-  RELEASE_BINARY="$REPOSITORY_ROOT/target/release/lite-mcp"
+  RELEASE_BINARY="$REPOSITORY_ROOT/target/release/toolframe"
 fi
 cargo "${CARGO_BUILD_ARGS[@]}"
 
@@ -32,7 +32,7 @@ if [[ ! -f "$RELEASE_BINARY" || ! -x "$RELEASE_BINARY" ]]; then
   exit 1
 fi
 
-STAGED_BINARY="$STAGING_ROOT/lite-mcp"
+STAGED_BINARY="$STAGING_ROOT/toolframe"
 install -m 0755 "$RELEASE_BINARY" "$STAGED_BINARY"
 mkdir -p "$(dirname "$DESTINATION")"
 mv "$STAGED_BINARY" "$DESTINATION"

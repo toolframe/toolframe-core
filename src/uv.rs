@@ -122,7 +122,7 @@ pub async fn resolve(
     let managed_problem = match fs::symlink_metadata(&managed_uv) {
         Ok(metadata) if metadata.is_dir() => {
             bail!(
-                "the managed UV path {} is a directory; move it aside so lite-mcp can install the pinned executable",
+                "the managed UV path {} is a directory; move it aside so toolframe can install the pinned executable",
                 managed_uv.display()
             );
         }
@@ -160,13 +160,13 @@ pub async fn resolve(
         })?;
         if let Some(error) = managed_problem.as_ref() {
             info!(
-                target: "lite_mcp::uv",
+                target: "toolframe::uv",
                 reason = %format!("{error:#}"),
                 "managed uv does not match the pinned release; downloading a replacement"
             );
         } else {
             info!(
-                target: "lite_mcp::uv",
+                target: "toolframe::uv",
                 version = %release.version,
                 target_triple = %release.target,
                 "managed uv is missing; downloading the pinned release"
@@ -186,7 +186,7 @@ pub async fn resolve(
         return Err(error).context("the managed UV executable is invalid");
     }
     bail!(
-        "this platform has no pinned UV download; pass --uv-path, set LITE_MCP_UV, or install a compatible uv on PATH"
+        "this platform has no pinned UV download; pass --uv-path, set TOOLFRAME_UV, or install a compatible uv on PATH"
     )
 }
 
@@ -258,7 +258,7 @@ async fn inspect_candidate(
         }
     } else if build.semantic_version < MINIMUM_UV_VERSION {
         bail!(
-            "UV {} is too old; lite-mcp requires UV {}.{}.{} or newer",
+            "UV {} is too old; toolframe requires UV {}.{}.{} or newer",
             build.version,
             MINIMUM_UV_VERSION.0,
             MINIMUM_UV_VERSION.1,
@@ -283,7 +283,7 @@ async fn download_and_install(
         .https_only(true)
         .redirect(Policy::limited(10))
         .connect_timeout(Duration::from_secs(30))
-        .user_agent(concat!("lite-mcp/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("toolframe/", env!("CARGO_PKG_VERSION")))
         .build()
         .context("could not initialize the built-in HTTPS client")?;
     let mut response = client
@@ -302,7 +302,7 @@ async fn download_and_install(
     }
 
     let mut archive = tempfile::Builder::new()
-        .prefix(".lite-mcp-uv-archive-")
+        .prefix(".toolframe-uv-archive-")
         .suffix(&format!(".{}", release.archive_kind().extension()))
         .tempfile_in(runtime_root)
         .with_context(|| {
@@ -366,7 +366,7 @@ async fn download_and_install(
 
     publish_executable(extracted.path(), runtime_root, destination)?;
     info!(
-        target: "lite_mcp::uv",
+        target: "toolframe::uv",
         version = %release.version,
         target_triple = %release.target,
         destination = %destination.display(),
@@ -381,7 +381,7 @@ fn extract_uv(
     runtime_root: &Path,
 ) -> Result<tempfile::NamedTempFile> {
     let mut extracted = tempfile::Builder::new()
-        .prefix(".lite-mcp-uv-extract-")
+        .prefix(".toolframe-uv-extract-")
         .tempfile_in(runtime_root)
         .with_context(|| {
             format!(
@@ -465,7 +465,7 @@ fn publish_executable(source: &Path, runtime_root: &Path, destination: &Path) ->
         );
     }
     let staged = tempfile::Builder::new()
-        .prefix(".lite-mcp-uv-install-")
+        .prefix(".toolframe-uv-install-")
         .tempfile_in(runtime_root)
         .with_context(|| {
             format!(
@@ -993,10 +993,10 @@ mod tests {
     fn hashes_files_without_loading_them_whole() {
         let directory = tempfile::tempdir().expect("create temp directory");
         let path = directory.path().join("payload");
-        fs::write(&path, b"lite-mcp\n").expect("write payload");
+        fs::write(&path, b"toolframe\n").expect("write payload");
         assert_eq!(
             sha256_file(&path).expect("hash payload"),
-            "425c0f7aa31d4cf5dcba503db6c662190558d455ed7c35970ea021745f3dbd16"
+            "1b7f64127ed303e96233451d3be76798898167ee182fe1a435c64ec01aac780f"
         );
     }
 

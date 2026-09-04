@@ -1,4 +1,4 @@
-"""Managed local artifact storage shared by lite-mcp tools and dashboards.
+"""Managed local artifact storage shared by toolframe tools and dashboards.
 
 Artifacts are trusted local data, not a security boundary.  This module keeps
 the supported path inside ``workspace/artifacts`` and makes traversal,
@@ -50,12 +50,12 @@ MAX_METADATA_ENTRIES = 10_000
 MAX_PATH_BYTES = 1_024
 MAX_MIME_TYPE_BYTES = 255
 MAX_METADATA_BYTES = 4 * 1024
-_METADATA_DIRECTORY = ".lite-mcp"
+_METADATA_DIRECTORY = ".toolframe"
 _METADATA_SCHEMA_VERSION = 1
 _COPY_CHUNK_BYTES = 64 * 1024
 _ARTIFACT_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _MIME_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
-_LOGGER = logging.getLogger("lite_mcp.artifacts")
+_LOGGER = logging.getLogger("toolframe.artifacts")
 
 
 class ArtifactError(RuntimeError):
@@ -436,13 +436,13 @@ class ArtifactStore:
                 "The artifact path is already occupied by unmanaged content.",
                 details={
                     "path": normalized,
-                    "recoveryHint": "Inspect or move the existing path aside manually; lite-mcp never deletes unknown workspace files.",
+                    "recoveryHint": "Inspect or move the existing path aside manually; toolframe never deletes unknown workspace files.",
                 },
             )
 
         artifact_id = uuid.uuid4().hex
         metadata_target = self._metadata_root / f"{artifact_id}.json"
-        content_temp = parent / f".lite-mcp-{artifact_id}.tmp"
+        content_temp = parent / f".toolframe-{artifact_id}.tmp"
         metadata_temp = self._metadata_root / f".{artifact_id}.tmp"
         content_published = False
         metadata_published = False
@@ -943,10 +943,10 @@ def _normalize_path(path: str) -> tuple[str, tuple[str, ...]]:
             details={"path": path},
         )
     if any(
-        part == _METADATA_DIRECTORY or part.startswith(".lite-mcp-") for part in parts
+        part == _METADATA_DIRECTORY or part.startswith(".toolframe-") for part in parts
     ):
         raise ArtifactPathError(
-            "The artifact path uses a reserved lite-mcp name.",
+            "The artifact path uses a reserved toolframe name.",
             details={"path": path},
         )
     if any(len(part.encode("utf-8")) > 255 for part in parts):
@@ -1052,5 +1052,5 @@ def get_artifact_store() -> ArtifactStore:
 
     with _configuration_lock:
         if _configured_store is None:
-            raise RuntimeError("lite_mcp_artifacts is not configured")
+            raise RuntimeError("toolframe_artifacts is not configured")
         return _configured_store

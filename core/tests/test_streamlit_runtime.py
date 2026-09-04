@@ -18,8 +18,8 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
-import lite_mcp_dashboard_runner as runner
-import lite_mcp_runtime as runtime
+import toolframe_dashboard_runner as runner
+import toolframe_runtime as runtime
 import server as runtime_server
 
 
@@ -41,7 +41,7 @@ class DefaultDashboardIdentityTests(unittest.TestCase):
             sys.modules,
             {
                 "streamlit": fake_streamlit,
-                "lite_mcp_dashboard": fake_dashboard,
+                "toolframe_dashboard": fake_dashboard,
             },
         ):
             runpy.run_path(str(REPOSITORY_ROOT / "dashboard" / "app.py"))
@@ -71,7 +71,7 @@ class ServerEntrypointTests(unittest.TestCase):
     def test_uses_one_inherited_listener_and_25_mib_websocket_cap(self):
         fake_app = object()
         with (
-            patch.dict(os.environ, {"LITE_MCP_LISTEN_FD": "17"}),
+            patch.dict(os.environ, {"TOOLFRAME_LISTEN_FD": "17"}),
             patch.object(runtime_server, "build_application", return_value=fake_app),
             patch.object(runtime_server.uvicorn, "run") as run,
         ):
@@ -611,7 +611,7 @@ class HostOriginMiddlewareTests(unittest.TestCase):
 
 class StreamlitConfigurationTests(unittest.TestCase):
     def test_configuration_is_bounded_and_uses_absolute_watch_directory(self):
-        dashboard = Path("/tmp/lite-mcp-dashboard")
+        dashboard = Path("/tmp/toolframe-dashboard")
 
         values = runtime._streamlit_config_values(
             dashboard_dir=dashboard,
@@ -655,7 +655,7 @@ class DashboardFatalReporterTests(unittest.TestCase):
             dashboard = Path(directory)
             widget = dashboard / "widgets" / "summary.py"
             widget.parent.mkdir()
-            namespace = {"__name__": "lite_mcp_dashboard_test"}
+            namespace = {"__name__": "toolframe_dashboard_test"}
             try:
                 exec(  # noqa: S102 - create a traceback with the widget source path.
                     compile("raise ValueError('broken\\nwidget')", str(widget), "exec"),
@@ -667,8 +667,8 @@ class DashboardFatalReporterTests(unittest.TestCase):
             reporter = runtime.DashboardFatalReporter(dashboard)
             stderr = io.StringIO()
             with (
-                patch("lite_mcp_runtime.os.kill") as kill,
-                patch("lite_mcp_runtime.os.getpid", return_value=4321),
+                patch("toolframe_runtime.os.kill") as kill,
+                patch("toolframe_runtime.os.getpid", return_value=4321),
                 redirect_stderr(stderr),
             ):
                 self.assertTrue(reporter(failure))
@@ -677,10 +677,10 @@ class DashboardFatalReporterTests(unittest.TestCase):
         sentinels = [
             line
             for line in stderr.getvalue().splitlines()
-            if line.startswith("LITE_MCP_FATAL ")
+            if line.startswith("TOOLFRAME_FATAL ")
         ]
         self.assertEqual(len(sentinels), 1)
-        payload = json.loads(sentinels[0].removeprefix("LITE_MCP_FATAL "))
+        payload = json.loads(sentinels[0].removeprefix("TOOLFRAME_FATAL "))
         self.assertEqual(payload["phase"], "widget-execution")
         self.assertEqual(payload["widget"], "summary")
         self.assertEqual(payload["message"], "broken widget")
@@ -698,7 +698,7 @@ class DashboardFatalReporterTests(unittest.TestCase):
         )
         reporter = runtime.DashboardFatalReporter(Path("/tmp/dashboard"))
 
-        with patch("lite_mcp_runtime.os.kill") as kill:
+        with patch("toolframe_runtime.os.kill") as kill:
             self.assertFalse(reporter(stop()))
 
         kill.assert_not_called()
@@ -716,8 +716,8 @@ class ManagedRunnerTests(unittest.TestCase):
             stderr = io.StringIO()
             try:
                 with (
-                    patch.dict(os.environ, {"LITE_MCP_DASHBOARD_DIR": str(dashboard)}),
-                    patch("lite_mcp_runtime.os.kill") as kill,
+                    patch.dict(os.environ, {"TOOLFRAME_DASHBOARD_DIR": str(dashboard)}),
+                    patch("toolframe_runtime.os.kill") as kill,
                     redirect_stderr(stderr),
                     self.assertRaises(SyntaxError) as raised,
                 ):
@@ -726,7 +726,7 @@ class ManagedRunnerTests(unittest.TestCase):
                 runtime._DASHBOARD_FATAL_REPORTER = previous_reporter
 
         self.assertEqual(Path(raised.exception.filename), app)
-        self.assertIn("LITE_MCP_FATAL ", stderr.getvalue())
+        self.assertIn("TOOLFRAME_FATAL ", stderr.getvalue())
         kill.assert_called_once()
 
     def test_streamlit_stop_is_not_wrapped(self):
@@ -743,7 +743,7 @@ class ManagedRunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with (
-                patch.dict(os.environ, {"LITE_MCP_DASHBOARD_DIR": str(dashboard)}),
+                patch.dict(os.environ, {"TOOLFRAME_DASHBOARD_DIR": str(dashboard)}),
                 self.assertRaises(StopException),
             ):
                 runner.main()

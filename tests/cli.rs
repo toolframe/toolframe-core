@@ -1,9 +1,9 @@
 use std::{fs, path::PathBuf, process::Command};
 
 fn copied_binary(directory: &tempfile::TempDir) -> PathBuf {
-    let source = PathBuf::from(env!("CARGO_BIN_EXE_lite-mcp"));
-    let destination = directory.path().join("lite-mcp");
-    fs::copy(&source, &destination).expect("copy lite-mcp binary");
+    let source = PathBuf::from(env!("CARGO_BIN_EXE_toolframe"));
+    let destination = directory.path().join("toolframe");
+    fs::copy(&source, &destination).expect("copy toolframe binary");
     fs::set_permissions(
         &destination,
         fs::metadata(&source)
@@ -18,7 +18,7 @@ fn copied_binary(directory: &tempfile::TempDir) -> PathBuf {
 fn json_check_failure_is_machine_readable_and_does_not_create_data_db() {
     let directory = tempfile::tempdir().expect("create temp directory");
     let database = directory.path().join("data.db");
-    let output = Command::new(env!("CARGO_BIN_EXE_lite-mcp"))
+    let output = Command::new(env!("CARGO_BIN_EXE_toolframe"))
         .arg("check")
         .arg("--format")
         .arg("json")
@@ -35,7 +35,7 @@ fn json_check_failure_is_machine_readable_and_does_not_create_data_db() {
         .arg("--runtime-dir")
         .arg(directory.path().join("runtime"))
         .output()
-        .expect("run lite-mcp check");
+        .expect("run toolframe check");
 
     assert!(!output.status.success());
     assert!(output.stderr.is_empty());

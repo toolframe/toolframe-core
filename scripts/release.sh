@@ -10,7 +10,7 @@ PACKAGE_VERSION="$(
   sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' \
     "$REPOSITORY_ROOT/Cargo.toml" | head -n 1
 )"
-RELEASE_STAGING="$(mktemp -d "${TMPDIR:-/tmp}/lite-mcp-release.XXXXXX")"
+RELEASE_STAGING="$(mktemp -d "${TMPDIR:-/tmp}/toolframe-release.XXXXXX")"
 
 cleanup() {
   rm -rf "$RELEASE_STAGING"
@@ -68,7 +68,7 @@ for RUST_TARGET in "${RELEASE_TARGETS[@]}"; do
   esac
   SEEN_TARGETS="$SEEN_TARGETS$RUST_TARGET "
 
-  RELEASE_NAME="lite-mcp-v$PACKAGE_VERSION-macos-12-$RELEASE_ARCH"
+  RELEASE_NAME="toolframe-v$PACKAGE_VERSION-macos-12-$RELEASE_ARCH"
   TARGET_DIST="$REPOSITORY_ROOT/dist/$RUST_TARGET"
   DESTINATION="$TARGET_DIST/$RELEASE_NAME"
   TARGET_STAGING="$RELEASE_STAGING/$RUST_TARGET"
@@ -93,18 +93,18 @@ for RUST_TARGET in "${RELEASE_TARGETS[@]}"; do
   fi
 
   if [[ "$(lipo -archs "$STAGED_DESTINATION")" != "$MACH_ARCH" ]]; then
-    echo "error: packaged lite-mcp executable has the wrong architecture for $RUST_TARGET" >&2
+    echo "error: packaged toolframe executable has the wrong architecture for $RUST_TARGET" >&2
     exit 1
   fi
-  LITE_MCP_MINIMUM_MACOS="$(
+  TOOLFRAME_MINIMUM_MACOS="$(
     otool -l "$STAGED_DESTINATION" |
       awk '
         $1 == "cmd" && ($2 == "LC_BUILD_VERSION" || $2 == "LC_VERSION_MIN_MACOSX") { active = 1; next }
         active && ($1 == "minos" || $1 == "version") { print $2; exit }
       '
   )"
-  if [[ "$LITE_MCP_MINIMUM_MACOS" != "$MINIMUM_MACOS_VERSION" ]]; then
-    echo "error: lite-mcp deployment target is $LITE_MCP_MINIMUM_MACOS, expected $MINIMUM_MACOS_VERSION" >&2
+  if [[ "$TOOLFRAME_MINIMUM_MACOS" != "$MINIMUM_MACOS_VERSION" ]]; then
+    echo "error: toolframe deployment target is $TOOLFRAME_MINIMUM_MACOS, expected $MINIMUM_MACOS_VERSION" >&2
     exit 1
   fi
 

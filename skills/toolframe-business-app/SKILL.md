@@ -1,25 +1,25 @@
 ---
-name: lite-mcp-business-app
-description: Load when a user wants a coding agent to create, extend, operate, connect, diagnose, or judge the fit of a business-specific LAN app inside an editable lite-mcp distribution, including its SQLite migrations, MCP tools, Streamlit dashboard, llms.txt LAN-agent guide, peer-agent workflow, and nontechnical operating handbook.
+name: toolframe-business-app
+description: Load when a user wants a coding agent to create, extend, operate, connect, diagnose, or judge the fit of a business-specific LAN app inside an editable toolframe distribution, including its SQLite migrations, MCP tools, Streamlit dashboard, llms.txt LAN-agent guide, peer-agent workflow, and nontechnical operating handbook.
 ---
 
-# Lite MCP business app
+# Toolframe business app
 
 Turn a business outcome into one small, named, inspectable application built on
-lite-mcp that a nontechnical owner can operate and another agent can inherit.
+toolframe that a nontechnical owner can operate and another agent can inherit.
 
 ## Non-negotiables
 
 - Lead with the business loop: who submits what, who acts, what the owner sees,
   and what proves completion. Translate technical choices into their business
   consequence.
-- Treat Lite MCP as the framework name. Give every business app its own short,
+- Treat Toolframe as the framework name. Give every business app its own short,
   recognizable name; keep the authoritative identity in `APP_CONTEXT.md` and
   project it consistently into the Dashboard and LAN agent documents.
 - Perform repository and runtime legwork directly. Ask the owner only for a
   business decision that materially changes behavior, risk, or data meaning;
   choose and record safe technical defaults.
-- Treat the executable folder's `README.md`, `./lite-mcp --help`, migrations,
+- Treat the executable folder's `README.md`, `./toolframe --help`, migrations,
   actual tool signatures, and public helper APIs as the current runtime
   contract. Reconcile contradictions instead of relying on this skill's memory.
 - Keep one app centered on one bounded business workflow. Closely related item
@@ -35,7 +35,7 @@ lite-mcp that a nontechnical owner can operate and another agent can inherit.
   documents aligned with migrations, tools, dashboard behavior, and tests in
   the same change. The `llms` files are a curated LAN-facing projection, not a
   second source of business truth.
-- Prefix user-owned business tables with `app_`; treat `_lite_mcp_*` tables as
+- Prefix user-owned business tables with `app_`; treat `_toolframe_*` tables as
   runtime-owned and outside user migrations or repair SQL.
 
 ## 1. Establish intent and fit
@@ -47,13 +47,13 @@ folder is version-controlled. Classify the request as one of:
 - **Develop:** create or change business behavior.
 - **Doctor:** diagnose or repair an existing app without broadening its scope.
 - **Operate:** run it, connect a peer agent, back it up, or explain daily use.
-- **Fit:** decide whether lite-mcp remains the right product shape.
+- **Fit:** decide whether toolframe remains the right product shape.
 
 Read [operations and limits](references/operations-handbook.md) for Doctor,
 Operate, or Fit. Continue only after the application root, intended business
 outcome, current app identity, data at risk, and any hard escalation trigger
 are explicit. On the Develop path, follow the development handbook's naming
-step whenever the app is still `Unnamed` or uses Lite MCP as its product name;
+step whenever the app is still `Unnamed` or uses Toolframe as its product name;
 propose the name without waiting for the owner to ask. For a Fit request,
 report the decision without implementing unless the user also requested a
 change.
@@ -105,8 +105,8 @@ versions or leases where stale writers matter. Return structured, actionable
 errors with retryability and correlation details. Store large durable output as
 managed artifacts and keep bounded summaries/references in SQLite.
 
-In MCP tools, obtain database access from `lite_mcp_db.get_database()`; do not
-open `sqlite3` connections or read `LITE_MCP_DB` in tool source. Prefer narrow
+In MCP tools, obtain database access from `toolframe_db.get_database()`; do not
+open `sqlite3` connections or read `TOOLFRAME_DB` in tool source. Prefer narrow
 business tools. Keep the shipped `execute_sql` as a bounded data-only fallback
 and adapter example, and allow a peer to use it only when the app-specific
 capability guide explicitly documents that fallback.
@@ -120,7 +120,7 @@ docs, and tests describe the same loop with no orphaned action or state.
 Run the strongest checks available for the change. The minimum development gate
 is:
 
-1. `./lite-mcp check --format json` succeeds.
+1. `./toolframe check --format json` succeeds.
 2. Domain tests cover legal and illegal transitions plus concurrency,
    idempotency, and lease behavior when those concepts exist.
 3. A real server start succeeds and applies pending migrations before tools are
@@ -153,7 +153,7 @@ detail behind links unless it changes how the owner operates the app.
 For Develop, finish only when every agreed human and peer-agent path works and a
 future coding agent can continue safely from `APP_CONTEXT.md` and
 `DOMAIN_MODEL.md`, while a peer LAN agent can discover the supported workflow
-from `/llms.txt`. A developed app must no longer present `Unnamed` or Lite MCP
+from `/llms.txt`. A developed app must no longer present `Unnamed` or Toolframe
 as its owner-facing app name. For Doctor, finish with an evidence-backed cause
 and, only when repair was requested, a verified repair. For Operate, finish
 when the requested run, connection, backup, or explanation outcome is proven.
@@ -183,7 +183,7 @@ do not invent implementation work.
 
 ## Recognition-critical gotchas
 
-- lite-mcp stores and exposes work; an external scheduler or human starts the
+- toolframe stores and exposes work; an external scheduler or human starts the
   peer agent. Model schedule definitions only when the business app truly owns
   recurrence.
 - MCP tools, migrations, and dependency changes take effect on process startup.

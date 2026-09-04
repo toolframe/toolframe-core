@@ -18,8 +18,8 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
-import lite_mcp_runtime as runtime
-from lite_mcp_idempotency import IdempotencyError
+import toolframe_runtime as runtime
+from toolframe_idempotency import IdempotencyError
 
 TOOL_SOURCE = '''from fastmcp.tools import tool
 
@@ -30,7 +30,7 @@ def echo(value: str) -> str:
 '''
 
 DATABASE_CONTEXT_TOOL_SOURCE = '''from fastmcp.tools import tool
-from lite_mcp_db import get_database
+from toolframe_db import get_database
 
 DATABASE = get_database()
 
@@ -83,7 +83,7 @@ class RuntimeTests(unittest.TestCase):
         index_path = self.root / "llms.txt"
         index_path.write_text(
             index
-            or "# lite-mcp\n> LAN MCP server context.\n\n## Documents\n\n- [Overview](/llms/overview.md)\n",
+            or "# toolframe\n> LAN MCP server context.\n\n## Documents\n\n- [Overview](/llms/overview.md)\n",
             encoding="utf-8",
         )
         return index_path, llms_dir
@@ -91,7 +91,7 @@ class RuntimeTests(unittest.TestCase):
     def test_validate_llms_source_returns_safe_reachable_document_allowlist(self):
         index_path, llms_dir = self.write_llms_source(
             index=(
-                "# lite-mcp\n"
+                "# toolframe\n"
                 "> LAN MCP server context.\n"
                 "\n"
                 "## Documents\n"
@@ -123,7 +123,7 @@ class RuntimeTests(unittest.TestCase):
     def test_validate_llms_source_accepts_v2_bom_and_blank_line_before_summary(self):
         index_path, llms_dir = self.write_llms_source(
             index=(
-                "\ufeff# lite-mcp\n"
+                "\ufeff# toolframe\n"
                 "\n"
                 "> LAN MCP server context.\n"
                 "\n"
@@ -186,7 +186,7 @@ class RuntimeTests(unittest.TestCase):
         workspace.mkdir()
         runtime.configure_artifact_store(workspace)
         source = '''from fastmcp.tools import tool
-from lite_mcp_artifacts import get_artifact_store
+from toolframe_artifacts import get_artifact_store
 
 STORE = get_artifact_store()
 
@@ -273,11 +273,11 @@ def second() -> str:
         self.assertEqual(result.structured_content["error"]["code"], "tool_timeout")
         self.assertTrue(result.structured_content["error"]["retryable"])
 
-    def test_lite_mcp_error_preserves_retryability(self):
+    def test_toolframe_error_preserves_retryability(self):
         middleware = runtime.RuntimeGuardMiddleware(0, 60, 1024)
 
         async def call_next(_):
-            raise runtime.LiteMcpError(
+            raise runtime.ToolframeError(
                 "upstream_busy",
                 "Upstream is busy.",
                 retryable=True,
@@ -335,7 +335,7 @@ def second() -> str:
         self.assertEqual(result.structured_content["error"]["traceId"], error.trace_id)
 
     def test_artifact_error_preserves_structured_contract(self):
-        from lite_mcp_artifacts import ArtifactExistsError
+        from toolframe_artifacts import ArtifactExistsError
 
         middleware = runtime.RuntimeGuardMiddleware(0, 60, 1024)
 
@@ -353,14 +353,14 @@ def second() -> str:
             result.structured_content["error"]["details"]["path"], "report.csv"
         )
 
-    def test_fastmcp_wrapped_lite_mcp_error_preserves_contract(self):
+    def test_fastmcp_wrapped_toolframe_error_preserves_contract(self):
         from fastmcp import FastMCP
         from fastmcp.tools import tool
 
         @tool
         def wrapped_failure() -> str:
             """Raise one structured failure through FastMCP."""
-            raise runtime.LiteMcpError(
+            raise runtime.ToolframeError(
                 "upstream_busy",
                 "Upstream is busy.",
                 retryable=True,
@@ -424,28 +424,28 @@ def second() -> str:
         workspace.mkdir()
         info_page = self.root / "index.html"
         info_page.write_text("<h1>test</h1>", encoding="utf-8")
-        runner_path = self.root / "lite_mcp_dashboard_runner.py"
+        runner_path = self.root / "toolframe_dashboard_runner.py"
         runner_path.write_text("pass\n", encoding="utf-8")
         environment = {
-            "LITE_MCP_MANIFEST": str(manifest_path),
-            "LITE_MCP_DB": str(database),
-            "LITE_MCP_DASHBOARD_DIR": str(dashboard),
-            "LITE_MCP_DASHBOARD_RUNNER": str(runner_path),
-            "LITE_MCP_INFO_PAGE": str(info_page),
-            "LITE_MCP_WORKSPACE": str(workspace),
-            "LITE_MCP_LLMS_FILE": str(llms_file),
-            "LITE_MCP_LLMS_DIR": str(llms_dir),
-            "LITE_MCP_PORT": "8000",
-            "LITE_MCP_ALLOWED_HOSTS": '["localhost","127.0.0.1"]',
-            "LITE_MCP_ALLOWED_ORIGINS": '["http://localhost:8000"]',
-            "LITE_MCP_MAX_CONCURRENCY": "60",
-            "LITE_MCP_TOOL_TIMEOUT_SECONDS": "60",
-            "LITE_MCP_RESULT_LIMIT_BYTES": "4194304",
-            "LITE_MCP_READY_TOKEN": "test-ready-token",
-            "LITE_MCP_DEPENDENCIES_JSON": '["fastmcp==4.0.0"]',
-            "LITE_MCP_LOGS_DIR": str(self.root / "logs"),
-            "LITE_MCP_LOG_RETENTION_DAYS": "14",
-            "LITE_MCP_LOG_MAX_TOTAL_MIB": "256",
+            "TOOLFRAME_MANIFEST": str(manifest_path),
+            "TOOLFRAME_DB": str(database),
+            "TOOLFRAME_DASHBOARD_DIR": str(dashboard),
+            "TOOLFRAME_DASHBOARD_RUNNER": str(runner_path),
+            "TOOLFRAME_INFO_PAGE": str(info_page),
+            "TOOLFRAME_WORKSPACE": str(workspace),
+            "TOOLFRAME_LLMS_FILE": str(llms_file),
+            "TOOLFRAME_LLMS_DIR": str(llms_dir),
+            "TOOLFRAME_PORT": "8000",
+            "TOOLFRAME_ALLOWED_HOSTS": '["localhost","127.0.0.1"]',
+            "TOOLFRAME_ALLOWED_ORIGINS": '["http://localhost:8000"]',
+            "TOOLFRAME_MAX_CONCURRENCY": "60",
+            "TOOLFRAME_TOOL_TIMEOUT_SECONDS": "60",
+            "TOOLFRAME_RESULT_LIMIT_BYTES": "4194304",
+            "TOOLFRAME_READY_TOKEN": "test-ready-token",
+            "TOOLFRAME_DEPENDENCIES_JSON": '["fastmcp==4.0.0"]',
+            "TOOLFRAME_LOGS_DIR": str(self.root / "logs"),
+            "TOOLFRAME_LOG_RETENTION_DAYS": "14",
+            "TOOLFRAME_LOG_MAX_TOTAL_MIB": "256",
         }
 
         class FakeStreamlitApp:
@@ -472,7 +472,7 @@ def second() -> str:
         try:
             with (
                 patch.dict(os.environ, environment, clear=False),
-                patch.dict(sys.modules, {"lite_mcp_dashboard": fake_dashboard_sdk}),
+                patch.dict(sys.modules, {"toolframe_dashboard": fake_dashboard_sdk}),
                 patch.object(
                     runtime,
                     "_load_and_configure_streamlit",
@@ -512,7 +512,7 @@ def second() -> str:
         self.assertEqual(root_response.headers["x-content-type-options"], "nosniff")
 
         llms_file.write_text(
-            "# lite-mcp changed\n"
+            "# toolframe changed\n"
             "> Updated LAN MCP server context.\n"
             "\n"
             "## Documents\n"

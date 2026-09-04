@@ -4,7 +4,7 @@
 
 Start the packaged executable from the app root. Startup validates and applies pending migrations before the listener is ready, loads the dashboard and every published MCP tool once, and then serves the dashboard and same-origin `/mcp`. Migrations, tool code, tool dependencies, and other startup-loaded files require a complete stop and restart. Dashboard source can rerun on browser refresh or widget interaction; that is not MCP tool hot reload. There is no reload command, API, or UI.
 
-The scheduler and durable worker loop are external. Lite MCP stores and exposes business state; it does not wake an agent, guarantee delivery, or coordinate workers by itself.
+The scheduler and durable worker loop are external. Toolframe stores and exposes business state; it does not wake an agent, guarantee delivery, or coordinate workers by itself.
 
 ## Safe diagnostics
 
@@ -12,7 +12,7 @@ The scheduler and durable worker loop are external. Lite MCP stores and exposes 
 - `GET /info`: runtime, route, and diagnostic information for the current server.
 - Dashboard `/`: human-visible data and review state.
 - MCP `/mcp`: use the client registration flow and list tools; do not infer availability from this page.
-- A coding agent with filesystem access may run `./lite-mcp check --format json` before a restart and inspect the app's local logs. Keep the exact command output, URL, and trace IDs with the report.
+- A coding agent with filesystem access may run `./toolframe check --format json` before a restart and inspect the app's local logs. Keep the exact command output, URL, and trace IDs with the report.
 
 Do not use SQL as an undocumented business diagnostic or repair shortcut. `execute_sql` is a bounded data read/write fallback: it can permanently mutate app rows but rejects schema, PRAGMA, maintenance, and runtime-owned table changes. Back up or preserve the database before consequential data repair. A server-side primary coding agent must inspect source and implement every schema repair as the next migration.
 

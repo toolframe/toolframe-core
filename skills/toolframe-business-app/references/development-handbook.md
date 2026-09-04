@@ -1,12 +1,12 @@
 # Development handbook
 
 This handbook is the build playbook for a coding agent helping a nontechnical
-owner turn one `lite-mcp` folder into a small local business application. Start
+owner turn one `toolframe` folder into a small local business application. Start
 with the business outcome, then make the smallest database, tool, and dashboard
 change that lets a person or an agent complete that outcome.
 
 The editable app folder's local `README.md` is the current runtime contract.
-Use it, `./lite-mcp --help`, and the local source files as evidence when a
+Use it, `./toolframe --help`, and the local source files as evidence when a
 command or behavior may have changed. This wording is deliberate: the skill
 may be installed separately from the app folder. Do not copy package-version
 lists into an app handoff document.
@@ -47,12 +47,12 @@ completion).
 
 ### Name the app, not the framework
 
-A fresh scaffold deliberately displays `Unnamed`. Lite MCP is the framework
+A fresh scaffold deliberately displays `Unnamed`. Toolframe is the framework
 and executable name; it is not the identity of the owner's business app. Once
 the business loop is understood, proactively suggest two or three short names
 grounded in the main business noun or outcome, mark one recommendation, and
 explain it in one sentence. Avoid generic labels such as “Dashboard”, “Tool”,
-or “Lite MCP App” that will not distinguish multiple servers on the same LAN.
+or “Toolframe App” that will not distinguish multiple servers on the same LAN.
 
 Let the owner choose when they respond. If implementation must continue before
 they answer, use the recommendation as an explicitly provisional, reversible
@@ -68,7 +68,7 @@ surfaces:
 
 Completion requires all four surfaces to use the same app name and none to
 remain `Unnamed`. Framework diagnostics, package names, CLI commands, and
-technical attribution continue to use `lite-mcp` or Lite MCP.
+technical attribution continue to use `toolframe` or Toolframe.
 
 ## 2. Inspect the installed contract before editing
 
@@ -77,7 +77,7 @@ as the application, not merely as a server installation. Before writing code,
 inspect:
 
 ```sh
-./lite-mcp check --format json
+./toolframe check --format json
 ```
 
 Read the local `README.md`, `migrations/README.md`, existing migrations,
@@ -92,7 +92,7 @@ the Rust/Python launcher source tree.
 
 Confirm the current public shape before relying on it:
 
-- `./lite-mcp` or `./lite-mcp serve` starts the one-process LAN service.
+- `./toolframe` or `./toolframe serve` starts the one-process LAN service.
 - `/` is the Streamlit dashboard, `/info` is the built-in runtime/datastore
   page, `/llms.txt` is the progressive LAN-agent entry point, and `/mcp` is
   FastMCP Streamable HTTP. There is no SSE, client stdio, hot reload, reload
@@ -100,9 +100,9 @@ Confirm the current public shape before relying on it:
 - Migrations and MCP tools load at process start. Dashboard source is picked
   up on browser refresh, Streamlit rerun, or interaction rerun; tool source,
   migration source, and dependency changes require a full restart.
-- `./lite-mcp scaffold migration <description>`, `tool <name>`, and
+- `./toolframe scaffold migration <description>`, `tool <name>`, and
   `widget <name>` create one new file and refuse to overwrite an existing one.
-- `./lite-mcp invoke <tool> --json '<object>'` exercises one startup-loaded
+- `./toolframe invoke <tool> --json '<object>'` exercises one startup-loaded
   tool without opening HTTP. It is a coding-agent check, not an external
   scheduler.
 
@@ -170,7 +170,7 @@ the supplied `0000_bootstrap.sql` and add the next contiguous migration with
 the scaffold command:
 
 ```sh
-./lite-mcp scaffold migration add_business_fields
+./toolframe scaffold migration add_business_fields
 ```
 
 The primary development agent puts schema/data statements in the generated
@@ -186,7 +186,7 @@ folder's local `migrations/README.md` for the full authoring restrictions.
 Prefer tables that make the business history visible: an enduring business
 record, explicit timestamps, an actor or source, and append-only progress or
 review records where history matters. Prefix user-owned business tables with
-`app_`; `_lite_mcp_*` tables belong to the runtime and remain outside business
+`app_`; `_toolframe_*` tables belong to the runtime and remain outside business
 migrations and repair SQL. Use foreign keys and checks for rules that must hold
 even when two LAN clients write close together. Do not store a large report or
 binary payload in every MCP response; use a managed artifact reference when the
@@ -195,7 +195,7 @@ result is a file.
 ### C. Publish a small Business RPC surface
 
 Create a direct `tools/<lower_snake_case>.py` file with
-`./lite-mcp scaffold tool <name>`, then give it one public FastMCP `@tool`
+`./toolframe scaffold tool <name>`, then give it one public FastMCP `@tool`
 function whose name matches the filename. Keep private helpers in the same
 file or in an underscore-prefixed module. Do not publish a collection of
 unrelated functions from one file. Put PEP 723 metadata at the top, declare
@@ -250,17 +250,17 @@ the app's domain model.
 
 Use the supported helpers before importing lower-level infrastructure:
 
-- `from lite_mcp_db import get_database` for bounded parameterized reads and
+- `from toolframe_db import get_database` for bounded parameterized reads and
   one-statement app-data DML. The runtime configures it before importing tools;
-  do not import `sqlite3`, open a connection, or read `LITE_MCP_DB` in tool
+  do not import `sqlite3`, open a connection, or read `TOOLFRAME_DB` in tool
   source. `query()` returns a bounded DataFrame and `execute()` accepts only
   `INSERT`, `UPDATE`, `DELETE`, or `REPLACE`; it rejects DDL, PRAGMA,
-  maintenance, attached databases, and writes to `_lite_mcp_*`/`sqlite_*`;
-- `from lite_mcp_idempotency import run_once` for a tool mutation that may be
+  maintenance, attached databases, and writes to `_toolframe_*`/`sqlite_*`;
+- `from toolframe_idempotency import run_once` for a tool mutation that may be
   repeated after a transport retry;
-- `from lite_mcp_artifacts import get_artifact_store` for create-once,
+- `from toolframe_artifacts import get_artifact_store` for create-once,
   integrity-checked files under `workspace/artifacts/`;
-- `from lite_mcp_runtime import LiteMcpError` to return a structured
+- `from toolframe_runtime import ToolframeError` to return a structured
   `{code, message, retryable, details, traceId}` failure.
 
 The runtime imports every public tool and materializes its schema before HTTP
@@ -277,7 +277,7 @@ the fallback or a CRUD collection into an undocumented workflow interface.
 
 ### D. Make the dashboard a human decision surface
 
-Create a widget with `./lite-mcp scaffold widget <name>` or add one direct
+Create a widget with `./toolframe scaffold widget <name>` or add one direct
 public Python file under `dashboard/widgets/`. It must export synchronous
 `render(context)`. Optional `TITLE` and integer `ORDER` control its label and
 ordering. Keep reusable code under `dashboard/components/`; it is not
@@ -311,7 +311,7 @@ environment, or network access.
 
 Treat `llms/llms.txt` as the source for the `/llms.txt` copy/paste entry point for a peer agent that cannot
 read this folder. Keep the root file short: identify the app by its business
-name, attribute Lite MCP only as the framework, state the trusted LAN boundary,
+name, attribute Toolframe only as the framework, state the trusted LAN boundary,
 point to same-origin `/mcp`, then link the relevant detail pages.
 Put business context, actual capabilities, the operating workflow, and
 diagnosis behind root-relative links under `llms/`. Do not copy the whole
@@ -347,7 +347,7 @@ URL, transport, and exact blocker for the owner instead.
 
 ### F. Keep the scheduler outside the app
 
-`lite-mcp` stores business state and exposes the MCP interface; it is not a
+`toolframe` stores business state and exposes the MCP interface; it is not a
 cron service or a durable queue. A separate scheduler or agent trigger calls
 the published tools over the printed LAN `/mcp` URL. The tool should perform
 an atomic eligibility check and claim/lease when scheduled agents can race.
@@ -386,7 +386,7 @@ application error and requires a full restart after correction.
 
 Run these stages in order and record evidence in `APP_CONTEXT.md`:
 
-1. **Static contract:** `./lite-mcp check --format json` passes; note the
+1. **Static contract:** `./toolframe check --format json` passes; note the
    migration range, tool names, widget names, and dependency result.
 2. **Database:** inspect the new migration on an isolated/test database;
    verify constraints, indexes, state guards, and any rollback-safe behavior.
@@ -395,7 +395,7 @@ Run these stages in order and record evidence in `APP_CONTEXT.md`:
    Preserve the startup diagnostics and stop the process before a local
    mutation test when that makes the evidence easier to isolate.
 4. **Tool contract:** call each new public tool with
-   `./lite-mcp invoke <name> --json '<object>'` against migrated state, or call
+   `./toolframe invoke <name> --json '<object>'` against migrated state, or call
    the equivalent MCP tool on the running server; verify the success shape,
    structured errors, and retryability.
 5. **Dashboard path:** start the app, open `/`, and exercise every changed human
@@ -409,7 +409,7 @@ Run these stages in order and record evidence in `APP_CONTEXT.md`:
    tool-list response precedes relevant tool calls. Confirm shared state then
    appears in the dashboard. Use the current LAN URL; do not hard-code an
    interface discovered from a previous run.
-7. **Restart boundary:** stop and start `lite-mcp` after tool, migration, or
+7. **Restart boundary:** stop and start `toolframe` after tool, migration, or
    dependency edits; verify the app fails clearly when an intentionally broken
    source file is present, then restore it and rerun the checks.
 8. **Handoff:** update `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, and the progressive

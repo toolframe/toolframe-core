@@ -13,7 +13,7 @@ HTTP listener.
    so do not add transaction statements or connection-level configuration.
 4. Update the dashboard widget or MCP tool that uses the changed schema in the
    same code change.
-5. Restart `lite-mcp`. Migrations run only at process startup.
+5. Restart `toolframe`. Migrations run only at process startup.
 
 Example:
 
@@ -33,7 +33,7 @@ larger than 4 MiB.
 
 All pending migrations run atomically in numeric order. The launcher records
 each filename and its exact-byte SHA-256 checksum in
-`_lite_mcp_migrations`. Editing applied history therefore fails startup instead
+`_toolframe_migrations`. Editing applied history therefore fails startup instead
 of silently changing an existing database.
 
 Migration SQL may contain multiple statements, but must not contain `BEGIN`,
@@ -50,8 +50,8 @@ applied on restart.
 
 ## Runtime-owned internal schema
 
-The launcher creates and validates `_lite_mcp_migrations` and
-`_lite_mcp_idempotency` directly at every startup. They are not user
+The launcher creates and validates `_toolframe_migrations` and
+`_toolframe_idempotency` directly at every startup. They are not user
 migrations and do not consume migration numbers. User migration SQL cannot
 read or modify either table. Do not create, alter, drop, or repair them in a
 migration; an incompatible internal schema fails startup with a recovery

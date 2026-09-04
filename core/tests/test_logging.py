@@ -14,8 +14,8 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
-import lite_mcp_logging
-from lite_mcp_logging import (
+import toolframe_logging
+from toolframe_logging import (
     StructuredLogError,
     StructuredLogs,
     StructuredLogSettings,
@@ -257,8 +257,8 @@ class StructuredLoggingTests(unittest.TestCase):
         lock_path = self.root / "windows.lock"
         with (
             lock_path.open("a+b") as handle,
-            patch.object(lite_mcp_logging.os, "name", "nt"),
-            patch.object(lite_mcp_logging, "_platform_locking", platform_locking),
+            patch.object(toolframe_logging.os, "name", "nt"),
+            patch.object(toolframe_logging, "_platform_locking", platform_locking),
         ):
             _lock_handle(handle)
             self.assertEqual(lock_path.read_bytes(), b"\0")

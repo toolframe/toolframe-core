@@ -14,7 +14,7 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
-import lite_mcp_idempotency as idempotency
+import toolframe_idempotency as idempotency
 
 
 class RecordingAuditSink:
@@ -83,7 +83,7 @@ class IdempotencyTests(unittest.TestCase):
             )
             self.assertEqual(
                 connection.execute(
-                    "SELECT count(*) FROM _lite_mcp_idempotency"
+                    "SELECT count(*) FROM _toolframe_idempotency"
                 ).fetchone()[0],
                 1,
             )
@@ -163,13 +163,13 @@ class IdempotencyTests(unittest.TestCase):
             )
             self.assertEqual(
                 connection.execute(
-                    "SELECT count(*) FROM _lite_mcp_idempotency"
+                    "SELECT count(*) FROM _toolframe_idempotency"
                 ).fetchone()[0],
                 0,
             )
             self.assertEqual(
                 connection.execute(
-                    "SELECT count(*) FROM _lite_mcp_idempotency"
+                    "SELECT count(*) FROM _toolframe_idempotency"
                 ).fetchone()[0],
                 0,
             )
@@ -184,11 +184,11 @@ class IdempotencyTests(unittest.TestCase):
 
     def test_callback_cannot_access_private_receipt_table(self):
         statements = (
-            "SELECT * FROM _lite_mcp_idempotency",
-            "DELETE FROM _lite_mcp_idempotency",
-            "UPDATE _lite_mcp_idempotency SET result_bytes = result_bytes",
-            "REINDEX _lite_mcp_idempotency",
-            "DROP TABLE _lite_mcp_idempotency",
+            "SELECT * FROM _toolframe_idempotency",
+            "DELETE FROM _toolframe_idempotency",
+            "UPDATE _toolframe_idempotency SET result_bytes = result_bytes",
+            "REINDEX _toolframe_idempotency",
+            "DROP TABLE _toolframe_idempotency",
         )
         for index, statement in enumerate(statements):
             with self.subTest(statement=statement):
@@ -219,19 +219,19 @@ class IdempotencyTests(unittest.TestCase):
     def test_business_column_named_like_private_table_is_allowed(self):
         with closing(sqlite3.connect(self.database_path)) as connection:
             connection.execute(
-                'CREATE TABLE unusual_business_data (id INTEGER PRIMARY KEY, "_lite_mcp_idempotency" TEXT NOT NULL)'
+                'CREATE TABLE unusual_business_data (id INTEGER PRIMARY KEY, "_toolframe_idempotency" TEXT NOT NULL)'
             )
             connection.commit()
 
         def mutation(transaction):
             transaction.execute(
-                'INSERT INTO unusual_business_data("_lite_mcp_idempotency") VALUES (?)',
+                'INSERT INTO unusual_business_data("_toolframe_idempotency") VALUES (?)',
                 ("business-value",),
             )
             row = transaction.query_one(
-                'SELECT "_lite_mcp_idempotency" FROM unusual_business_data'
+                'SELECT "_toolframe_idempotency" FROM unusual_business_data'
             )
-            return {"value": row["_lite_mcp_idempotency"]}
+            return {"value": row["_toolframe_idempotency"]}
 
         result = self.store.run_once(
             "events.create", "private-looking-column", {}, mutation

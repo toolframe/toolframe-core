@@ -1,14 +1,14 @@
 # App context
 
-> Keep this file in the same folder as `lite-mcp`. Write for the next human or
+> Keep this file in the same folder as `toolframe`. Write for the next human or
 > coding agent. Replace every bracketed prompt with a concrete fact; delete
 > prompts that do not apply.
 
 ## App identity
 
-- App name: [a short business-specific name; never use Lite MCP as the app name]
+- App name: [a short business-specific name; never use Toolframe as the app name]
 - Naming rationale: [the business noun or outcome that makes this app recognizable]
-- Framework: Lite MCP
+- Framework: Toolframe
 
 ## Purpose
 
@@ -39,7 +39,7 @@ after a successful human or agent interaction?
 
 If work is polled, claimed, or leased by a scheduled or peer agent, link the
 chosen queue-lifecycle rules here: this app's `DOMAIN_MODEL.md` and the
-installed `lite-mcp-business-app` skill's `references/job-domain-model.md`.
+installed `toolframe-business-app` skill's `references/job-domain-model.md`.
 If the skill is bundled in this app folder, record its actual relative path;
 do not assume one when it was installed separately. Simple record keeping,
 lookup, or approval alone does not require that model. Do not invent a second
@@ -67,8 +67,8 @@ has consciously accepted the local exposure.
 ## Operating instructions
 
 ```sh
-./lite-mcp check --format json
-./lite-mcp
+./toolframe check --format json
+./toolframe
 ```
 
 - Dashboard URL: [copy the URL printed for this run].

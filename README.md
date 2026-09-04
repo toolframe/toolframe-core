@@ -1,7 +1,9 @@
-# lite-mcp
+# Toolframe
 
-`lite-mcp` is a LAN-only Streamlit dashboard and startup-only Python MCP
-tool hub. A Rust launcher applies SQLite migrations and prepares one shared UV environment, then
+**The open-source runtime for agent-built internal apps.**
+
+`toolframe` is a local-first, agent-extensible Streamlit dashboard and
+startup-only Python MCP tool hub. A Rust launcher applies SQLite migrations and prepares one shared UV environment, then
 supervises one Python 3.14 process, one Uvicorn server, and one port. The
 Streamlit `st.App` is mounted at `/`; FastMCP serves modern Streamable HTTP at
 `/mcp`.
@@ -47,9 +49,9 @@ Each target directory contains exactly one executable:
 ```text
 dist/
 ├── aarch64-apple-darwin/
-│   └── lite-mcp-v0.1.0-macos-12-arm64
+│   └── toolframe-v0.1.0-macos-12-arm64
 └── x86_64-apple-darwin/
-    └── lite-mcp-v0.1.0-macos-12-x86_64
+    └── toolframe-v0.1.0-macos-12-x86_64
 ```
 
 Build only one target with its Rust target triple:
@@ -82,8 +84,8 @@ prints each executable's SHA-256 without adding a second checksum file.
 
 For local packaging only, `make package` runs
 [`scripts/package.sh`](scripts/package.sh) and assembles the host distribution
-as the single file `dist/lite-mcp`. To compile only the optimized host binary
-at `target/release/lite-mcp`, run `make build`. Neither build command requires
+as the single file `dist/toolframe`. To compile only the optimized host binary
+at `target/release/toolframe`, run `make build`. Neither build command requires
 UV. Run `make help` to list the available targets.
 
 Copy the target executable into a new deployment directory and run it. A file
@@ -91,8 +93,8 @@ download may require restoring its executable bit with `chmod +x`. Before the
 first launch, that directory contains exactly one file:
 
 ```text
-lite-mcp/
-└── lite-mcp-v0.1.0-macos-12-x86_64
+toolframe/
+└── toolframe-v0.1.0-macos-12-x86_64
 ```
 
 A normal server launch then materializes the editable working state beside the
@@ -115,12 +117,12 @@ the index must be present and reachable.
 ### Bundled coding-agent skill
 
 The source handbook at
-[`skills/lite-mcp-business-app`](skills/lite-mcp-business-app/SKILL.md) guides a
+[`skills/toolframe-business-app`](skills/toolframe-business-app/SKILL.md) guides a
 coding agent with filesystem access to develop, doctor, or operate a
 nontechnical owner's app. It is embedded in the binary, not an MCP service or
-second release payload. A normal `lite-mcp` or `lite-mcp serve` start
+second release payload. A normal `toolframe` or `toolframe serve` start
 atomically installs its production files at
-`.agents/skills/lite-mcp-business-app` beside the executable. `check`,
+`.agents/skills/toolframe-business-app` beside the executable. `check`,
 `invoke`, and `scaffold` do not install it. The installed copy deliberately
 omits `evals/` and `evaluations/`; those remain only in the full source package
 for maintainers.
@@ -136,7 +138,7 @@ A nontechnical owner can hand the editable folder to a coding agent with a
 business request such as:
 
 ```text
-Use .agents/skills/lite-mcp-business-app/SKILL.md. Turn this folder into a visitor
+Use .agents/skills/toolframe-business-app/SKILL.md. Turn this folder into a visitor
 register for reception, leave the app context/domain handbook behind, and show
 me how a trusted peer agent and a person use it.
 ```
@@ -174,21 +176,21 @@ direct detail files together and never follows a pre-existing symlink.
 If a scheduled workflow cannot reach that URL, it should pause before changing
 business state, show a clear **[app name] MCP unavailable** warning, and return the
 self-contained copyable issue from
-`.agents/skills/lite-mcp-business-app/assets/MCP_UNAVAILABLE_ISSUE.template.md`.
+`.agents/skills/toolframe-business-app/assets/MCP_UNAVAILABLE_ISSUE.template.md`.
 The issue preserves the attempted URL, exact error, workflow impact, unknowns,
 safe owner checks, and maintainer diagnostics.
 
 Every supported runtime target selects the exact target-matched UV version
 pinned in `uv-release-manifest.txt`. On every launch, the launcher verifies the
-managed copy's SHA-256, version, and target triple. If `.lite-mcp/uv` is absent,
-older, newer, broken, or for the wrong CPU, `lite-mcp` downloads the official
+managed copy's SHA-256, version, and target triple. If `.toolframe/uv` is absent,
+older, newer, broken, or for the wrong CPU, `toolframe` downloads the official
 archive over HTTPS, shows a progress bar with transfer rate, elapsed time, and
 ETA, verifies both the archive and executable SHA-256 digests, and atomically
 installs the executable before using it. Temporary download and extraction files
-stay inside `.lite-mcp/` and are removed automatically.
+stay inside `.toolframe/` and are removed automatically.
 
-On Windows the managed executable is `.lite-mcp/uv.exe`. An explicit
-`--uv-path`/`LITE_MCP_UV` override must already match the pin and is never
+On Windows the managed executable is `.toolframe/uv.exe`. An explicit
+`--uv-path`/`TOOLFRAME_UV` override must already match the pin and is never
 overwritten. Without an override, supported builds do not use a system UV from
 `PATH`; the private verified copy is deterministic. `--offline` requires the
 managed UV executable, Python 3.14, and dependencies to be present already. No
@@ -204,33 +206,33 @@ rebinds the selection and startup fails clearly if another process claims the
 port during that short handoff. A typical terminal shows:
 
 ```text
-07:21:48.700 [SKILL] installed bundled business skill at /path/to/lite-mcp/.agents/skills/lite-mcp-business-app
-07:21:48.755 [BOOT] lite-mcp 0.1.0 is ready
+07:21:48.700 [SKILL] installed bundled business skill at /path/to/toolframe/.agents/skills/toolframe-business-app
+07:21:48.755 [BOOT] toolframe 0.1.0 is ready
 07:21:48.755 [DASHBOARD] Dashboard  http://127.0.0.1:8000/ (Streamlit)
 07:21:48.755 [MCP] Agent guide http://127.0.0.1:8000/llms.txt
 07:21:48.755 [MCP] MCP        http://127.0.0.1:8000/mcp
-07:21:48.755 [DB] Migrations /path/to/lite-mcp/migrations (current 0000; 1 applied this start; 1 total)
+07:21:48.755 [DB] Migrations /path/to/toolframe/migrations (current 0000; 1 applied this start; 1 total)
 07:21:48.755 [NETWORK] LAN        http://192.168.1.20:8000/
 07:21:48.755 [SECURITY] WARNING no authentication: LAN clients can read and mutate data and call trusted tools
 ```
 
 Human diagnostics use local `HH:MM:SS.mmm` timestamps and are colorized only
-when stderr is a TTY. `--no-color`, `LITE_MCP_NO_COLOR`, or the standard
+when stderr is a TTY. `--no-color`, `TOOLFRAME_NO_COLOR`, or the standard
 `NO_COLOR` environment variable disables ANSI colors. Routine UV and Python
-dependency output is summarized; use `--verbose` or `LITE_MCP_VERBOSE` for the
+dependency output is summarized; use `--verbose` or `TOOLFRAME_VERBOSE` for the
 full child output and debug diagnostics. stdout is reserved for the two
-machine-readable assignments `LITE_MCP_URL=...` and `LITE_MCP_MCP_URL=...`.
+machine-readable assignments `TOOLFRAME_URL=...` and `TOOLFRAME_MCP_URL=...`.
 
 Connect Codex using the printed MCP URL:
 
 ```sh
-codex mcp add lite-mcp --url http://127.0.0.1:8000/mcp
+codex mcp add toolframe --url http://127.0.0.1:8000/mcp
 ```
 
 Or configure the same URL:
 
 ```toml
-[mcp_servers.lite_mcp]
+[mcp_servers.toolframe]
 url = "http://127.0.0.1:8000/mcp"
 ```
 
@@ -239,7 +241,7 @@ client-facing stdio transport, hot reload service, reload API, or reload UI.
 
 ## Coding-agent development CLI
 
-Running `lite-mcp` without a subcommand still starts the server. `lite-mcp
+Running `toolframe` without a subcommand still starts the server. `toolframe
 serve` is the explicit equivalent. The same binary also provides bounded local
 commands for coding agents; path and runtime options may appear before or after
 the subcommand.
@@ -250,8 +252,8 @@ Use `check` before starting the server or after editing migrations, tools,
 dashboard dependencies, or widgets:
 
 ```sh
-./lite-mcp check
-./lite-mcp check --format json
+./toolframe check
+./toolframe check --format json
 ```
 
 `check` exercises the production migration engine against an isolated SQLite
@@ -270,7 +272,7 @@ and after the copy. Stop the server and other database writers first: a change
 during copying fails preflight and asks the caller to retry. A missing database
 uses a new in-memory database. Tool imports receive the shared database adapter
 configured against a separate temporary database. Check may provision Python
-and dependencies and update managed content under `.lite-mcp/`; imported tools
+and dependencies and update managed content under `.toolframe/`; imported tools
 and widgets remain trusted
 Python code and can perform other import-time side effects. Their stdout is
 forwarded to stderr so stdout remains one JSON document. The report includes
@@ -284,8 +286,8 @@ process in the same shared UV environment, calls one tool through FastMCP, and
 prints one JSON result:
 
 ```sh
-./lite-mcp invoke fetch_title --json '{"url":"https://example.com"}'
-./lite-mcp invoke execute_sql --json \
+./toolframe invoke fetch_title --json '{"url":"https://example.com"}'
+./toolframe invoke execute_sql --json \
   '{"sql":"SELECT label FROM dashboard_example_entries WHERE id = ?","params":[1],"mode":"read"}'
 ```
 
@@ -306,9 +308,9 @@ Each scaffold command creates exactly one direct source file and refuses to
 overwrite an existing path:
 
 ```sh
-./lite-mcp scaffold migration add_status
-./lite-mcp scaffold tool fetch_status
-./lite-mcp scaffold widget status_card
+./toolframe scaffold migration add_status
+./toolframe scaffold tool fetch_status
+./toolframe scaffold widget status_card
 ```
 
 Migration scaffolding validates the existing contiguous history and chooses
@@ -348,7 +350,7 @@ ignored.
 
 All pending files run in numeric order inside one `BEGIN IMMEDIATE`
 transaction. A failure rolls back the complete pending batch. The internal
-`_lite_mcp_migrations` table records each filename and exact-byte SHA-256
+`_toolframe_migrations` table records each filename and exact-byte SHA-256
 checksum. Never edit, rename, or delete an applied migration: restore the
 original file and add the next migration instead.
 
@@ -356,7 +358,7 @@ Migration SQL may contain multiple schema or data statements. It must not
 contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PRAGMA`,
 `ATTACH`, `DETACH`, or `CREATE TRIGGER`; the launcher owns the transaction,
 SQLite configuration, and internal table protection. Migrations run only at
-process startup, so restart `lite-mcp` after adding one. Back up `data/data.db`
+process startup, so restart `toolframe` after adding one. Back up `data/data.db`
 before destructive migrations.
 
 If the entire migrations directory is absent, the launcher creates the
@@ -370,7 +372,7 @@ numbers and are created or validated for both new and existing databases.
 The root page is the user dashboard. `dashboard/app.py` is its Python loader
 and can be edited or completely replaced by a Coding Agent. The default loader
 uses `APP_NAME = "Unnamed"` for both the browser title and visible heading and
-shows a naming notice until that value is replaced. Lite MCP remains the
+shows a naming notice until that value is replaced. Toolframe remains the
 framework attribution. The loader discovers direct public Python files in
 `dashboard/widgets/` and renders them.
 Each discovered module must export a synchronous `render(context)` function.
@@ -385,8 +387,8 @@ public widget is compiled, imported, and contract-checked at startup, even if
 the custom `app.py` does not render it. Use a private name such as `_draft.py`
 for an unfinished widget.
 
-The supported agent-facing APIs are the public `lite_mcp_dashboard`,
-`lite_mcp_idempotency`, and `lite_mcp_artifacts` modules. They provide
+The supported agent-facing APIs are the public `toolframe_dashboard`,
+`toolframe_idempotency`, and `toolframe_artifacts` modules. They provide
 `DashboardContext`, database, idempotency, and artifact errors/results,
 `get_context()`, `run_once()`, `get_artifact_store()`, and the widget
 discovery/render helpers. `DashboardContext` exposes only the stable `db`,
@@ -432,7 +434,7 @@ Widgets use the shared `data/data.db` through `context.db` (or the equivalent
 `get_context()` result):
 
 ```python
-from lite_mcp_dashboard import get_context
+from toolframe_dashboard import get_context
 
 context = get_context()
 rows = context.db.query(
@@ -479,14 +481,14 @@ sessions.
 
 FastAPI provides application lifecycle and dependency injection, not a
 database-access implementation. FastMCP tool calls are not FastAPI route
-parameters, so Lite MCP configures one process-level adapter before importing
+parameters, so Toolframe configures one process-level adapter before importing
 any tool. Tool code obtains it with `get_database()` instead of opening
-`sqlite3` or reading `LITE_MCP_DB`:
+`sqlite3` or reading `TOOLFRAME_DB`:
 
 ```python
 from fastmcp.tools import tool
-from lite_mcp_db import get_database
-from lite_mcp_runtime import LiteMcpError
+from toolframe_db import get_database
+from toolframe_runtime import ToolframeError
 
 _DB = get_database()
 
@@ -503,7 +505,7 @@ def rename_example_entry(
         max_rows=1,
     )
     if current.empty:
-        raise LiteMcpError(
+        raise ToolframeError(
             "entry_not_found",
             "The entry does not exist.",
             details={"recoveryHint": "Refresh the authoritative entry list."},
@@ -518,7 +520,7 @@ def rename_example_entry(
         (label, entry_id, expected_version),
     )
     if result.affected_rows != 1:
-        raise LiteMcpError(
+        raise ToolframeError(
             "entry_conflict",
             "The entry changed after it was read.",
             details={"recoveryHint": "Read the entry again before retrying."},
@@ -533,7 +535,7 @@ The adapter's `query(sql, params)` returns a bounded `pandas.DataFrame`.
 and 1 MiB, and a tool may request only smaller per-query limits.
 
 The adapter rejects DDL, PRAGMA, `ATTACH`/`DETACH`, maintenance operations, and
-writes to `_lite_mcp_*` or `sqlite_*` tables. `DatabaseError` carries `code`,
+writes to `_toolframe_*` or `sqlite_*` tables. `DatabaseError` carries `code`,
 `message`, `retryable`, `trace_id`, details, and a recovery hint; runtime
 middleware preserves that contract when a narrow tool lets it propagate.
 Durable schema changes are never a tool call: the primary coding agent authors
@@ -564,7 +566,7 @@ expense = outcome.value
 ```
 
 MCP tools use the same contract via
-`from lite_mcp_idempotency import run_once`; see the complete
+`from toolframe_idempotency import run_once`; see the complete
 [`examples/idempotent_create_entry.py`](examples/idempotent_create_entry.py)
 reference. `run_once` returns `IdempotencyResult(value, replayed,
 operation_id, original_operation_id)`. Both the first caller and replays get
@@ -592,7 +594,7 @@ does the same; a retry after a commit replays the stored result. Do not call
 `run_once` inside `context.db.transaction()` or nest it in another `run_once`;
 put the complete business mutation in its callback instead.
 
-The launcher owns `_lite_mcp_idempotency` and validates its exact schema at
+The launcher owns `_toolframe_idempotency` and validates its exact schema at
 every startup. User migrations and `run_once` callback SQL cannot read, alter,
 or write that table; only the helper inserts receipts after the business
 callback succeeds. Configure result limits at or below the table's fixed
@@ -645,7 +647,7 @@ owns the local path and integrity metadata:
 ```python
 import streamlit as st
 
-from lite_mcp_dashboard import get_context
+from toolframe_dashboard import get_context
 
 context = get_context()
 uploaded = st.file_uploader("Upload a CSV", type=["csv"])
@@ -692,14 +694,14 @@ verification work but do not bypass that index-wide safety cap.
 
 Each artifact reference contains `artifactId`, `path`, `mimeType`, `byteSize`,
 `sha256`, and a UTC `createdAt`. Versioned JSON metadata is stored under the
-reserved `workspace/artifacts/.lite-mcp/` directory. Content remains at its
+reserved `workspace/artifacts/.toolframe/` directory. Content remains at its
 reported relative path. Direct edits are unsupported: missing, altered,
 duplicated, malformed, or symlinked content/metadata fails closed with
 `ArtifactIntegrityError` instead of being silently trusted.
 
 Content and JSON metadata cannot be published as one filesystem transaction.
 If the process or metadata publication fails after content becomes visible,
-lite-mcp deliberately leaves that exact path as unmanaged content. It does not
+toolframe deliberately leaves that exact path as unmanaged content. It does not
 unlink the name because another local process may already have replaced it.
 The typed error includes a recovery hint: inspect or move the orphan aside
 manually, then retry with a new path. A later create reports an unmanaged
@@ -712,7 +714,7 @@ Startup-loaded tools use the standalone support module, which is configured
 before tool imports:
 
 ```python
-from lite_mcp_artifacts import get_artifact_store
+from toolframe_artifacts import get_artifact_store
 
 store = get_artifact_store()
 artifact = store.write_text(
@@ -744,10 +746,10 @@ be one transaction.
 ## Structured logging and audit
 
 The runtime writes two synchronous UTF-8 JSONL streams under
-`.lite-mcp/logs/`, one file per UTC date:
+`.toolframe/logs/`, one file per UTC date:
 
 ```text
-.lite-mcp/logs/
+.toolframe/logs/
 ├── audit-YYYY-MM-DD.jsonl
 └── mcp-YYYY-MM-DD.jsonl
 ```
@@ -758,7 +760,7 @@ arguments, and normalized results. `audit-*`
 contains dashboard/database and managed-artifact mutations, malformed or rejected
 MCP requests, Host/Origin rejections, retention and tail recovery, and Python
 runtime start/stop/fatal events. Rust migration, UV, and bootstrap diagnostics
-remain console-only. A process-exclusive `.lite-mcp/logs/.lite-mcp.lock` prevents two
+remain console-only. A process-exclusive `.toolframe/logs/.toolframe.lock` prevents two
 instances from writing the same directory.
 
 Every record uses schema version 1, a UTC RFC3339 timestamp, a process
@@ -774,7 +776,7 @@ represented by a head-and-tail preview with a truncation marker, original byte
 count, and SHA-256. Tracebacks have an independent 64 KiB limit with the same
 metadata. JSON-compatible values are preserved; binary or non-UTF-8 data is
 base64-encoded. There is no additional redaction, so SQL, parameters,
-payloads, results, and secrets may appear in these files. Treat `.lite-mcp/logs/` as
+payloads, results, and secrets may appear in these files. Treat `.toolframe/logs/` as
 sensitive and restrict access to trusted operators.
 
 Dashboard audit coverage is guaranteed for `context.db.execute()`,
@@ -825,7 +827,7 @@ If an uncaught dashboard error occurs during a later Streamlit rerun, the
 runtime logs the widget, phase, exception, trace ID, and full traceback to
 stderr, emits its fatal shutdown signal, and exits the Python process
 gracefully. Rust reports a non-zero failure and does not auto-restart it. Fix
-the dashboard and start `lite-mcp` again.
+the dashboard and start `toolframe` again.
 
 Expected user and database errors are not fatal when the widget catches them
 and renders an error state. Readiness means that dependencies, dashboard
@@ -846,7 +848,7 @@ writes, invariant checks, events, and receipts in its private implementation.
 Inputs and results use domain terms rather than table, column, generic patch,
 status, filter, sort, or SQL controls. When an intent is missing, add a verified
 business tool instead of asking a peer to compose storage primitives. The
-[Business RPC design rubric](skills/lite-mcp-business-app/references/development-handbook.md#c-publish-a-small-business-rpc-surface)
+[Business RPC design rubric](skills/toolframe-business-app/references/development-handbook.md#c-publish-a-small-business-rpc-surface)
 contains the complete acceptance check.
 
 This minimal example demonstrates source and dependency mechanics only:
@@ -870,7 +872,7 @@ def fetch_title(url: str) -> str:
     return response.text.split("<title>", 1)[1].split("</title>", 1)[0]
 ```
 
-Restart `lite-mcp` to load added or edited files. Discovery is startup-only:
+Restart `toolframe` to load added or edited files. Discovery is startup-only:
 
 - Only direct `tools/*.py` regular files are published.
 - Hidden files, `_helper.py`, symlinks, and nested directories are ignored.
@@ -884,12 +886,12 @@ Restart `lite-mcp` to load added or edited files. Discovery is startup-only:
   before HTTP readiness. The launcher exits nonzero with the tool path, load
   phase, cause, traceback, and recent UV/Python diagnostics.
 
-Tool authors can raise `LiteMcpError` from the runtime support module:
+Tool authors can raise `ToolframeError` from the runtime support module:
 
 ```python
-from lite_mcp_runtime import LiteMcpError
+from toolframe_runtime import ToolframeError
 
-raise LiteMcpError(
+raise ToolframeError(
     "upstream_busy",
     "The upstream service is temporarily unavailable.",
     retryable=True,
@@ -902,7 +904,7 @@ results with `{code, message, retryable, details, traceId}`. Unexpected
 exceptions include sanitized stack locations for the agent and a full
 traceback in server logs without locals or environment dumps.
 
-For business mutations, prefer the explicit `lite_mcp_idempotency.run_once`
+For business mutations, prefer the explicit `toolframe_idempotency.run_once`
 helper documented above. It protects a caller-chosen operation from MCP
 transport retries without applying an automatic retry policy to arbitrary
 tool SQL.
@@ -913,7 +915,7 @@ tool SQL.
 when the launcher creates a brand-new tools directory. Existing directories
 and files are never overwritten.
 
-The tool demonstrates the shared `lite_mcp_db` adapter and accepts `sql`,
+The tool demonstrates the shared `toolframe_db` adapter and accepts `sql`,
 optional positional-list or named-object `params`, and `mode` (`read` by
 default or `write`). Read mode permits one bounded row-returning statement.
 Write mode permits one `INSERT`, `UPDATE`, `DELETE`, or `REPLACE`, including
@@ -947,7 +949,7 @@ new `migrations/NNNN_description.sql`, followed by check and restart.
 
 The `/api/database` and `/api/runtime` routes remain available for diagnostics
 and compatibility. Managed artifacts have no HTTP route and are available only
-to trusted dashboard/tool Python through `lite_mcp_artifacts`. Host and browser
+to trusted dashboard/tool Python through `toolframe_artifacts`. Host and browser
 Origin headers are restricted to
 localhost, the selected bind address, and detected local interfaces. This
 reduces DNS-rebinding exposure but is not authentication or a code sandbox.
@@ -956,33 +958,33 @@ reduces DNS-rebinding exposure but is not authentication or a code sandbox.
 
 | Option | Environment | Default |
 | --- | --- | --- |
-| `--host` | `LITE_MCP_HOST` | `0.0.0.0` |
-| `--port` | `LITE_MCP_PORT` | `8000` |
-| `--port-search-span` | `LITE_MCP_PORT_SEARCH_SPAN` | `100` |
-| `--database` | `LITE_MCP_DB` | `<executable>/data/data.db` |
-| `--migrations-dir` | `LITE_MCP_MIGRATIONS_DIR` | `<executable>/migrations` |
-| `--tools-dir` | `LITE_MCP_TOOLS` | `<executable>/tools` |
-| `--dashboard-dir` | `LITE_MCP_DASHBOARD_DIR` | `<executable>/dashboard` |
-| `--llms-file` | `LITE_MCP_LLMS_FILE` | `<executable>/llms/llms.txt` |
-| `--llms-dir` | `LITE_MCP_LLMS_DIR` | `<executable>/llms` |
-| `--workspace-dir` | `LITE_MCP_WORKSPACE` | `<executable>/workspace` |
-| `--runtime-dir` | `LITE_MCP_RUNTIME` | `<executable>/.lite-mcp` |
-| `--logs-dir` | `LITE_MCP_LOGS_DIR` | `<executable>/.lite-mcp/logs` |
-| `--log-retention-days` | `LITE_MCP_LOG_RETENTION_DAYS` | `14` UTC date buckets |
-| `--log-max-total-mib` | `LITE_MCP_LOG_MAX_TOTAL_MIB` | `256` MiB combined |
-| `--verbose` | `LITE_MCP_VERBOSE` | false |
-| `--no-color` | `LITE_MCP_NO_COLOR` | false; `NO_COLOR` also disables ANSI |
-| `--uv-path` | `LITE_MCP_UV` | verified `<runtime-dir>/uv`, otherwise verified download |
-| `--offline` | `LITE_MCP_OFFLINE` | false; prevents a missing UV, Python, or dependency download |
-| `--max-concurrency` | `LITE_MCP_MAX_CONCURRENCY` | 60; `0` is unlimited |
-| `--tool-timeout` | `LITE_MCP_TOOL_TIMEOUT` | 60 seconds; `0` disables |
-| `--result-limit` | `LITE_MCP_RESULT_LIMIT` | 4 MiB |
-| `--startup-timeout` | `LITE_MCP_STARTUP_TIMEOUT` | 600 seconds |
+| `--host` | `TOOLFRAME_HOST` | `0.0.0.0` |
+| `--port` | `TOOLFRAME_PORT` | `8000` |
+| `--port-search-span` | `TOOLFRAME_PORT_SEARCH_SPAN` | `100` |
+| `--database` | `TOOLFRAME_DB` | `<executable>/data/data.db` |
+| `--migrations-dir` | `TOOLFRAME_MIGRATIONS_DIR` | `<executable>/migrations` |
+| `--tools-dir` | `TOOLFRAME_TOOLS` | `<executable>/tools` |
+| `--dashboard-dir` | `TOOLFRAME_DASHBOARD_DIR` | `<executable>/dashboard` |
+| `--llms-file` | `TOOLFRAME_LLMS_FILE` | `<executable>/llms/llms.txt` |
+| `--llms-dir` | `TOOLFRAME_LLMS_DIR` | `<executable>/llms` |
+| `--workspace-dir` | `TOOLFRAME_WORKSPACE` | `<executable>/workspace` |
+| `--runtime-dir` | `TOOLFRAME_RUNTIME` | `<executable>/.toolframe` |
+| `--logs-dir` | `TOOLFRAME_LOGS_DIR` | `<executable>/.toolframe/logs` |
+| `--log-retention-days` | `TOOLFRAME_LOG_RETENTION_DAYS` | `14` UTC date buckets |
+| `--log-max-total-mib` | `TOOLFRAME_LOG_MAX_TOTAL_MIB` | `256` MiB combined |
+| `--verbose` | `TOOLFRAME_VERBOSE` | false |
+| `--no-color` | `TOOLFRAME_NO_COLOR` | false; `NO_COLOR` also disables ANSI |
+| `--uv-path` | `TOOLFRAME_UV` | verified `<runtime-dir>/uv`, otherwise verified download |
+| `--offline` | `TOOLFRAME_OFFLINE` | false; prevents a missing UV, Python, or dependency download |
+| `--max-concurrency` | `TOOLFRAME_MAX_CONCURRENCY` | 60; `0` is unlimited |
+| `--tool-timeout` | `TOOLFRAME_TOOL_TIMEOUT` | 60 seconds; `0` disables |
+| `--result-limit` | `TOOLFRAME_RESULT_LIMIT` | 4 MiB |
+| `--startup-timeout` | `TOOLFRAME_STARTUP_TIMEOUT` | 600 seconds |
 
 Migration, dashboard, and other explicit path overrides are resolved relative
 to the current working directory when they are relative. The exception is
 `--logs-dir`: a relative logs path is resolved from the executable root so
-structured logs remain with the lite-mcp instance.
+structured logs remain with the toolframe instance.
 
 Timeouts are best effort. A blocking thread or native extension cannot always
 be safely killed inside the shared Python process.
@@ -990,7 +992,7 @@ be safely killed inside the shared Python process.
 For local-only access:
 
 ```sh
-./lite-mcp --host 127.0.0.1
+./toolframe --host 127.0.0.1
 ```
 
 For source development, override paths because defaults are intentionally
@@ -1005,7 +1007,7 @@ cargo run --release -- \
   --llms-file ./llms/llms.txt \
   --llms-dir ./llms \
   --workspace-dir ./workspace \
-  --runtime-dir ./.lite-mcp
+  --runtime-dir ./.toolframe
 ```
 
 Streamlit is configured for headless operation, disabled telemetry, CORS/XSRF

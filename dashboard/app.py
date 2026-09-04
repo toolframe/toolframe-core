@@ -1,22 +1,22 @@
-"""Editable Streamlit entry point for an app built on Lite MCP.
+"""Editable Streamlit entry point for an app built on Toolframe.
 
 Add a Python module to ``widgets/`` and export ``render(context)`` to place a
-new widget on this dashboard. The public ``lite_mcp_dashboard`` package owns
+new widget on this dashboard. The public ``toolframe_dashboard`` package owns
 discovery, validation, ordering, and the shared runtime context.
 """
 
 import streamlit as st
-from lite_mcp_dashboard import render_widgets
+from toolframe_dashboard import render_widgets
 
 APP_NAME = "Unnamed"
 
 NO_AUTH_WARNING_HTML = r"""
 <style>
-  #lite-mcp-no-auth-warning[hidden] {
+  #toolframe-no-auth-warning[hidden] {
     display: none;
   }
 
-  #lite-mcp-no-auth-warning {
+  #toolframe-no-auth-warning {
     align-items: flex-start;
     background: rgba(255, 193, 7, 0.16);
     border: 1px solid rgba(255, 193, 7, 0.38);
@@ -30,18 +30,18 @@ NO_AUTH_WARNING_HTML = r"""
     width: 100%;
   }
 
-  #lite-mcp-no-auth-warning-message {
+  #toolframe-no-auth-warning-message {
     align-items: flex-start;
     display: flex;
     gap: 0.65rem;
     line-height: 1.5;
   }
 
-  #lite-mcp-no-auth-warning-icon {
+  #toolframe-no-auth-warning-icon {
     flex: 0 0 auto;
   }
 
-  #lite-mcp-no-auth-warning-dismiss {
+  #toolframe-no-auth-warning-dismiss {
     background: transparent;
     border: 1px solid currentColor;
     border-radius: 0.35rem;
@@ -55,36 +55,36 @@ NO_AUTH_WARNING_HTML = r"""
     padding: 0.25rem 0.55rem;
   }
 
-  #lite-mcp-no-auth-warning-dismiss:hover {
+  #toolframe-no-auth-warning-dismiss:hover {
     opacity: 1;
   }
 
-  #lite-mcp-no-auth-warning-dismiss:focus-visible {
+  #toolframe-no-auth-warning-dismiss:focus-visible {
     outline: 2px solid currentColor;
     outline-offset: 2px;
   }
 
   @media (max-width: 640px) {
-    #lite-mcp-no-auth-warning {
+    #toolframe-no-auth-warning {
       flex-direction: column;
     }
   }
 </style>
 <div
-  id="lite-mcp-no-auth-warning"
-  data-storage-key="lite-mcp.no-auth-warning.dismissed"
+  id="toolframe-no-auth-warning"
+  data-storage-key="toolframe.no-auth-warning.dismissed"
   role="alert"
   hidden
 >
-  <div id="lite-mcp-no-auth-warning-message">
-    <span id="lite-mcp-no-auth-warning-icon" aria-hidden="true">⚠️</span>
+  <div id="toolframe-no-auth-warning-message">
+    <span id="toolframe-no-auth-warning-icon" aria-hidden="true">⚠️</span>
     <span>
       This dashboard has no authentication. Anyone who can reach this app on
       your LAN can view its data and use the interactions you expose.
     </span>
   </div>
   <button
-    id="lite-mcp-no-auth-warning-dismiss"
+    id="toolframe-no-auth-warning-dismiss"
     type="button"
     title="Hide this warning permanently in this browser"
   >
@@ -93,8 +93,8 @@ NO_AUTH_WARNING_HTML = r"""
 </div>
 <script>
   (() => {
-    const warning = document.getElementById("lite-mcp-no-auth-warning");
-    const dismiss = document.getElementById("lite-mcp-no-auth-warning-dismiss");
+    const warning = document.getElementById("toolframe-no-auth-warning");
+    const dismiss = document.getElementById("toolframe-no-auth-warning-dismiss");
     if (!warning || !dismiss) return;
 
     const storageKey = warning.dataset.storageKey;
@@ -126,7 +126,7 @@ NO_AUTH_WARNING_HTML = r"""
 st.set_page_config(page_title=APP_NAME, page_icon="🧰", layout="wide")
 
 st.title(APP_NAME)
-st.caption("Powered by Lite MCP · Edit dashboard/app.py or add Python widgets.")
+st.caption("Powered by Toolframe · Edit dashboard/app.py or add Python widgets.")
 if APP_NAME == "Unnamed":
     st.warning(
         "This app is still unnamed. Ask your development agent to suggest a "

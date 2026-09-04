@@ -17,9 +17,9 @@ class ServerListenerTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "LITE_MCP_LISTEN_FD": "12",
-                "LITE_MCP_HOST": "127.0.0.1",
-                "LITE_MCP_PORT": "8000",
+                "TOOLFRAME_LISTEN_FD": "12",
+                "TOOLFRAME_HOST": "127.0.0.1",
+                "TOOLFRAME_PORT": "8000",
             },
             clear=True,
         ):
@@ -28,16 +28,16 @@ class ServerListenerTests(unittest.TestCase):
     def test_falls_back_to_host_and_port_for_windows(self):
         with patch.dict(
             os.environ,
-            {"LITE_MCP_HOST": "::1", "LITE_MCP_PORT": "8123"},
+            {"TOOLFRAME_HOST": "::1", "TOOLFRAME_PORT": "8123"},
             clear=True,
         ):
             self.assertEqual(_listener_arguments(), {"host": "::1", "port": 8123})
 
     def test_rejects_invalid_listener_settings(self):
         invalid_environments = (
-            {"LITE_MCP_LISTEN_FD": "not-a-number"},
-            {"LITE_MCP_HOST": "127.0.0.1", "LITE_MCP_PORT": "0"},
-            {"LITE_MCP_HOST": "127.0.0.1", "LITE_MCP_PORT": "65536"},
+            {"TOOLFRAME_LISTEN_FD": "not-a-number"},
+            {"TOOLFRAME_HOST": "127.0.0.1", "TOOLFRAME_PORT": "0"},
+            {"TOOLFRAME_HOST": "127.0.0.1", "TOOLFRAME_PORT": "65536"},
         )
         for environment in invalid_environments:
             with (

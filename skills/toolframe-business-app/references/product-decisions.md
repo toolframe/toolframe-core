@@ -1,7 +1,7 @@
 # Product decision history
 
 This is the durable record of the `product_grill` that shaped
-`lite-mcp-business-app`. It is decision history for maintainers and reviewers,
+`toolframe-business-app`. It is decision history for maintainers and reviewers,
 not normal activation context. The primary agent answered these questions as
 product owner under the user's instruction to show every question,
 recommendation, answer, and rationale before implementation.
@@ -22,7 +22,7 @@ recommendation, answer, and rationale before implementation.
 
 ### Q2 — What does the executable mean to the owner?
 
-- **Question:** Should the handbook describe `lite-mcp` as a generic server,
+- **Question:** Should the handbook describe `toolframe` as a generic server,
   or as a local business handoff tool with a human dashboard and peer-agent
   MCP interface?
 - **Recommendation:** Explain it as one LAN-first executable that runs the
@@ -79,7 +79,7 @@ recommendation, answer, and rationale before implementation.
 
 ### Q7 — Who owns schedule, Job, and Attempt?
 
-- **Question:** Should `lite-mcp` implement recurrence and scheduling, or
+- **Question:** Should `toolframe` implement recurrence and scheduling, or
   distinguish an external schedule, the durable Job, and each agent run?
 - **Recommendation:** Keep schedule ownership external. `Job` is the durable
   business request; `Attempt` is one claim/execution; a scheduler decides when
@@ -185,7 +185,7 @@ recommendation, answer, and rationale before implementation.
   data have a clear ownership boundary?
 - **Recommendation:** User business tables and migrations are app-owned,
   conventionally prefixed `app_`; runtime-managed tables/contracts remain
-  owned by `lite-mcp`.
+  owned by `toolframe`.
 - **Product-owner answer:** Keep `app_` ownership explicit and separate.
 - **Rationale/tradeoff:** Upgrades and diagnosis are safer; an app cannot rely
   on undocumented runtime internals.
@@ -315,7 +315,7 @@ recommendation, answer, and rationale before implementation.
 - **Question:** Is a repository-only skill sufficient, or must packaging make
   the executable and its business-first handbook travel together?
 - **Recommendation:** Package the single skill at
-  `skills/lite-mcp-business-app` alongside the editable distribution, with
+  `skills/toolframe-business-app` alongside the editable distribution, with
   source as canonical.
 - **Product-owner answer:** Ship the skill with the distribution.
 - **Rationale/tradeoff:** An agent receives both capability and guidance in one
@@ -351,7 +351,7 @@ recommendation, answer, and rationale before implementation.
 
 - **Question:** What evidence must accompany “done”?
 - **Recommendation:** Run focused migration/domain/tool/dashboard/idempotency
-  and error-path tests, repository formatting/lint, `./lite-mcp check --format
+  and error-path tests, repository formatting/lint, `./toolframe check --format
   json`, then verify startup, `/info`, `/`, `/mcp`, and the printed LAN URL.
 - **Product-owner answer:** Tests and runtime checks are mandatory gates.
 - **Rationale/tradeoff:** This catches an unstartable dashboard, broken tool, or
@@ -390,7 +390,7 @@ recommendation, answer, and rationale before implementation.
 - **Question:** Must the owner manually install the shipped handbook, or should
   normal server startup place a production copy in the app's agent-skill path?
 - **Recommendation:** Atomically create
-  `.agents/skills/lite-mcp-business-app` beside the executable on normal server
+  `.agents/skills/toolframe-business-app` beside the executable on normal server
   startup. Preserve an existing directory, fail on unsafe path types, and keep
   source/evaluation material separate.
 - **Product-owner answer:** Auto-install the skill under `.agents/skills`; omit
@@ -436,17 +436,17 @@ recommendation, answer, and rationale before implementation.
 
 ## Round 10 — application identity (Q35)
 
-### Q35 — Is Lite MCP the app name or the framework name?
+### Q35 — Is Toolframe the app name or the framework name?
 
-- **Question:** Should every fresh local app present itself as Lite MCP, or
-  should Lite MCP remain framework attribution while each owner's business app
+- **Question:** Should every fresh local app present itself as Toolframe, or
+  should Toolframe remain framework attribution while each owner's business app
   receives a distinct name?
 - **Recommendation:** Initialize owner-facing identity as the visible sentinel
   `Unnamed`. During development, proactively propose two or three
   business-specific names with one recommendation, then apply the owner's
   choice or a clearly recorded provisional recommendation consistently across
   the Dashboard, app context, and LAN agent guide.
-- **Product-owner answer:** Lite MCP is only the framework name. The Dashboard
+- **Product-owner answer:** Toolframe is only the framework name. The Dashboard
   starts as `Unnamed` so the missing identity is noticeable, and the
   development agent must suggest an app name automatically.
 - **Rationale/tradeoff:** Distinct names let humans and peer agents identify
@@ -458,11 +458,11 @@ recommendation, answer, and rationale before implementation.
 
 ### Q36 — How should MCP tools access `data/data.db`?
 
-- **Question:** Should each Python tool import `sqlite3`, read `LITE_MCP_DB`,
+- **Question:** Should each Python tool import `sqlite3`, read `TOOLFRAME_DB`,
   and create its own connection, or should it consume database access supplied
   by the application runtime?
 - **Recommendation:** FastAPI has no built-in database-access implementation;
-  use its application lifecycle to configure one `lite_mcp_db` adapter before
+  use its application lifecycle to configure one `toolframe_db` adapter before
   tool import. Expose bounded `query()` and DML-only `execute()` methods so
   `execute_sql` and narrow tools share the same policy and error contract.
 - **Product-owner answer:** Do not let `execute_sql` create a SQLite connection

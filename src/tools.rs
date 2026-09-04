@@ -23,7 +23,7 @@ const CORE_DEPENDENCIES: &[&str] = &[
     "streamlit==1.61.0",
     "uvicorn==0.42.0",
 ];
-const DASHBOARD_PROJECT_NAME: &str = "lite-mcp-dashboard";
+const DASHBOARD_PROJECT_NAME: &str = "toolframe-dashboard";
 const DASHBOARD_PROJECT_VERSION: &str = "0.0.0";
 
 #[derive(Debug, Clone, Serialize)]
@@ -254,7 +254,7 @@ pub fn runtime_project_toml(
     let dependencies = runtime_dependencies(catalog, dashboard);
     toml::to_string_pretty(&RuntimeProject {
         project: ProjectMetadata {
-            name: "lite-mcp-runtime",
+            name: "toolframe-runtime",
             version: "0.0.0",
             requires_python: PYTHON_REQUIREMENT,
             dependencies: &dependencies,
@@ -484,7 +484,7 @@ mod tests {
         );
         let dashboard_path = write_dashboard_manifest(
             directory.path(),
-            "name = \"lite-mcp-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14,<3.15\"\ndependencies = [\"duckdb==1.4.0\", \"httpx==1.0.0\"]\n",
+            "name = \"toolframe-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14,<3.15\"\ndependencies = [\"duckdb==1.4.0\", \"httpx==1.0.0\"]\n",
         );
 
         let catalog = discover(directory.path()).expect("discover tools");
@@ -527,7 +527,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("create temp directory");
         let path = write_dashboard_manifest(
             directory.path(),
-            "name = \"lite-mcp-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.15\"\ndependencies = []\n",
+            "name = \"toolframe-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.15\"\ndependencies = []\n",
         );
         assert!(
             inspect_dashboard_manifest(&path)
@@ -538,7 +538,7 @@ mod tests {
 
         fs::write(
             &path,
-            "[project]\nname = \"lite-mcp-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = [\"   \"]\n",
+            "[project]\nname = \"toolframe-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = [\"   \"]\n",
         )
         .expect("replace dashboard manifest");
         assert!(
@@ -550,7 +550,7 @@ mod tests {
 
         fs::write(
             &path,
-            "[project]\nname = \"lite-mcp-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = []\ndescription = \"unsupported\"\n\n[tool.uv]\npackage = false\n",
+            "[project]\nname = \"toolframe-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = []\ndescription = \"unsupported\"\n\n[tool.uv]\npackage = false\n",
         )
         .expect("replace dashboard manifest");
         let error = inspect_dashboard_manifest(&path).unwrap_err().to_string();

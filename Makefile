@@ -8,7 +8,7 @@ help:
 	@printf '%s\n' \
 		'Available targets:' \
 		'  make build                Build only the optimized host Rust binary' \
-		'  make package              Build one host binary at dist/lite-mcp' \
+		'  make package              Build one host binary at dist/toolframe' \
 		'  make release              Build arm64 and Intel macOS 12+ releases' \
 		'  make release TARGET=...   Build one supported Rust target release' \
 		'  make release-macos-arm    Build only the macOS 12+ arm64 release' \

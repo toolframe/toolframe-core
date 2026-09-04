@@ -1,4 +1,4 @@
-"""Example interactive widget for the shared Lite MCP SQLite database.
+"""Example interactive widget for the shared Toolframe SQLite database.
 
 This is intentionally ordinary, editable Streamlit code. It demonstrates the
 public dashboard database API without hiding application behavior in a custom
@@ -11,7 +11,7 @@ import math
 from typing import Any
 
 import streamlit as st
-from lite_mcp_dashboard import DashboardContext, DashboardDatabaseError
+from toolframe_dashboard import DashboardContext, DashboardDatabaseError
 
 TITLE = "Example entries"
 ORDER = 100
@@ -31,7 +31,7 @@ _EXPECTED_DATABASE_ERRORS = frozenset(
 
 
 class _ValidationError(Exception):
-    """A value the user can correct without restarting Lite MCP."""
+    """A value the user can correct without restarting Toolframe."""
 
 
 class _ConflictError(Exception):

@@ -16,14 +16,14 @@ use crate::tools::{
 };
 
 const CORE_SERVER: &str = include_str!("../core/server.py");
-const CORE_SUPPORT: &str = include_str!("../core/lite_mcp_runtime.py");
-const CORE_DASHBOARD: &str = include_str!("../core/lite_mcp_dashboard.py");
-const CORE_DATABASE: &str = include_str!("../core/lite_mcp_db.py");
-const CORE_IDEMPOTENCY: &str = include_str!("../core/lite_mcp_idempotency.py");
-const CORE_ARTIFACTS: &str = include_str!("../core/lite_mcp_artifacts.py");
-const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/lite_mcp_dashboard_runner.py");
-const CORE_LOGGING: &str = include_str!("../core/lite_mcp_logging.py");
-const CORE_CLI: &str = include_str!("../core/lite_mcp_cli.py");
+const CORE_SUPPORT: &str = include_str!("../core/toolframe_runtime.py");
+const CORE_DASHBOARD: &str = include_str!("../core/toolframe_dashboard.py");
+const CORE_DATABASE: &str = include_str!("../core/toolframe_db.py");
+const CORE_IDEMPOTENCY: &str = include_str!("../core/toolframe_idempotency.py");
+const CORE_ARTIFACTS: &str = include_str!("../core/toolframe_artifacts.py");
+const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/toolframe_dashboard_runner.py");
+const CORE_LOGGING: &str = include_str!("../core/toolframe_logging.py");
+const CORE_CLI: &str = include_str!("../core/toolframe_cli.py");
 const INFO_PAGE: &str = include_str!("../static/index.html");
 const DEFAULT_SQL_TOOL: &str = include_str!("../tools/execute_sql.py");
 const ARTIFACT_TOOL_EXAMPLE: &str = include_str!("../tools/_artifact_example.py");
@@ -55,39 +55,39 @@ static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const EMBEDDED_BUSINESS_SKILL_FILES: &[(&str, &[u8])] = &[
     (
         "SKILL.md",
-        include_bytes!("../skills/lite-mcp-business-app/SKILL.md"),
+        include_bytes!("../skills/toolframe-business-app/SKILL.md"),
     ),
     (
         "agents/openai.yaml",
-        include_bytes!("../skills/lite-mcp-business-app/agents/openai.yaml"),
+        include_bytes!("../skills/toolframe-business-app/agents/openai.yaml"),
     ),
     (
         "assets/APP_CONTEXT.template.md",
-        include_bytes!("../skills/lite-mcp-business-app/assets/APP_CONTEXT.template.md"),
+        include_bytes!("../skills/toolframe-business-app/assets/APP_CONTEXT.template.md"),
     ),
     (
         "assets/DOMAIN_MODEL.template.md",
-        include_bytes!("../skills/lite-mcp-business-app/assets/DOMAIN_MODEL.template.md"),
+        include_bytes!("../skills/toolframe-business-app/assets/DOMAIN_MODEL.template.md"),
     ),
     (
         "assets/MCP_UNAVAILABLE_ISSUE.template.md",
-        include_bytes!("../skills/lite-mcp-business-app/assets/MCP_UNAVAILABLE_ISSUE.template.md"),
+        include_bytes!("../skills/toolframe-business-app/assets/MCP_UNAVAILABLE_ISSUE.template.md"),
     ),
     (
         "references/development-handbook.md",
-        include_bytes!("../skills/lite-mcp-business-app/references/development-handbook.md"),
+        include_bytes!("../skills/toolframe-business-app/references/development-handbook.md"),
     ),
     (
         "references/job-domain-model.md",
-        include_bytes!("../skills/lite-mcp-business-app/references/job-domain-model.md"),
+        include_bytes!("../skills/toolframe-business-app/references/job-domain-model.md"),
     ),
     (
         "references/operations-handbook.md",
-        include_bytes!("../skills/lite-mcp-business-app/references/operations-handbook.md"),
+        include_bytes!("../skills/toolframe-business-app/references/operations-handbook.md"),
     ),
     (
         "references/product-decisions.md",
-        include_bytes!("../skills/lite-mcp-business-app/references/product-decisions.md"),
+        include_bytes!("../skills/toolframe-business-app/references/product-decisions.md"),
     ),
 ];
 
@@ -128,7 +128,7 @@ pub fn prepare_logs_dir(root: &Path, configured: Option<&Path>) -> Result<PathBu
     let path = match configured {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         Some(path) => root.join(path),
-        None => root.join(".lite-mcp").join("logs"),
+        None => root.join(".toolframe").join("logs"),
     };
     fs::create_dir_all(&path)
         .with_context(|| format!("could not create logs directory {}", path.display()))?;
@@ -140,11 +140,11 @@ pub fn prepare_logs_dir(root: &Path, configured: Option<&Path>) -> Result<PathBu
 }
 
 pub fn executable_root() -> Result<PathBuf> {
-    let executable = env::current_exe().context("could not locate the lite-mcp executable")?;
+    let executable = env::current_exe().context("could not locate the toolframe executable")?;
     executable
         .parent()
         .map(Path::to_path_buf)
-        .ok_or_else(|| anyhow!("the lite-mcp executable has no parent directory"))
+        .ok_or_else(|| anyhow!("the toolframe executable has no parent directory"))
 }
 
 /// Install the bundled, business-first skill beside the executable.
@@ -157,7 +157,7 @@ pub fn executable_root() -> Result<PathBuf> {
 pub fn install_business_skill(executable_root: &Path) -> Result<bool> {
     let agents = executable_root.join(".agents");
     let skills = agents.join("skills");
-    let target = skills.join("lite-mcp-business-app");
+    let target = skills.join("toolframe-business-app");
 
     ensure_real_directory(&agents, ".agents")?;
     ensure_real_directory(&skills, ".agents/skills")?;
@@ -186,7 +186,7 @@ pub fn install_business_skill(executable_root: &Path) -> Result<bool> {
     }
 
     let staging_directory = tempfile::Builder::new()
-        .prefix(".lite-mcp-business-app-")
+        .prefix(".toolframe-business-app-")
         .suffix(".tmp")
         .tempdir_in(&skills)
         .with_context(|| {
@@ -357,7 +357,7 @@ pub fn resolve_paths(
         tools: absolute_override(tools, &cwd, &root.join("tools")),
         dashboard: absolute_override(dashboard, &cwd, &root.join("dashboard")),
         workspace: absolute_override(workspace, &cwd, &root.join("workspace")),
-        runtime: absolute_override(runtime, &cwd, &root.join(".lite-mcp")),
+        runtime: absolute_override(runtime, &cwd, &root.join(".toolframe")),
         llms_file: absolute_override(llms_file, &cwd, &llms_dir_default.join("llms.txt")),
         llms_dir: absolute_override(llms_dir, &cwd, &llms_dir_default),
     })
@@ -448,14 +448,14 @@ pub fn prepare_runtime(
     }
 
     let core_server = core_dir.join("server.py");
-    let core_support = core_dir.join("lite_mcp_runtime.py");
-    let dashboard_sdk = core_dir.join("lite_mcp_dashboard.py");
-    let database_sdk = core_dir.join("lite_mcp_db.py");
-    let idempotency = core_dir.join("lite_mcp_idempotency.py");
-    let artifacts_sdk = core_dir.join("lite_mcp_artifacts.py");
-    let dashboard_runner = core_dir.join("lite_mcp_dashboard_runner.py");
-    let core_logging = core_dir.join("lite_mcp_logging.py");
-    let cli_runner = core_dir.join("lite_mcp_cli.py");
+    let core_support = core_dir.join("toolframe_runtime.py");
+    let dashboard_sdk = core_dir.join("toolframe_dashboard.py");
+    let database_sdk = core_dir.join("toolframe_db.py");
+    let idempotency = core_dir.join("toolframe_idempotency.py");
+    let artifacts_sdk = core_dir.join("toolframe_artifacts.py");
+    let dashboard_runner = core_dir.join("toolframe_dashboard_runner.py");
+    let core_logging = core_dir.join("toolframe_logging.py");
+    let cli_runner = core_dir.join("toolframe_cli.py");
     let info_page = core_dir.join("info.html");
     write_managed(&core_server, CORE_SERVER)?;
     write_managed(&core_support, CORE_SUPPORT)?;
@@ -705,7 +705,7 @@ fn scaffold_llms_file_if_missing(path: &Path) -> Result<bool> {
 
     let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let staging = parent.join(format!(
-        ".lite-mcp-llms-file-{}-{sequence}.tmp",
+        ".toolframe-llms-file-{}-{sequence}.tmp",
         std::process::id()
     ));
     let mut published = false;
@@ -791,7 +791,7 @@ fn scaffold_directory_if_missing(path: &Path, label: &str, files: &[(&str, &str)
     })?;
 
     let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let staging_name = format!(".lite-mcp-{label}-{}-{sequence}.tmp", std::process::id());
+    let staging_name = format!(".toolframe-{label}-{}-{sequence}.tmp", std::process::id());
     let staging = parent.join(staging_name);
     fs::create_dir(&staging).with_context(|| {
         format!(
@@ -1048,7 +1048,7 @@ mod tests {
     fn installs_exact_runtime_skill_files_without_evals_and_only_once() {
         let directory = tempfile::tempdir().expect("create temp directory");
         let root = directory.path();
-        let target = root.join(".agents/skills/lite-mcp-business-app");
+        let target = root.join(".agents/skills/toolframe-business-app");
 
         assert!(install_business_skill(root).expect("install business skill"));
 
@@ -1058,7 +1058,7 @@ mod tests {
             .collect();
         let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("skills")
-            .join("lite-mcp-business-app");
+            .join("toolframe-business-app");
         let source_production_files = installed_skill_files(&source_root)
             .into_iter()
             .filter(|relative| {
@@ -1105,7 +1105,7 @@ mod tests {
     fn preserves_an_existing_real_skill_directory_without_repairing_it() {
         let directory = tempfile::tempdir().expect("create temp directory");
         let root = directory.path();
-        let target = root.join(".agents/skills/lite-mcp-business-app");
+        let target = root.join(".agents/skills/toolframe-business-app");
         fs::create_dir_all(&target).expect("create existing skill directory");
         fs::write(target.join("SKILL.md"), b"owner version\n").expect("write owner skill");
         fs::create_dir(target.join("custom")).expect("create owner directory");
@@ -1129,7 +1129,7 @@ mod tests {
         let cases = [
             (".agents", ".agents"),
             (".agents/skills", ".agents/skills"),
-            (".agents/skills/lite-mcp-business-app", "target path"),
+            (".agents/skills/toolframe-business-app", "target path"),
         ];
         for (relative, label) in cases {
             let directory = tempfile::tempdir().expect("create temp directory");
@@ -1162,7 +1162,7 @@ mod tests {
         let cases = [
             (".agents", ".agents"),
             (".agents/skills", ".agents/skills"),
-            (".agents/skills/lite-mcp-business-app", "target path"),
+            (".agents/skills/toolframe-business-app", "target path"),
         ];
         for (relative, label) in cases {
             let directory = tempfile::tempdir().expect("create temp directory");
@@ -1214,7 +1214,7 @@ mod tests {
         assert_eq!(results.iter().filter(|installed| **installed).count(), 1);
         assert_eq!(results.iter().filter(|installed| !**installed).count(), 1);
 
-        let target = root.join(".agents/skills/lite-mcp-business-app");
+        let target = root.join(".agents/skills/toolframe-business-app");
         let expected_files: BTreeSet<PathBuf> = EMBEDDED_BUSINESS_SKILL_FILES
             .iter()
             .map(|(relative, _)| PathBuf::from(relative))
@@ -1225,7 +1225,7 @@ mod tests {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             assert!(
-                !name.starts_with(".lite-mcp-business-app-") || !name.ends_with(".tmp"),
+                !name.starts_with(".toolframe-business-app-") || !name.ends_with(".tmp"),
                 "partial staging directory remains: {name}"
             );
         }
@@ -1256,16 +1256,16 @@ mod tests {
             .expect("managed core directory");
 
         assert_eq!(
-            fs::read_to_string(core.join("lite_mcp_db.py")).expect("read database support"),
+            fs::read_to_string(core.join("toolframe_db.py")).expect("read database support"),
             CORE_DATABASE
         );
         assert_eq!(
-            fs::read_to_string(core.join("lite_mcp_idempotency.py"))
+            fs::read_to_string(core.join("toolframe_idempotency.py"))
                 .expect("read idempotency support"),
             CORE_IDEMPOTENCY
         );
         assert_eq!(
-            fs::read_to_string(core.join("lite_mcp_artifacts.py")).expect("read artifact support"),
+            fs::read_to_string(core.join("toolframe_artifacts.py")).expect("read artifact support"),
             CORE_ARTIFACTS
         );
     }
@@ -1322,7 +1322,7 @@ mod tests {
             tools: directory.path().join("tools"),
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),
-            runtime: directory.path().join(".lite-mcp"),
+            runtime: directory.path().join(".toolframe"),
             llms_file: llms_dir.join("llms.txt"),
             llms_dir,
         };
@@ -1336,7 +1336,7 @@ mod tests {
             DEFAULT_LLMS_FILE
         );
         assert!(DEFAULT_LLMS_FILE.starts_with("# Unnamed\n"));
-        assert!(DEFAULT_LLMS_FILE.contains("built on the Lite MCP framework"));
+        assert!(DEFAULT_LLMS_FILE.contains("built on the Toolframe framework"));
         for (relative, expected) in EMBEDDED_LLMS_TREE {
             let child = paths.llms_dir.join(relative);
             assert!(child.is_file(), "missing llms scaffold file {relative}");
@@ -1371,7 +1371,7 @@ mod tests {
             tools: directory.path().join("tools"),
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),
-            runtime: directory.path().join(".lite-mcp"),
+            runtime: directory.path().join(".toolframe"),
             llms_file: llms_dir.join("llms.txt"),
             llms_dir,
         };
@@ -1518,7 +1518,7 @@ mod tests {
 
     #[test]
     fn resolves_defaults_beside_the_executable_root() {
-        let root = Path::new("/tmp/lite-mcp-dist");
+        let root = Path::new("/tmp/toolframe-dist");
         let paths = resolve_paths(root, None, None, None, None, None, None, None, None)
             .expect("resolve paths");
         assert_eq!(paths.database, root.join("data").join("data.db"));
@@ -1526,7 +1526,7 @@ mod tests {
         assert_eq!(paths.tools, root.join("tools"));
         assert_eq!(paths.dashboard, root.join("dashboard"));
         assert_eq!(paths.workspace, root.join("workspace"));
-        assert_eq!(paths.runtime, root.join(".lite-mcp"));
+        assert_eq!(paths.runtime, root.join(".toolframe"));
         assert_eq!(paths.llms_file, root.join("llms").join("llms.txt"));
         assert_eq!(paths.llms_dir, root.join("llms"));
     }
@@ -1550,7 +1550,7 @@ mod tests {
             defaults,
             directory
                 .path()
-                .join(".lite-mcp")
+                .join(".toolframe")
                 .join("logs")
                 .canonicalize()
                 .expect("canonical default logs")
@@ -1567,7 +1567,7 @@ mod tests {
 
     #[test]
     fn resolves_relative_dashboard_override_from_the_current_directory() {
-        let root = Path::new("/tmp/lite-mcp-dist");
+        let root = Path::new("/tmp/toolframe-dist");
         let cwd = env::current_dir().expect("read current directory");
         let paths = resolve_paths(
             root,
@@ -1586,7 +1586,7 @@ mod tests {
 
     #[test]
     fn resolves_relative_migrations_override_from_the_current_directory() {
-        let root = Path::new("/tmp/lite-mcp-dist");
+        let root = Path::new("/tmp/toolframe-dist");
         let cwd = env::current_dir().expect("read current directory");
         let paths = resolve_paths(
             root,

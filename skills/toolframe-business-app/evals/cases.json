@@ -1,51 +1,51 @@
 {
   "version": 1,
-  "skill": "lite-mcp-business-app",
+  "skill": "toolframe-business-app",
   "routing": {
     "should_activate": [
       {
         "id": "route-positive-01",
-        "prompt": "I have the lite-mcp folder but I am not technical. Build me a LAN dashboard where scheduled agents claim pending work, read my instructions, report progress, and leave results for review."
+        "prompt": "I have the toolframe folder but I am not technical. Build me a LAN dashboard where scheduled agents claim pending work, read my instructions, report progress, and leave results for review."
       },
       {
         "id": "route-positive-02",
-        "prompt": "Turn this editable lite-mcp binary folder into a small inventory approval app. Add the SQLite migrations, MCP tools, dashboard widgets, and a handbook for the next agent."
+        "prompt": "Turn this editable toolframe binary folder into a small inventory approval app. Add the SQLite migrations, MCP tools, dashboard widgets, and a handbook for the next agent."
       },
       {
         "id": "route-positive-03",
-        "prompt": "Doctor this lite-mcp business app: check fails after I added 0003 and the dashboard no longer starts. Explain it without asking me to debug Python."
+        "prompt": "Doctor this toolframe business app: check fails after I added 0003 and the dashboard no longer starts. Explain it without asking me to debug Python."
       },
       {
         "id": "route-positive-04",
-        "prompt": "Is lite-mcp still the right fit for this local office workflow, or has it grown into something that needs a dedicated app?"
+        "prompt": "Is toolframe still the right fit for this local office workflow, or has it grown into something that needs a dedicated app?"
       },
       {
         "id": "route-positive-05",
-        "prompt": "Add another business state and review action to my existing lite-mcp app, update its domain docs, and prove peer agents can still use /mcp."
+        "prompt": "Add another business state and review action to my existing toolframe app, update its domain docs, and prove peer agents can still use /mcp."
       },
       {
         "id": "route-positive-06",
-        "prompt": "Help a peer Codex on my LAN use the job tools from this lite-mcp app, and make the dashboard clear enough for a nontechnical reviewer."
+        "prompt": "Help a peer Codex on my LAN use the job tools from this toolframe app, and make the dashboard clear enough for a nontechnical reviewer."
       },
       {
         "id": "route-positive-07",
-        "prompt": "My scheduled workflow cannot reach the LAN lite-mcp server. Warn me without marking the task failed and give me a complete issue I can copy to the maintainer."
+        "prompt": "My scheduled workflow cannot reach the LAN toolframe server. Warn me without marking the task failed and give me a complete issue I can copy to the maintainer."
       },
       {
         "id": "route-positive-08",
-        "prompt": "Customize this lite-mcp app's /llms.txt discovery pages so another LAN agent can register /mcp and build my approval workflow from the published capabilities."
+        "prompt": "Customize this toolframe app's /llms.txt discovery pages so another LAN agent can register /mcp and build my approval workflow from the published capabilities."
       }
     ],
     "should_not_activate": [
       {
         "id": "route-negative-01",
         "prompt": "Build a generic FastMCP server with OAuth and deploy it to Kubernetes.",
-        "reason": "Generic public-service development is outside the editable lite-mcp business-app boundary."
+        "reason": "Generic public-service development is outside the editable toolframe business-app boundary."
       },
       {
         "id": "route-negative-02",
         "prompt": "Make this standalone Streamlit chart look better and add Plotly.",
-        "reason": "Standalone frontend work does not involve a lite-mcp business app."
+        "reason": "Standalone frontend work does not involve a toolframe business app."
       },
       {
         "id": "route-negative-03",
@@ -72,7 +72,7 @@
   "progressive_reads": [
     {
       "id": "read-build-job-desk",
-      "prompt": "Build the scheduled-agent job desk in my lite-mcp folder.",
+      "prompt": "Build the scheduled-agent job desk in my toolframe folder.",
       "expected": [
         "references/development-handbook.md",
         "references/job-domain-model.md",
@@ -86,7 +86,7 @@
     },
     {
       "id": "read-doctor",
-      "prompt": "Doctor why this lite-mcp dashboard fails startup after a widget edit.",
+      "prompt": "Doctor why this toolframe dashboard fails startup after a widget edit.",
       "expected": [
         "references/operations-handbook.md"
       ],
@@ -97,7 +97,7 @@
     },
     {
       "id": "read-fit-check",
-      "prompt": "Can lite-mcp safely be the public customer portal for this workflow?",
+      "prompt": "Can toolframe safely be the public customer portal for this workflow?",
       "expected": [
         "references/operations-handbook.md"
       ],
@@ -107,7 +107,7 @@
     },
     {
       "id": "read-custom-business-app",
-      "prompt": "Create a local equipment checkout app in lite-mcp; it has no worker queue.",
+      "prompt": "Create a local equipment checkout app in toolframe; it has no worker queue.",
       "expected": [
         "references/development-handbook.md",
         "references/operations-handbook.md",
@@ -121,7 +121,7 @@
     },
     {
       "id": "read-maintain-skill",
-      "prompt": "Review why the lite-mcp-business-app handbook chose these Job states before changing the skill.",
+      "prompt": "Review why the toolframe-business-app handbook chose these Job states before changing the skill.",
       "expected": [
         "references/product-decisions.md",
         "evals/cases.json"
@@ -157,9 +157,9 @@
   "end_to_end": [
     {
       "id": "e2e-scheduled-job-desk",
-      "prompt": "In a fresh editable lite-mcp distribution, build a scheduled-agent work desk for a nontechnical owner. A peer agent claims due work, reads an immutable instruction context, records progress, submits a result, and waits for human review.",
+      "prompt": "In a fresh editable toolframe distribution, build a scheduled-agent work desk for a nontechnical owner. A peer agent claims due work, reads an immutable instruction context, records progress, submits a result, and waits for human review.",
       "assertions": [
-        "The agent identifies scheduling as external and lite-mcp as the durable LAN handoff layer.",
+        "The agent identifies scheduling as external and toolframe as the durable LAN handoff layer.",
         "APP_CONTEXT.md and DOMAIN_MODEL.md are created or reconciled before implementation completes.",
         "The Job FSM, transition guards, leases, attempts, context versions, results, reviews, and events are explicit.",
         "Applied migration history is preserved and schema changes use the next contiguous migration.",
@@ -172,14 +172,14 @@
     },
     {
       "id": "e2e-non-queue-app",
-      "prompt": "Build a tiny LAN-only visitor log in lite-mcp for one receptionist. It needs data entry, a daily dashboard, and a peer agent tool for summaries, but no job queue.",
+      "prompt": "Build a tiny LAN-only visitor log in toolframe for one receptionist. It needs data entry, a daily dashboard, and a peer agent tool for summaries, but no job queue.",
       "assertions": [
-        "The agent notices the fresh Unnamed identity, proposes business-specific app names with one recommendation, and does not use Lite MCP as the app name.",
+        "The agent notices the fresh Unnamed identity, proposes business-specific app names with one recommendation, and does not use Toolframe as the app name.",
         "The agent uses the business-first workflow without forcing the canonical Job domain onto the app.",
         "The schema, tools, widget, and local docs use visitor-log language.",
         "The MCP surface exposes only intent-shaped business queries or commands required by the visitor workflow; it does not mirror visitor tables as generic CRUD tools.",
         "The agent still applies migration, parameterization, validation, check, startup, LAN, and escalation rules.",
-        "The chosen or explicitly provisional app name replaces Unnamed consistently in the Dashboard, APP_CONTEXT.md, llms/llms.txt, and llms/context.md while Lite MCP remains the framework name."
+        "The chosen or explicitly provisional app name replaces Unnamed consistently in the Dashboard, APP_CONTEXT.md, llms/llms.txt, and llms/context.md while Toolframe remains the framework name."
       ]
     },
     {
@@ -221,7 +221,7 @@
     {
       "id": "install-production-skill-on-serve",
       "assertions": [
-        "A normal server start atomically creates <executable-root>/.agents/skills/lite-mcp-business-app when absent.",
+        "A normal server start atomically creates <executable-root>/.agents/skills/toolframe-business-app when absent.",
         "The installed copy contains SKILL.md, agents metadata, production assets, and references with exact source bytes.",
         "No evals or evaluations directory is installed.",
         "An existing real target directory is preserved byte for byte and is never completed or upgraded automatically.",
@@ -233,11 +233,11 @@
   "runtime_layout": [
     {
       "id": "explain-current-data-and-runtime-layout",
-      "prompt": "Show me where this lite-mcp app keeps its database, LAN guide, UV runtime, Python cache, and logs after the first start.",
+      "prompt": "Show me where this toolframe app keeps its database, LAN guide, UV runtime, Python cache, and logs after the first start.",
       "assertions": [
         "The business database is <executable-root>/data/data.db.",
         "The editable discovery index is <executable-root>/llms/llms.txt while its public route remains /llms.txt, and the other direct Markdown documents stay in the same llms directory.",
-        "Private UV, Python, bytecode cache, dependency cache, generated core, manifests, environments, and logs stay under <executable-root>/.lite-mcp/.",
+        "Private UV, Python, bytecode cache, dependency cache, generated core, manifests, environments, and logs stay under <executable-root>/.toolframe/.",
         "When --uv-path is omitted and the managed UV is absent or invalid, supported macOS builds download the pinned CPU-matched UV with visible progress and ETA, verify the archive and executable checksums, and install it atomically.",
         "Offline mode requires the verified managed UV and other runtime dependencies to exist already."
       ]
@@ -247,10 +247,10 @@
     {
       "id": "shared-data-adapter-and-schema-boundary",
       "assertions": [
-        "The runtime configures one lite_mcp_db adapter before importing startup-loaded tools, and the same contract is available during check and invoke.",
-        "The shipped execute_sql reference obtains database access from lite_mcp_db instead of importing sqlite3 or opening LITE_MCP_DB itself.",
+        "The runtime configures one toolframe_db adapter before importing startup-loaded tools, and the same contract is available during check and invoke.",
+        "The shipped execute_sql reference obtains database access from toolframe_db instead of importing sqlite3 or opening TOOLFRAME_DB itself.",
         "execute_sql is explicitly a fallback data tool: read mode accepts bounded row-returning SQL, write mode accepts parameterized DML, and both return structured retryable errors.",
-        "DDL, PRAGMA, ATTACH, SQLite maintenance operations, and mutations of runtime-owned _lite_mcp_* or sqlite_* tables are rejected without changing schema or internal state.",
+        "DDL, PRAGMA, ATTACH, SQLite maintenance operations, and mutations of runtime-owned _toolframe_* or sqlite_* tables are rejected without changing schema or internal state.",
         "The handbook teaches coding agents to use the shared adapter behind Business RPC tools and reserves every durable schema change for the next contiguous migration written by the primary development agent.",
         "Peer or scheduled agents prefer published Business RPC commands/queries and may use execute_sql only when the app explicitly documents that fallback; they never use it for schema administration."
       ]
@@ -277,7 +277,7 @@
       "assertions": [
         "A freshly scaffolded dashboard uses Unnamed as its browser title and visible heading.",
         "The fresh dashboard visibly explains that Unnamed must be replaced with the app's business name.",
-        "The default llms/llms.txt H1 identifies the application as Unnamed and describes Lite MCP only as its framework.",
+        "The default llms/llms.txt H1 identifies the application as Unnamed and describes Toolframe only as its framework.",
         "Existing Dashboard and llms source remain user-owned and are never overwritten during startup."
       ]
     }

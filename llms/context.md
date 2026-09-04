@@ -5,7 +5,7 @@ Use this as the compact LAN-facing projection of the app's `APP_CONTEXT.md`. Rep
 ## App identity
 
 - Application name: `Unnamed` — replace this with a short, business-specific name selected by the owner or proposed by the development agent.
-- Framework: Lite MCP. Keep this as technical attribution rather than using it as the application name.
+- Framework: Toolframe. Keep this as technical attribution rather than using it as the application name.
 - Naming rationale: `[CUSTOMIZE: which business noun or outcome makes this app recognizable among other LAN apps?]`
 
 ## Purpose

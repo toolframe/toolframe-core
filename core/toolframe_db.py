@@ -1,7 +1,7 @@
-"""Startup-configured, data-only SQLite access for Lite MCP tools.
+"""Startup-configured, data-only SQLite access for Toolframe tools.
 
 FastAPI owns the application lifecycle but does not provide a database access
-API. The Lite MCP runtime configures this adapter before it imports any MCP
+API. The Toolframe runtime configures this adapter before it imports any MCP
 tool, so tool code can reuse one supported contract without opening SQLite
 connections or reading runtime environment variables itself.
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from lite_mcp_dashboard import (
+from toolframe_dashboard import (
     DashboardDatabase,
     DashboardDatabaseError,
     ExecuteResult,
@@ -30,10 +30,10 @@ __all__ = [
 
 
 DatabaseError = DashboardDatabaseError
-_LOGGER = logging.getLogger("lite_mcp.database")
+_LOGGER = logging.getLogger("toolframe.database")
 _DEFAULT_MAX_ROWS = 100
 _DEFAULT_MAX_BYTES = 1024 * 1024
-_PROTECTED_TABLE_PREFIXES = ("_lite_mcp_", "sqlite_")
+_PROTECTED_TABLE_PREFIXES = ("_toolframe_", "sqlite_")
 
 
 class Database:
@@ -112,12 +112,12 @@ def _configure(
 
 
 def get_database() -> Database:
-    """Return database access configured by the Lite MCP runtime."""
+    """Return database access configured by the Toolframe runtime."""
 
     with _configuration_lock:
         if _configured_database is None:
             raise RuntimeError(
-                "lite_mcp_db must be configured before importing tools; "
-                "start the tool through Lite MCP check, invoke, or serve"
+                "toolframe_db must be configured before importing tools; "
+                "start the tool through Toolframe check, invoke, or serve"
             )
         return _configured_database

@@ -28,10 +28,10 @@ __all__ = [
     "run_once",
 ]
 
-_LOGGER = logging.getLogger("lite_mcp.idempotency")
-_TABLE = "_lite_mcp_idempotency"
+_LOGGER = logging.getLogger("toolframe.idempotency")
+_TABLE = "_toolframe_idempotency"
 _RECEIPT_SCHEMA = """
-CREATE TABLE _lite_mcp_idempotency (
+CREATE TABLE _toolframe_idempotency (
     namespace TEXT NOT NULL,
     business_key TEXT NOT NULL,
     input_sha256 TEXT NOT NULL CHECK (length(input_sha256) = 64),
@@ -258,10 +258,10 @@ class IdempotencyTransaction:
 
 
 _audit_fields: contextvars.ContextVar[Mapping[str, Any]] = contextvars.ContextVar(
-    "lite_mcp_idempotency_audit_fields", default=MappingProxyType({})
+    "toolframe_idempotency_audit_fields", default=MappingProxyType({})
 )
 _active_stores: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
-    "lite_mcp_idempotency_active_stores", default=()
+    "toolframe_idempotency_active_stores", default=()
 )
 
 
@@ -598,7 +598,7 @@ def run_once(
     with _configuration_lock:
         store = _configured_store
     if store is None:
-        raise RuntimeError("lite-mcp idempotency is not configured")
+        raise RuntimeError("toolframe idempotency is not configured")
     return store.run_once(namespace, key, input_value, mutation)
 
 

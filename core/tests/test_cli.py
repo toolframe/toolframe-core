@@ -16,7 +16,7 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
-import lite_mcp_cli as cli
+import toolframe_cli as cli
 
 TOOL_SOURCE = '''from fastmcp.tools import tool
 
@@ -30,13 +30,13 @@ def echo(value: str) -> str:
 '''
 
 CONTEXT_TOOL_SOURCE = '''from fastmcp.tools import tool
-import lite_mcp_idempotency
-from lite_mcp_artifacts import get_artifact_store
-from lite_mcp_db import get_database
+import toolframe_idempotency
+from toolframe_artifacts import get_artifact_store
+from toolframe_db import get_database
 
 ARTIFACT_STORE = get_artifact_store()
 DATABASE = get_database()
-if lite_mcp_idempotency._configured_store is None:
+if toolframe_idempotency._configured_store is None:
     raise RuntimeError("idempotency helper was not configured before tool import")
 
 @tool
@@ -49,7 +49,7 @@ def echo() -> dict[str, str]:
 '''
 
 IDEMPOTENT_TOOL_SOURCE = '''from fastmcp.tools import tool
-from lite_mcp_idempotency import run_once
+from toolframe_idempotency import run_once
 
 @tool
 def echo(value: str) -> dict[str, object]:
@@ -112,7 +112,7 @@ class CliRunnerTests(unittest.TestCase):
         )
         self.llms_file = self.root / "llms.txt"
         self.llms_file.write_text(
-            "# lite-mcp\n"
+            "# toolframe\n"
             "> LAN MCP server context.\n"
             "\n"
             "## Documents\n"
@@ -155,7 +155,7 @@ class CliRunnerTests(unittest.TestCase):
         output = io.StringIO()
         noise = io.StringIO()
         with (
-            patch.dict(os.environ, {"LITE_MCP_DB": str(configured_database)}),
+            patch.dict(os.environ, {"TOOLFRAME_DB": str(configured_database)}),
             redirect_stdout(output),
             redirect_stderr(noise),
         ):
@@ -222,7 +222,7 @@ class CliRunnerTests(unittest.TestCase):
         output = io.StringIO()
         noise = io.StringIO()
         with (
-            patch.dict(os.environ, {"LITE_MCP_DB": str(self.root / "data.db")}),
+            patch.dict(os.environ, {"TOOLFRAME_DB": str(self.root / "data.db")}),
             patch("sys.stdin", io.StringIO('{"value":"hello"}')),
             redirect_stdout(output),
             redirect_stderr(noise),
@@ -241,7 +241,7 @@ class CliRunnerTests(unittest.TestCase):
     def test_invoke_does_not_validate_llms_source(self):
         output = io.StringIO()
         with (
-            patch.dict(os.environ, {"LITE_MCP_DB": str(self.root / "data.db")}),
+            patch.dict(os.environ, {"TOOLFRAME_DB": str(self.root / "data.db")}),
             patch("sys.stdin", io.StringIO('{"value":"hello"}')),
             redirect_stdout(output),
             redirect_stderr(io.StringIO()),
@@ -263,7 +263,7 @@ class CliRunnerTests(unittest.TestCase):
         with sqlite3.connect(database) as connection:
             connection.execute(
                 """
-                CREATE TABLE _lite_mcp_idempotency (
+                CREATE TABLE _toolframe_idempotency (
                     namespace TEXT NOT NULL,
                     business_key TEXT NOT NULL,
                     input_sha256 TEXT NOT NULL CHECK (length(input_sha256) = 64),
@@ -285,7 +285,7 @@ class CliRunnerTests(unittest.TestCase):
         for _ in range(2):
             output = io.StringIO()
             with (
-                patch.dict(os.environ, {"LITE_MCP_DB": str(database)}),
+                patch.dict(os.environ, {"TOOLFRAME_DB": str(database)}),
                 patch("sys.stdin", io.StringIO('{"value":"hello"}')),
                 redirect_stdout(output),
                 redirect_stderr(io.StringIO()),

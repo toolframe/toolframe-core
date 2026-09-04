@@ -1,4 +1,4 @@
--- Baseline schema for the editable Lite MCP dashboard example.
+-- Baseline schema for the editable Toolframe dashboard example.
 --
 -- The Rust launcher owns the transaction and migration ledger. Do not add
 -- BEGIN, COMMIT, ROLLBACK, SAVEPOINT, PRAGMA, ATTACH, DETACH, or CREATE

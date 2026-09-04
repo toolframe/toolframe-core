@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>lite-mcp · System diagnostics</title>
+  <title>toolframe · System diagnostics</title>
   <style>
     :root {
       --ink: #17212b;
@@ -580,7 +580,7 @@
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">⌁</span>
         <div>
-          <p class="eyebrow">Lite MCP info</p>
+          <p class="eyebrow">Toolframe info</p>
           <h1>System diagnostics</h1>
         </div>
       </div>
@@ -838,7 +838,7 @@
         : `${payload.dependencies.length} · ${payload.dependencies.join(", ")}`;
 
       if (payload.tools.length === 0) {
-        toolList.replaceChildren(setMessage("empty", "∅", "No tools loaded", "Add one direct lower_snake_case .py file to the tools folder, then restart lite-mcp."));
+        toolList.replaceChildren(setMessage("empty", "∅", "No tools loaded", "Add one direct lower_snake_case .py file to the tools folder, then restart toolframe."));
         return;
       }
 

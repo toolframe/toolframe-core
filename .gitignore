@@ -1,6 +1,6 @@
 /target/
 /dist/
-/.lite-mcp/
+/.toolframe/
 /data/
 # Legacy pre-0.1 runtime locations remain ignored during upgrades.
 /runtime/

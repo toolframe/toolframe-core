@@ -1,13 +1,13 @@
 # Scheduled-agent Job domain model
 
-This is the canonical model for a lite-mcp app that hands scheduled work
+This is the canonical model for a toolframe app that hands scheduled work
 between a human and one or more peer agents on a trusted LAN. It is a business
 contract, not an implementation dump. An app may use different business names,
 but a scheduled work desk should preserve the meanings and guarantees below.
 
 ## Boundary and runtime decisions
 
-The external scheduler decides when an agent should poll. lite-mcp is the
+The external scheduler decides when an agent should poll. toolframe is the
 durable hand-off layer: it stores the work, user instruction context, attempts,
 progress, results, and reviews, and exposes narrow MCP tools plus a human
 dashboard. It does not run a scheduler, worker queue, or recurring timer.
@@ -54,7 +54,7 @@ to be the actor making an MCP request.
 User-owned tables use the `app_` prefix and are created by the versioned
 migrations. The names and optional columns can be adapted to the business, but
 the relationships and constraints below should remain recognizable. The
-launcher-owned `_lite_mcp_migrations` and `_lite_mcp_idempotency` tables are
+launcher-owned `_toolframe_migrations` and `_toolframe_idempotency` tables are
 internal and must not be edited by a user migration.
 
 | Table | Required meaning and representative columns |
@@ -185,7 +185,7 @@ the error code, attempt history, owner, and next action. Never transition to
 
 Every mutation tool should accept a caller-provided `idempotency_key`. MCP
 tools wrap the complete business mutation, Event, and successful receipt with
-`lite_mcp_idempotency.run_once(...)`; Dashboard code uses
+`toolframe_idempotency.run_once(...)`; Dashboard code uses
 `context.db.run_once(...)`. Do not nest either helper inside another
 transaction. Reusing a key with different canonical input is a non-retryable
 mismatch; a replay must have the same value shape as the first call. A fresh
@@ -270,7 +270,7 @@ Maintain `APP_CONTEXT.md` for the app’s purpose, actors, operating loop, and
 limits, and `DOMAIN_MODEL.md` for the app-specific adaptation of this model.
 The migration directory is the schema source of truth; never edit an applied
 migration—add the next contiguous migration. Tool signatures are the callable
-contract, dashboard widgets are the human projection, and `./lite-mcp check
+contract, dashboard widgets are the human projection, and `./toolframe check
 --format json`, `/info`, and local JSONL logs are runtime evidence.
 
 When these sources disagree, stop and reconcile the docs, schema, tools,

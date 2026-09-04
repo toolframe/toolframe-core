@@ -1,4 +1,4 @@
-"""Private runtime support for the lite-mcp FastAPI/FastMCP server."""
+"""Private runtime support for the toolframe FastAPI/FastMCP server."""
 
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ from pathlib import Path
 from typing import Any
 
 import anyio
-import lite_mcp_db as database_sdk
-import lite_mcp_idempotency as idempotency
+import toolframe_db as database_sdk
+import toolframe_idempotency as idempotency
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastmcp import FastMCP
@@ -37,17 +37,17 @@ from fastmcp.server.middleware import Middleware
 from fastmcp.tools import Tool, ToolResult
 from fastmcp.tools.function_tool import ToolMeta
 from fastmcp.utilities.lifespan import combine_lifespans
-from lite_mcp_artifacts import (
+from toolframe_artifacts import (
     DEFAULT_MAX_ARTIFACT_BYTES,
     ArtifactError,
     configure_artifact_store,
 )
-from lite_mcp_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
+from toolframe_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
 from starlette.routing import Route
 
-LOGGER = logging.getLogger("lite_mcp.runtime")
-READY_SENTINEL = "LITE_MCP_READY"
-FATAL_SENTINEL = "LITE_MCP_FATAL"
+LOGGER = logging.getLogger("toolframe.runtime")
+READY_SENTINEL = "TOOLFRAME_READY"
+FATAL_SENTINEL = "TOOLFRAME_FATAL"
 DATABASE_PREVIEW_ROWS = 25
 STREAMLIT_VERSION = "1.61.0"
 STREAMLIT_RESOURCE_LIMIT_MIB = 25
@@ -314,7 +314,7 @@ def _os_error_reason(error: OSError) -> str:
     return error.strerror or type(error).__name__
 
 
-class LiteMcpError(Exception):
+class ToolframeError(Exception):
     """A structured, agent-visible tool failure.
 
     Tool authors may raise this exception to state whether a failure is safe to
@@ -1125,9 +1125,9 @@ def load_tools(
 
 
 def build_application() -> FastAPI:
-    logs_dir = _required_path("LITE_MCP_LOGS_DIR")
-    retention_days = _integer_setting("LITE_MCP_LOG_RETENTION_DAYS", minimum=1)
-    max_total_mib = _integer_setting("LITE_MCP_LOG_MAX_TOTAL_MIB", minimum=1)
+    logs_dir = _required_path("TOOLFRAME_LOGS_DIR")
+    retention_days = _integer_setting("TOOLFRAME_LOG_RETENTION_DAYS", minimum=1)
+    max_total_mib = _integer_setting("TOOLFRAME_LOG_MAX_TOTAL_MIB", minimum=1)
     audit_sink = StructuredLogs(
         StructuredLogSettings(
             logs_dir=logs_dir,
@@ -1165,48 +1165,48 @@ def _build_application(
 ) -> FastAPI:
     if sys.version_info[:2] != (3, 14) or sys.version_info.releaselevel != "final":
         raise RuntimeError(
-            "lite-mcp requires a final Python 3.14 release; "
+            "toolframe requires a final Python 3.14 release; "
             f"found {sys.version.split()[0]} ({sys.version_info.releaselevel})"
         )
-    manifest_path = _required_path("LITE_MCP_MANIFEST")
-    database_path = _required_path("LITE_MCP_DB")
-    llms_file = _required_path("LITE_MCP_LLMS_FILE")
-    llms_dir = _required_path("LITE_MCP_LLMS_DIR")
+    manifest_path = _required_path("TOOLFRAME_MANIFEST")
+    database_path = _required_path("TOOLFRAME_DB")
+    llms_file = _required_path("TOOLFRAME_LLMS_FILE")
+    llms_dir = _required_path("TOOLFRAME_LLMS_DIR")
     llms_documents = tuple(validate_llms_source(llms_file, llms_dir))
-    dashboard_dir = _required_directory("LITE_MCP_DASHBOARD_DIR")
+    dashboard_dir = _required_directory("TOOLFRAME_DASHBOARD_DIR")
     dashboard_app_path = dashboard_dir / "app.py"
     if not dashboard_app_path.is_file() or dashboard_app_path.is_symlink():
         raise RuntimeError(
             f"dashboard app must be a regular, non-symlink file: {dashboard_app_path}"
         )
-    dashboard_runner_path = _required_file("LITE_MCP_DASHBOARD_RUNNER")
-    info_page_path = _required_file("LITE_MCP_INFO_PAGE")
-    workspace_path = _required_directory("LITE_MCP_WORKSPACE")
-    allowed_hosts = _json_string_list("LITE_MCP_ALLOWED_HOSTS")
-    allowed_origins = _json_string_list("LITE_MCP_ALLOWED_ORIGINS")
-    concurrency = _integer_setting("LITE_MCP_MAX_CONCURRENCY", minimum=0)
-    timeout_seconds = _float_setting("LITE_MCP_TOOL_TIMEOUT_SECONDS", minimum=0)
-    result_limit = _integer_setting("LITE_MCP_RESULT_LIMIT_BYTES", minimum=1)
-    port = _integer_setting("LITE_MCP_PORT", minimum=1)
+    dashboard_runner_path = _required_file("TOOLFRAME_DASHBOARD_RUNNER")
+    info_page_path = _required_file("TOOLFRAME_INFO_PAGE")
+    workspace_path = _required_directory("TOOLFRAME_WORKSPACE")
+    allowed_hosts = _json_string_list("TOOLFRAME_ALLOWED_HOSTS")
+    allowed_origins = _json_string_list("TOOLFRAME_ALLOWED_ORIGINS")
+    concurrency = _integer_setting("TOOLFRAME_MAX_CONCURRENCY", minimum=0)
+    timeout_seconds = _float_setting("TOOLFRAME_TOOL_TIMEOUT_SECONDS", minimum=0)
+    result_limit = _integer_setting("TOOLFRAME_RESULT_LIMIT_BYTES", minimum=1)
+    port = _integer_setting("TOOLFRAME_PORT", minimum=1)
     if port > 65535:
-        raise RuntimeError("LITE_MCP_PORT must be at most 65535")
-    ready_token = os.environ.get("LITE_MCP_READY_TOKEN", "").strip()
+        raise RuntimeError("TOOLFRAME_PORT must be at most 65535")
+    ready_token = os.environ.get("TOOLFRAME_READY_TOKEN", "").strip()
     if not ready_token:
-        raise RuntimeError("LITE_MCP_READY_TOKEN is required")
+        raise RuntimeError("TOOLFRAME_READY_TOKEN is required")
 
     database_sdk._configure(
         database_path,
-        logger=logging.getLogger("lite_mcp.database"),
+        logger=logging.getLogger("toolframe.database"),
     )
     idempotency._configure(database_path, audit_sink=audit_sink)
     artifact_store = configure_artifact_store(
         workspace_path,
         max_artifact_bytes=DEFAULT_MAX_ARTIFACT_BYTES,
         audit_sink=audit_sink,
-        logger=logging.getLogger("lite_mcp.artifacts"),
+        logger=logging.getLogger("toolframe.artifacts"),
     )
     tools, tool_details, tool_dependencies = load_tools(manifest_path)
-    dependency_summary = _json_string_list("LITE_MCP_DEPENDENCIES_JSON", required=False)
+    dependency_summary = _json_string_list("TOOLFRAME_DEPENDENCIES_JSON", required=False)
     if not dependency_summary:
         dependency_summary = tool_dependencies
 
@@ -1229,13 +1229,13 @@ def _build_application(
         agent_documents=list(llms_documents),
     )
 
-    import lite_mcp_dashboard as dashboard_sdk
+    import toolframe_dashboard as dashboard_sdk
 
     dashboard_sdk._configure(
         database_path=database_path,
         dashboard_dir=dashboard_dir,
         workspace=workspace_path,
-        logger=logging.getLogger("lite_mcp.dashboard"),
+        logger=logging.getLogger("toolframe.dashboard"),
         runtime=runtime_summary,
         audit_sink=audit_sink,
         artifacts=artifact_store,
@@ -1245,8 +1245,8 @@ def _build_application(
     dashboard_sdk.preflight_dashboard(dashboard_dir)
 
     mcp = FastMCP(
-        "lite-mcp",
-        version=os.environ.get("LITE_MCP_VERSION", "0.0.0"),
+        "toolframe",
+        version=os.environ.get("TOOLFRAME_VERSION", "0.0.0"),
         strict_input_validation=True,
     )
     for tool_object in tools:
@@ -1343,7 +1343,7 @@ def _build_application(
                 fatal_shutdown.logging_failure(error)
 
     app = FastAPI(
-        title="lite-mcp",
+        title="toolframe",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -1553,7 +1553,7 @@ def _load_and_configure_streamlit(
 
     if streamlit.__version__ != STREAMLIT_VERSION or not hasattr(streamlit, "App"):
         raise RuntimeError(
-            f"lite-mcp requires streamlit=={STREAMLIT_VERSION} with st.App; "
+            f"toolframe requires streamlit=={STREAMLIT_VERSION} with st.App; "
             f"found {getattr(streamlit, '__version__', '<unknown>')}"
         )
     for key, value in _streamlit_config_values(
@@ -1562,7 +1562,7 @@ def _load_and_configure_streamlit(
         allowed_origins=allowed_origins,
         port=port,
     ).items():
-        streamlit_config.set_option(key, value, where_defined="lite-mcp runtime")
+        streamlit_config.set_option(key, value, where_defined="toolframe runtime")
     return streamlit
 
 
@@ -1623,7 +1623,7 @@ def _runtime_summary(
             "entrypoint": "app.py",
             "sourceLifecycle": "browser refresh or Streamlit rerun",
             "dependencyLifecycle": "process restart",
-            "failurePolicy": "uncaught errors stop lite-mcp",
+            "failurePolicy": "uncaught errors stop toolframe",
         },
         "security": {
             "authentication": "none",
@@ -1684,7 +1684,7 @@ def _read_manifest(path: Path) -> dict[str, Any]:
 
 
 def _import_tool(path: Path, name: str, source_hash: str) -> types.ModuleType:
-    module_name = f"lite_mcp_user_{name}_{source_hash[:16]}"
+    module_name = f"toolframe_user_{name}_{source_hash[:16]}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ToolLoadError(
@@ -2242,7 +2242,7 @@ def _sanitized_stack(error: BaseException) -> list[str]:
 def _find_structured_tool_error(
     error: BaseException,
 ) -> (
-    LiteMcpError
+    ToolframeError
     | idempotency.IdempotencyError
     | ArtifactError
     | database_sdk.DatabaseError
@@ -2254,7 +2254,7 @@ def _find_structured_tool_error(
         if isinstance(
             current,
             (
-                LiteMcpError,
+                ToolframeError,
                 idempotency.IdempotencyError,
                 ArtifactError,
                 database_sdk.DatabaseError,

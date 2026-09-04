@@ -12,7 +12,7 @@ _CORE_DIRECTORY = _REPOSITORY_ROOT / "core"
 if str(_CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(_CORE_DIRECTORY))
 
-import lite_mcp_db as _database_sdk
+import toolframe_db as _database_sdk
 
 _TOOL_PATH = _REPOSITORY_ROOT / "tools" / "execute_sql.py"
 _SPEC = importlib.util.spec_from_file_location("execute_sql_reference", _TOOL_PATH)
@@ -31,7 +31,7 @@ class ExecuteSqlTests(unittest.TestCase):
                 "CREATE TABLE app_records "
                 "(id INTEGER PRIMARY KEY, name TEXT NOT NULL, value REAL NOT NULL)"
             )
-            connection.execute("CREATE TABLE _lite_mcp_private (value TEXT NOT NULL)")
+            connection.execute("CREATE TABLE _toolframe_private (value TEXT NOT NULL)")
             connection.execute(
                 "CREATE TABLE app_sequence "
                 "(id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT NOT NULL)"
@@ -76,8 +76,8 @@ class ExecuteSqlTests(unittest.TestCase):
         self.assertEqual(metadata["requires-python"], ">=3.14,<3.15")
         self.assertEqual(metadata["dependencies"], ["fastmcp==4.0.0"])
         self.assertNotIn("import sqlite3", source)
-        self.assertNotIn("LITE_MCP_DB", source)
-        self.assertIn("from lite_mcp_db import", source)
+        self.assertNotIn("TOOLFRAME_DB", source)
+        self.assertIn("from toolframe_db import", source)
 
         published_functions = [
             name
@@ -184,7 +184,7 @@ class ExecuteSqlTests(unittest.TestCase):
     def test_write_mode_rejects_runtime_owned_table_mutation(self):
         self._assert_error(
             self._call(
-                "INSERT INTO _lite_mcp_private(value) VALUES (?)",
+                "INSERT INTO _toolframe_private(value) VALUES (?)",
                 ["blocked"],
                 "write",
             ),
@@ -192,7 +192,7 @@ class ExecuteSqlTests(unittest.TestCase):
         )
         with closing(sqlite3.connect(self.database_path)) as connection:
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM _lite_mcp_private").fetchone()[
+                connection.execute("SELECT COUNT(*) FROM _toolframe_private").fetchone()[
                     0
                 ],
                 0,

@@ -1,9 +1,9 @@
 [package]
-name = "lite-mcp"
+name = "toolframe"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "A Rust-supervised UV and FastMCP hub for startup-loaded Python tools"
+description = "A local-first runtime for agent-built internal apps"
 license = "MIT"
 
 [dependencies]

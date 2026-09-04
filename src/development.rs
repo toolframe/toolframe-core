@@ -21,7 +21,7 @@ pub fn scaffold(kind: ScaffoldKind, name: &str, root: &Path) -> Result<PathBuf> 
         ScaffoldKind::Migration => {
             let filename = db::next_migration_filename(root, name)?;
             let content =
-                format!("-- {filename}\n-- Add migration SQL here before starting lite-mcp.\n");
+                format!("-- {filename}\n-- Add migration SQL here before starting toolframe.\n");
             (filename, content)
         }
         ScaffoldKind::Tool => {
@@ -42,7 +42,7 @@ pub fn scaffold(kind: ScaffoldKind, name: &str, root: &Path) -> Result<PathBuf> 
                 .collect::<Vec<_>>()
                 .join(" ");
             let content = format!(
-                "\"\"\"{title} dashboard widget.\"\"\"\n\nimport streamlit as st\nfrom lite_mcp_dashboard import DashboardContext\n\nTITLE = {title:?}\n\n\ndef render(context: DashboardContext) -> None:\n    \"\"\"Render the {title} widget.\"\"\"\n    st.subheader(TITLE)\n    st.caption(f\"Workspace: {{context.workspace}}\")\n"
+                "\"\"\"{title} dashboard widget.\"\"\"\n\nimport streamlit as st\nfrom toolframe_dashboard import DashboardContext\n\nTITLE = {title:?}\n\n\ndef render(context: DashboardContext) -> None:\n    \"\"\"Render the {title} widget.\"\"\"\n    st.subheader(TITLE)\n    st.caption(f\"Workspace: {{context.workspace}}\")\n"
             );
             (filename, content)
         }

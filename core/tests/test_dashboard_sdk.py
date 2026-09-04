@@ -15,8 +15,8 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
-import lite_mcp_dashboard as dashboard
-import lite_mcp_idempotency as idempotency
+import toolframe_dashboard as dashboard
+import toolframe_idempotency as idempotency
 
 
 class FakeAuditSink:
@@ -548,7 +548,7 @@ class WidgetDiscoveryTests(unittest.TestCase):
         self.widgets = self.root / "widgets"
         self.widgets.mkdir(parents=True)
         (self.root / "app.py").write_text(
-            "from lite_mcp_dashboard import render_widgets\nrender_widgets()\n",
+            "from toolframe_dashboard import render_widgets\nrender_widgets()\n",
             encoding="utf-8",
         )
         self.database_path = self.root.parent / "data.db"

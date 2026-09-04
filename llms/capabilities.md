@@ -1,6 +1,6 @@
 # Capabilities
 
-This page separates the fixed Lite MCP server contract from the editable business surface. The connected server's successful tool listing is the source of truth for the current catalog; this page must be customized when the app grows.
+This page separates the fixed Toolframe server contract from the editable business surface. The connected server's successful tool listing is the source of truth for the current catalog; this page must be customized when the app grows.
 
 ## Fixed server surfaces
 
@@ -8,7 +8,7 @@ This page separates the fixed Lite MCP server contract from the editable busines
 - Dashboard: `/`, the human-facing Streamlit app.
 - Diagnostics: `/info`.
 - Readiness: `/healthz`; this is not a business-health or workflow-completion report.
-- Scheduling: external; Lite MCP does not provide a scheduler or durable worker queue.
+- Scheduling: external; Toolframe does not provide a scheduler or durable worker queue.
 
 ## Fresh scaffold
 

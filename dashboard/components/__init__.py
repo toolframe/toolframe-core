@@ -1,1 +1,1 @@
-"""Reusable Streamlit components for the editable Lite MCP dashboard."""
+"""Reusable Streamlit components for the editable Toolframe dashboard."""

@@ -4,7 +4,7 @@ Build or execute the smallest workflow that satisfies the user's request. Start 
 
 ## Default sequence
 
-1. **Trigger** — A human request, external scheduler, or peer-agent invocation starts the work. Scheduling is outside Lite MCP; record the trigger and correlation key.
+1. **Trigger** — A human request, external scheduler, or peer-agent invocation starts the work. Scheduling is outside Toolframe; record the trigger and correlation key.
 2. **Business query** — List actual tools, read the relevant context, and call the bounded query that answers the workflow question: eligibility, current state, context, evidence, or review need.
 3. **Business command** — Call the command whose named intent matches the requested outcome. Honor its preconditions, version/fence/lease guard, idempotency key, and returned next action. Let the command own its guarded outcome and local transaction; do not assemble table CRUD or generic status/field writes. Use `execute_sql` only for a data fallback explicitly allowed by this app's capability register; never substitute it for a missing business operation or schema change.
 4. **Review** — Make the result and next decision visible through the documented dashboard or review tool. Preserve the returned state, trace ID, artifact reference, and any owner decision needed.

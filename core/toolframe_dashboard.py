@@ -1,4 +1,4 @@
-"""Stable, agent-facing helpers for lite-mcp Streamlit dashboards.
+"""Stable, agent-facing helpers for toolframe Streamlit dashboards.
 
 Dashboard modules are trusted local Python code.  The database API in this
 module is a guardrail that makes the safe path easy; it is not a sandbox.
@@ -29,14 +29,14 @@ from typing import Any, Self
 from urllib.parse import quote
 
 import pandas as pd
-from lite_mcp_artifacts import ArtifactStore
-from lite_mcp_idempotency import (
+from toolframe_artifacts import ArtifactStore
+from toolframe_idempotency import (
     IdempotencyError,
     IdempotencyResult,
     IdempotencyStore,
     IdempotencyTransaction,
 )
-from lite_mcp_idempotency import _audit_context as _idempotency_audit_context
+from toolframe_idempotency import _audit_context as _idempotency_audit_context
 
 __all__ = [
     "DashboardContext",
@@ -55,13 +55,13 @@ __all__ = [
 ]
 
 
-_LOGGER = logging.getLogger("lite_mcp.dashboard")
+_LOGGER = logging.getLogger("toolframe.dashboard")
 _DEFAULT_MAX_ROWS = 10_000
 _DEFAULT_MAX_BYTES = 10 * 1024 * 1024
 _MAX_SQL_BYTES = 1024 * 1024
 _BUSY_TIMEOUT_MS = 5_000
 _DEFAULT_WIDGET_ORDER = 1_000
-_DASHBOARD_SESSION_STATE_KEY = "_lite_mcp_dashboard_session_id"
+_DASHBOARD_SESSION_STATE_KEY = "_toolframe_dashboard_session_id"
 
 
 def _sqlite_actions(*names: str) -> frozenset[int]:
@@ -257,7 +257,7 @@ class _PolicyState:
                 return self.deny(
                     "schema_change_forbidden",
                     "Schema changes are not allowed through the runtime database adapter.",
-                    "Add the next contiguous migration and restart Lite MCP.",
+                    "Add the next contiguous migration and restart Toolframe.",
                 )
             self.saw_write = True
             if trigger_name is not None:
@@ -633,7 +633,7 @@ class DashboardDatabase:
                     "schema_change_forbidden",
                     "Schema changes are not allowed through the runtime database adapter.",
                     recovery_hint=(
-                        "Add the next contiguous migration and restart Lite MCP."
+                        "Add the next contiguous migration and restart Toolframe."
                     ),
                 )
             if policy.statement_keyword == "EXPLAIN":
@@ -731,12 +731,12 @@ class DashboardDatabase:
 
 
 _active_transactions: contextvars.ContextVar[tuple[int, ...]] = contextvars.ContextVar(
-    "lite_mcp_dashboard_active_transactions",
+    "toolframe_dashboard_active_transactions",
     default=(),
 )
 _dashboard_request_metadata: contextvars.ContextVar[Mapping[str, Any]] = (
     contextvars.ContextVar(
-        "lite_mcp_dashboard_request_metadata", default=MappingProxyType({})
+        "toolframe_dashboard_request_metadata", default=MappingProxyType({})
     )
 )
 
@@ -1412,7 +1412,7 @@ _configuration_lock = threading.RLock()
 _configuration: _SdkConfiguration | None = None
 _current_context: contextvars.ContextVar[DashboardContext | None] = (
     contextvars.ContextVar(
-        "lite_mcp_dashboard_context",
+        "toolframe_dashboard_context",
         default=None,
     )
 )
@@ -1466,7 +1466,7 @@ def get_context() -> DashboardContext:
         return current
     with _configuration_lock:
         if _configuration is None:
-            raise RuntimeError("lite_mcp_dashboard is not configured")
+            raise RuntimeError("toolframe_dashboard is not configured")
         return _configuration.base_context
 
 
@@ -1632,7 +1632,7 @@ def _resolve_dashboard_dir(dashboard_dir: Path | None) -> Path:
         return Path(dashboard_dir).expanduser().absolute()
     with _configuration_lock:
         if _configuration is None:
-            raise RuntimeError("lite_mcp_dashboard is not configured")
+            raise RuntimeError("toolframe_dashboard is not configured")
         return _configuration.dashboard_dir
 
 
@@ -1644,7 +1644,7 @@ def _ensure_dashboard_import_path(root: Path) -> None:
 
 def _widget_package_name(root: Path) -> str:
     digest = hashlib.sha256(os.fsencode(root)).hexdigest()[:16]
-    return f"_lite_mcp_user_dashboard_{digest}.widgets"
+    return f"_toolframe_user_dashboard_{digest}.widgets"
 
 
 def _ensure_widget_package(root: Path, widgets_dir: Path) -> str:

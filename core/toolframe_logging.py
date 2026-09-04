@@ -1,4 +1,4 @@
-"""Fail-closed structured JSONL writers for lite-mcp.
+"""Fail-closed structured JSONL writers for toolframe.
 
 This module deliberately does not use :mod:`logging`: audit records are a
 contract, rather than best-effort diagnostic messages.  Callers must treat a
@@ -294,7 +294,7 @@ class StructuredLogs:
         return record
 
     def _acquire_process_lock(self) -> None:
-        lock_path = self.settings.logs_dir / ".lite-mcp.lock"
+        lock_path = self.settings.logs_dir / ".toolframe.lock"
         if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
             raise StructuredLogError(f"invalid structured log lock path: {lock_path}")
         try:

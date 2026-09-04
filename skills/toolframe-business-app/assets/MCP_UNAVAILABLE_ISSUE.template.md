@@ -3,7 +3,7 @@
 Use this response contract when a scheduled workflow or peer agent cannot reach
 the configured app's `/mcp` endpoint. Replace every bracketed field with an
 observed value or `Unknown`; never guess. Use the business app name from its
-context or `/llms.txt`, not Lite MCP's framework name. Keep the issue
+context or `/llms.txt`, not Toolframe's framework name. Keep the issue
 self-contained so the owner can copy it without the surrounding chat.
 
 ## Warning shown before the issue
@@ -51,7 +51,7 @@ paused before reading or changing a business item.
 
 ## Safe owner checks
 
-1. On the Lite MCP host, confirm the `lite-mcp` terminal is still running and
+1. On the Toolframe host, confirm the `toolframe` terminal is still running and
    shows a ready message rather than a startup or shutdown error.
 2. On that host, open the current printed Dashboard URL and `/healthz` URL.
 3. Compare the workflow URL with the **current** printed LAN address plus
@@ -61,10 +61,10 @@ paused before reading or changing a business item.
 
 ## Maintainer diagnostics
 
-- Run `./lite-mcp check --format json` in the app folder.
+- Run `./toolframe check --format json` in the app folder.
 - Capture complete startup/shutdown terminal output.
-- If logs exist, preserve the matching `.lite-mcp/logs/audit-YYYY-MM-DD.jsonl`
-  and `.lite-mcp/logs/mcp-YYYY-MM-DD.jsonl` files as sensitive data.
+- If logs exist, preserve the matching `.toolframe/logs/audit-YYYY-MM-DD.jsonl`
+  and `.toolframe/logs/mcp-YYYY-MM-DD.jsonl` files as sensitive data.
 - Test `/healthz` on the host first, then from the peer, and record the exact
   URL, status, and error at each hop.
 - Verify the workflow uses Streamable HTTP at the exact `/mcp` route.

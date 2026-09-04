@@ -11,7 +11,7 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
-import lite_mcp_db as database
+import toolframe_db as database
 
 
 class DatabaseAdapterTests(unittest.TestCase):
@@ -24,7 +24,7 @@ class DatabaseAdapterTests(unittest.TestCase):
                 "(id INTEGER PRIMARY KEY, label TEXT NOT NULL, status TEXT NOT NULL)"
             )
             connection.execute(
-                "CREATE TABLE _lite_mcp_runtime_state (value TEXT NOT NULL)"
+                "CREATE TABLE _toolframe_runtime_state (value TEXT NOT NULL)"
             )
             connection.execute(
                 "CREATE TABLE app_sequence "
@@ -83,13 +83,13 @@ class DatabaseAdapterTests(unittest.TestCase):
     def test_runtime_owned_tables_cannot_be_mutated(self):
         with self.assertRaises(database.DatabaseError) as raised:
             self.adapter.execute(
-                "INSERT INTO _lite_mcp_runtime_state(value) VALUES (?)", ("blocked",)
+                "INSERT INTO _toolframe_runtime_state(value) VALUES (?)", ("blocked",)
             )
 
         self.assertEqual(raised.exception.code, "protected_table_forbidden")
         self.assertFalse(raised.exception.retryable)
         count = self.adapter.query(
-            "SELECT COUNT(*) AS count FROM _lite_mcp_runtime_state"
+            "SELECT COUNT(*) AS count FROM _toolframe_runtime_state"
         ).iloc[0]["count"]
         self.assertEqual(count, 0)
 

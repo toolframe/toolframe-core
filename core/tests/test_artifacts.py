@@ -13,7 +13,7 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
-import lite_mcp_artifacts as artifacts
+import toolframe_artifacts as artifacts
 
 
 class RecordingAuditSink:
@@ -66,7 +66,7 @@ class ArtifactStoreTests(unittest.TestCase):
         self.assertTrue(reference["createdAt"].endswith("Z"))
 
         metadata_path = (
-            self.workspace / "artifacts" / ".lite-mcp" / f"{artifact.artifact_id}.json"
+            self.workspace / "artifacts" / ".toolframe" / f"{artifact.artifact_id}.json"
         )
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         self.assertEqual(metadata["schemaVersion"], 1)
@@ -130,8 +130,8 @@ class ArtifactStoreTests(unittest.TestCase):
             "a//b.txt",
             "a/./b.txt",
             "a\\b.txt",
-            ".lite-mcp/index.json",
-            ".lite-mcp-temporary",
+            ".toolframe/index.json",
+            ".toolframe-temporary",
         ):
             with self.subTest(path=path), self.assertRaises(artifacts.ArtifactError):
                 self.store.write(path, b"content")
@@ -175,7 +175,7 @@ class ArtifactStoreTests(unittest.TestCase):
         self.assertEqual(captured.exception.details["limitBytes"], 32)
         self.assertFalse((self.workspace / "artifacts" / "large.bin").exists())
         self.assertEqual(
-            list((self.workspace / "artifacts").glob(".lite-mcp-*.tmp")), []
+            list((self.workspace / "artifacts").glob(".toolframe-*.tmp")), []
         )
 
     def test_content_tampering_is_detected(self):
@@ -219,7 +219,7 @@ class ArtifactStoreTests(unittest.TestCase):
             self.store.read_by_id(artifact.artifact_id)
 
     def test_malformed_or_symlinked_metadata_fails_closed(self):
-        metadata_root = self.workspace / "artifacts" / ".lite-mcp"
+        metadata_root = self.workspace / "artifacts" / ".toolframe"
         (metadata_root / f"{'a' * 32}.json").write_text("{}", encoding="utf-8")
 
         with self.assertRaises(artifacts.ArtifactIntegrityError):
@@ -228,7 +228,7 @@ class ArtifactStoreTests(unittest.TestCase):
     def test_non_regular_metadata_entry_is_integrity_error_not_not_found(self):
         artifact_id = "c" * 32
         metadata_path = (
-            self.workspace / "artifacts" / ".lite-mcp" / f"{artifact_id}.json"
+            self.workspace / "artifacts" / ".toolframe" / f"{artifact_id}.json"
         )
         metadata_path.mkdir()
 
@@ -238,7 +238,7 @@ class ArtifactStoreTests(unittest.TestCase):
             self.store.list()
 
     def test_oversized_metadata_fails_closed_without_unbounded_read(self):
-        metadata_root = self.workspace / "artifacts" / ".lite-mcp"
+        metadata_root = self.workspace / "artifacts" / ".toolframe"
         (metadata_root / f"{'b' * 32}.json").write_bytes(
             b"{" + b" " * artifacts.MAX_METADATA_BYTES + b"}"
         )
@@ -258,7 +258,7 @@ class ArtifactStoreTests(unittest.TestCase):
             return real_link(source, destination, **kwargs)
 
         with (
-            patch("lite_mcp_artifacts.os.link", side_effect=fail_second_link),
+            patch("toolframe_artifacts.os.link", side_effect=fail_second_link),
             self.assertRaises(artifacts.ArtifactStorageError) as captured,
         ):
             self.store.write("rollback.bin", b"content")
@@ -289,7 +289,7 @@ class ArtifactStoreTests(unittest.TestCase):
 
         with (
             patch(
-                "lite_mcp_artifacts.os.link",
+                "toolframe_artifacts.os.link",
                 side_effect=replace_before_metadata_failure,
             ),
             self.assertRaises(artifacts.ArtifactStorageError),
@@ -300,7 +300,7 @@ class ArtifactStoreTests(unittest.TestCase):
 
     def test_directory_sync_failure_is_typed_and_audited(self):
         with (
-            patch("lite_mcp_artifacts._sync_directory", side_effect=OSError("fsync")),
+            patch("toolframe_artifacts._sync_directory", side_effect=OSError("fsync")),
             self.assertRaises(artifacts.ArtifactStorageError) as captured,
         ):
             self.store.write("uncertain.bin", b"content")
@@ -315,15 +315,15 @@ class ArtifactStoreTests(unittest.TestCase):
 
     def test_directory_sync_helper_propagates_open_and_fsync_failures(self):
         with (
-            patch("lite_mcp_artifacts.os.open", side_effect=OSError("open")),
+            patch("toolframe_artifacts.os.open", side_effect=OSError("open")),
             self.assertRaises(OSError),
         ):
             artifacts._sync_directory(self.workspace)
 
         with (
-            patch("lite_mcp_artifacts.os.open", return_value=99),
-            patch("lite_mcp_artifacts.os.fsync", side_effect=OSError("fsync")),
-            patch("lite_mcp_artifacts.os.close") as close,
+            patch("toolframe_artifacts.os.open", return_value=99),
+            patch("toolframe_artifacts.os.fsync", side_effect=OSError("fsync")),
+            patch("toolframe_artifacts.os.close") as close,
             self.assertRaises(OSError),
         ):
             artifacts._sync_directory(self.workspace)
@@ -332,7 +332,7 @@ class ArtifactStoreTests(unittest.TestCase):
     def test_directory_sync_is_skipped_on_windows(self):
         with (
             patch.object(artifacts.os, "name", "nt"),
-            patch("lite_mcp_artifacts.os.open") as open_directory,
+            patch("toolframe_artifacts.os.open") as open_directory,
         ):
             artifacts._sync_directory(self.workspace)
         open_directory.assert_not_called()
@@ -373,7 +373,7 @@ class ArtifactStoreTests(unittest.TestCase):
         with self.assertRaises(artifacts.ArtifactLimitError):
             store.write("three.txt", b"three")
 
-        metadata_root = self.workspace / "artifacts" / ".lite-mcp"
+        metadata_root = self.workspace / "artifacts" / ".toolframe"
         (metadata_root / ".extra").write_bytes(b"reserved entry")
         with self.assertRaises(artifacts.ArtifactLimitError) as captured:
             store.list()

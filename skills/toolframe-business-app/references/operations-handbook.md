@@ -1,17 +1,17 @@
 # Operations handbook
 
-This is the owner-facing operating guide for a `lite-mcp` folder. It explains
+This is the owner-facing operating guide for a `toolframe` folder. It explains
 what the executable is doing, how to find the one useful address, how to
 diagnose a failed start, and when this small local app has reached its limit.
 It is also a briefing for the coding agent maintaining the business app.
 
 ## What the app is
 
-`lite-mcp` is a small, LAN-first business workspace contained in one editable
+`toolframe` is a small, LAN-first business workspace contained in one editable
 folder. Starting the executable opens one browser dashboard for people and one
 MCP address for trusted peer agents on the same port. Business data stays in
 `data/data.db`; editable source and working files remain visible, while private
-runtime state and logs stay under `.lite-mcp/`.
+runtime state and logs stay under `.toolframe/`.
 
 The app is useful when a trusted team wants a quick place where:
 
@@ -35,17 +35,17 @@ the dashboard, call published tools, and reach data those tools expose.
 Run from the packaged folder:
 
 ```sh
-./lite-mcp
+./toolframe
 ```
 
-`./lite-mcp serve` is the explicit equivalent. On the first online start, the
-launcher downloads its pinned, CPU-matched UV into `.lite-mcp/`, showing a
+`./toolframe serve` is the explicit equivalent. On the first online start, the
+launcher downloads its pinned, CPU-matched UV into `.toolframe/`, showing a
 progress bar, transfer rate, elapsed time, and ETA. It then downloads Python
 3.14 and shared dependencies into the same private runtime directory. An
-explicit `--uv-path` (or `LITE_MCP_UV`) must match the pin; otherwise a supported
+explicit `--uv-path` (or `TOOLFRAME_UV`) must match the pin; otherwise a supported
 build ignores system UV installations. Linux and Windows use the same managed
-rule (`.lite-mcp/uv.exe` on Windows). Use the local README or
-`./lite-mcp --help` for current flags. `--offline` works only after UV, Python,
+rule (`.toolframe/uv.exe` on Windows). Use the local README or
+`./toolframe --help` for current flags. `--offline` works only after UV, Python,
 and packages are cached.
 
 The terminal prints several useful addresses. The first local address is for
@@ -91,7 +91,7 @@ built-in info page and compatibility tooling.
 
 ## The normal owner loop
 
-1. Start `lite-mcp` in the app folder.
+1. Start `toolframe` in the app folder.
 2. Open the printed LAN dashboard address in a browser.
 3. Use the dashboard to see the business items, their status, the latest
    progress, and the result or review request.
@@ -161,8 +161,8 @@ Use the executable as a startup contract:
 Before a restart, run the non-destructive preflight:
 
 ```sh
-./lite-mcp check
-./lite-mcp check --format json
+./toolframe check
+./toolframe check --format json
 ```
 
 Use the JSON result when a coding agent needs a machine-readable gate. Check
@@ -178,9 +178,9 @@ For a new source file, these commands are safe and refuse to overwrite an
 existing file:
 
 ```sh
-./lite-mcp scaffold migration add_status
-./lite-mcp scaffold tool fetch_status
-./lite-mcp scaffold widget status_card
+./toolframe scaffold migration add_status
+./toolframe scaffold tool fetch_status
+./toolframe scaffold widget status_card
 ```
 
 Schema history belongs in a new numbered migration authored by the primary
@@ -189,25 +189,25 @@ only for bounded app-data reads/DML. Never edit, rename, or delete an
 already-applied migration. Back up the app folder, especially
 `data/data.db`, its
 SQLite `-wal`/`-shm` sidecars when present, `migrations/`, `tools/`,
-`dashboard/`, `workspace/`, and `.lite-mcp/logs/`, before a consequential
+`dashboard/`, `workspace/`, and `.toolframe/logs/`, before a consequential
 change. Stop the process before copying the database or sidecars.
 
 ## Doctor: report first, then repair
 
-Do not delete `data/data.db`, `.lite-mcp/`, migrations, or user source as a
+Do not delete `data/data.db`, `.toolframe/`, migrations, or user source as a
 first response. First collect facts and preserve the failure:
 
 ```sh
-./lite-mcp check --format json
-./lite-mcp --help
+./toolframe check --format json
+./toolframe --help
 ```
 
 Save the check report and the complete terminal error output. If the app has
 started, also save that date's two log files:
 
-- `.lite-mcp/logs/audit-YYYY-MM-DD.jsonl` records application changes and
+- `.toolframe/logs/audit-YYYY-MM-DD.jsonl` records application changes and
   lifecycle events;
-- `.lite-mcp/logs/mcp-YYYY-MM-DD.jsonl` records peer-agent MCP traffic.
+- `.toolframe/logs/mcp-YYYY-MM-DD.jsonl` records peer-agent MCP traffic.
 
 Each line is a machine-readable JSON record intended for the coding agent doing
 the diagnosis. The files can contain database statements, submitted values,
@@ -219,7 +219,7 @@ Then classify the failure:
 | Symptom or cause | Retryable? | First safe action |
 | --- | --- | --- |
 | UV download timeout, temporary package mirror failure, or transient network I/O | Usually yes | Keep the folder, restore connectivity, then retry. Use `--offline` only when the cache is known complete. |
-| Managed UV missing, invalid, or wrong for this CPU | No while offline | Restore connectivity and retry the verified download, or pass an exact explicit path; preserve `.lite-mcp/` for diagnostics. |
+| Managed UV missing, invalid, or wrong for this CPU | No while offline | Restore connectivity and retry the verified download, or pass an exact explicit path; preserve `.toolframe/` for diagnostics. |
 | Port already in use | Sometimes | Stop the other service or choose an approved port; the launcher searches its configured range, but a fully occupied range is a real failure. |
 | Database busy during a snapshot or transient disk I/O | Usually yes | Stop other writers, wait for the owner operation to finish, confirm free disk space, and retry. |
 | Migration SQL/name error, altered applied migration, checksum drift, incompatible history, or constraint failure | No | Fix the migration source or add the next migration. Do not rewrite applied history or erase the database. |
@@ -247,13 +247,13 @@ business callback, upstream service, or user input will succeed.
 
 ## What the log files contain and retain
 
-The app writes two dated log files under `.lite-mcp/logs/`. They are plain text
+The app writes two dated log files under `.toolframe/logs/`. They are plain text
 with one machine-readable JSON record per line, so a coding agent can inspect them even
 when the app will not start:
 
 ```text
-.lite-mcp/logs/audit-YYYY-MM-DD.jsonl
-.lite-mcp/logs/mcp-YYYY-MM-DD.jsonl
+.toolframe/logs/audit-YYYY-MM-DD.jsonl
+.toolframe/logs/mcp-YYYY-MM-DD.jsonl
 ```
 
 The MCP log records accepted peer-agent traffic in both directions, tool calls,
@@ -347,7 +347,7 @@ path.
 
 ### Why did my new tool not appear?
 
-Tools load only when the process starts. Stop and start `lite-mcp`; there is no
+Tools load only when the process starts. Stop and start `toolframe`; there is no
 MCP reload feature. Run `check` before the restart to get the error while the
 source is easy to inspect.
 
@@ -394,7 +394,7 @@ result before repeating.
 ### Why are logs large or sensitive?
 
 MCP and dashboard mutations are recorded for local diagnosis. Large payloads
-keep only their head and tail, but there is no secret redaction. Keep `.lite-mcp/logs/`
+keep only their head and tail, but there is no secret redaction. Keep `.toolframe/logs/`
 private, adjust the documented retention settings only when needed, and do
 not paste raw logs into an untrusted chat.
 

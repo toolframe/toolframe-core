@@ -7,7 +7,7 @@
 from datetime import UTC, datetime
 
 from fastmcp.tools import tool
-from lite_mcp_artifacts import get_artifact_store
+from toolframe_artifacts import get_artifact_store
 
 
 @tool
@@ -23,5 +23,5 @@ def export_report() -> dict[str, object]:
     )
     return {
         "artifact": artifact.to_reference(),
-        "nextStep": "Read the artifact through lite_mcp_artifacts instead of returning its bytes in MCP.",
+        "nextStep": "Read the artifact through toolframe_artifacts instead of returning its bytes in MCP.",
     }
