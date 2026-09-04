@@ -87,6 +87,17 @@ struct DatabaseSnapshot {
 /// Validate and atomically apply every pending migration before app startup.
 pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationReport> {
     let migrations = discover_migrations(migrations_dir)?;
+    migrate_discovered(database_path, &migrations)
+}
+
+/// Validate and atomically apply the one global migration history discovered
+/// across every direct business domain.
+pub fn migrate_domains(database_path: &Path, domains_dir: &Path) -> Result<MigrationReport> {
+    let migrations = discover_domain_migrations(domains_dir)?;
+    migrate_discovered(database_path, &migrations)
+}
+
+fn migrate_discovered(database_path: &Path, migrations: &[Migration]) -> Result<MigrationReport> {
     if let Some(parent) = database_path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -118,7 +129,7 @@ pub fn migrate(database_path: &Path, migrations_dir: &Path) -> Result<MigrationR
     })?;
     configure_connection(&connection, database_path)?;
 
-    migrate_connection(&mut connection, database_path, &migrations, true)
+    migrate_connection(&mut connection, database_path, migrations, true)
 }
 
 fn migrate_connection(
@@ -204,6 +215,23 @@ pub fn validate_migrations(
     migrations_dir: &Path,
 ) -> Result<MigrationValidation> {
     let migrations = discover_migrations(migrations_dir)?;
+    validate_discovered_migrations(database_path, &migrations)
+}
+
+/// Exercise domain migration discovery and the production migration path
+/// against an isolated snapshot without changing the configured database.
+pub fn validate_domain_migrations(
+    database_path: &Path,
+    domains_dir: &Path,
+) -> Result<MigrationValidation> {
+    let migrations = discover_domain_migrations(domains_dir)?;
+    validate_discovered_migrations(database_path, &migrations)
+}
+
+fn validate_discovered_migrations(
+    database_path: &Path,
+    migrations: &[Migration],
+) -> Result<MigrationValidation> {
     let database_exists = database_path.exists();
     let snapshot = database_exists
         .then(|| copy_database_snapshot(database_path))
@@ -218,7 +246,7 @@ pub fn validate_migrations(
         .busy_timeout(BUSY_TIMEOUT)
         .context("could not configure the in-memory migration validation database busy timeout")?;
     configure_connection(&connection, database_path)?;
-    let report = migrate_connection(&mut connection, database_path, &migrations, false)?;
+    let report = migrate_connection(&mut connection, database_path, migrations, false)?;
 
     Ok(MigrationValidation {
         total: report.total,
@@ -371,8 +399,19 @@ fn database_sidecar_path(database_path: &Path, suffix: &str) -> PathBuf {
 
 pub fn next_migration_filename(migrations_dir: &Path, description: &str) -> Result<String> {
     let migrations = discover_migrations(migrations_dir)?;
-    let version = u16::try_from(migrations.len())
-        .context("migration sequence is too long for four-digit versions")?;
+    next_migration_filename_for_count(migrations.len(), description)
+}
+
+/// Return the next filename in the one global sequence, regardless of which
+/// domain will own the new migration file.
+pub fn next_domain_migration_filename(domains_dir: &Path, description: &str) -> Result<String> {
+    let migrations = discover_domain_migrations(domains_dir)?;
+    next_migration_filename_for_count(migrations.len(), description)
+}
+
+fn next_migration_filename_for_count(count: usize, description: &str) -> Result<String> {
+    let version =
+        u16::try_from(count).context("migration sequence is too long for four-digit versions")?;
     if version > 9999 {
         bail!("migration sequence has exhausted four-digit versions");
     }
@@ -417,18 +456,72 @@ fn configure_connection(connection: &Connection, database_path: &Path) -> Result
 }
 
 fn discover_migrations(directory: &Path) -> Result<Vec<Migration>> {
-    let metadata = fs::symlink_metadata(directory).with_context(|| {
-        format!(
-            "could not inspect migration directory {} (phase=migration-discovery, retryable=true)",
-            directory.display()
-        )
-    })?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        bail!(
-            "migration directory {} must be a regular directory, not a symlink (phase=migration-discovery, retryable=false)",
-            directory.display()
-        );
+    let mut migrations = discover_migrations_in(directory)?;
+    validate_migration_sequence(&mut migrations, directory)?;
+    Ok(migrations)
+}
+
+fn discover_domain_migrations(domains_dir: &Path) -> Result<Vec<Migration>> {
+    require_regular_directory(domains_dir, "domains")?;
+
+    let mut entries = fs::read_dir(domains_dir)
+        .with_context(|| {
+            format!(
+                "could not read domains directory {} (phase=migration-discovery, retryable=true)",
+                domains_dir.display()
+            )
+        })?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| {
+            format!(
+                "could not inspect entries in domains directory {} (phase=migration-discovery, retryable=true)",
+                domains_dir.display()
+            )
+        })?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+
+    let mut migrations = Vec::new();
+    for entry in entries {
+        let domain_name = entry.file_name().into_string().map_err(|_| {
+            anyhow!(
+                "domains directory {} contains a non-UTF-8 entry (phase=migration-discovery, retryable=false)",
+                domains_dir.display()
+            )
+        })?;
+        if domain_name.starts_with(['.', '_']) {
+            continue;
+        }
+        if let Err(error) = validate_domain_name(&domain_name) {
+            bail!(
+                "invalid domain {} (phase=migration-discovery, retryable=false): {error}",
+                entry.path().display()
+            );
+        }
+
+        let file_type = entry.file_type().with_context(|| {
+            format!(
+                "could not inspect domain {} (phase=migration-discovery, retryable=true)",
+                entry.path().display()
+            )
+        })?;
+        if file_type.is_symlink() || !file_type.is_dir() {
+            bail!(
+                "domain {} must be a direct regular directory, not a symlink or file (phase=migration-discovery, retryable=false)",
+                entry.path().display()
+            );
+        }
+
+        require_regular_file(&entry.path().join("__init__.py"), "domain public API")?;
+        let migration_dir = entry.path().join("migrations");
+        migrations.extend(discover_migrations_in(&migration_dir)?);
     }
+
+    validate_migration_sequence(&mut migrations, domains_dir)?;
+    Ok(migrations)
+}
+
+fn discover_migrations_in(directory: &Path) -> Result<Vec<Migration>> {
+    require_regular_directory(directory, "migration")?;
 
     let mut migrations = Vec::new();
     for entry in fs::read_dir(directory).with_context(|| {
@@ -502,6 +595,10 @@ fn discover_migrations(directory: &Path) -> Result<Vec<Migration>> {
         });
     }
 
+    Ok(migrations)
+}
+
+fn validate_migration_sequence(migrations: &mut [Migration], source: &Path) -> Result<()> {
     migrations.sort_by(|left, right| {
         left.version
             .cmp(&right.version)
@@ -520,7 +617,7 @@ fn discover_migrations(directory: &Path) -> Result<Vec<Migration>> {
     let Some(first) = migrations.first() else {
         bail!(
             "migration directory {} must contain {} (phase=migration-discovery, retryable=false)",
-            directory.display(),
+            source.display(),
             BOOTSTRAP_FILENAME
         );
     };
@@ -541,7 +638,91 @@ fn discover_migrations(directory: &Path) -> Result<Vec<Migration>> {
             );
         }
     }
-    Ok(migrations)
+    Ok(())
+}
+
+fn require_regular_directory(path: &Path, label: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).with_context(|| {
+        format!(
+            "could not inspect {label} directory {} (phase=migration-discovery, retryable=true)",
+            path.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        bail!(
+            "{label} directory {} must be a regular directory, not a symlink (phase=migration-discovery, retryable=false)",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn require_regular_file(path: &Path, label: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).with_context(|| {
+        format!(
+            "could not inspect {label} file {} (phase=migration-discovery, retryable=true)",
+            path.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        bail!(
+            "{label} file {} must be a regular file, not a symlink or directory (phase=migration-discovery, retryable=false)",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_domain_name(name: &str) -> Result<()> {
+    let bytes = name.as_bytes();
+    if bytes.is_empty()
+        || !bytes[0].is_ascii_lowercase()
+        || !bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
+        || name.ends_with('_')
+        || name.contains("__")
+    {
+        bail!("domain name must be lower_snake_case and begin with a letter");
+    }
+    if matches!(
+        name,
+        "and"
+            | "as"
+            | "assert"
+            | "async"
+            | "await"
+            | "break"
+            | "class"
+            | "continue"
+            | "def"
+            | "del"
+            | "elif"
+            | "else"
+            | "except"
+            | "finally"
+            | "for"
+            | "from"
+            | "global"
+            | "if"
+            | "import"
+            | "in"
+            | "is"
+            | "lambda"
+            | "nonlocal"
+            | "not"
+            | "or"
+            | "pass"
+            | "raise"
+            | "return"
+            | "try"
+            | "while"
+            | "with"
+            | "yield"
+    ) {
+        bail!("domain name must not be a Python keyword");
+    }
+    Ok(())
 }
 
 fn parse_filename(filename: &str) -> Result<u16> {
@@ -984,6 +1165,136 @@ mod tests {
             BOOTSTRAP_FILENAME,
             "CREATE TABLE example (id INTEGER PRIMARY KEY, value TEXT NOT NULL);",
         );
+    }
+
+    fn create_domain(domains: &Path, name: &str) -> PathBuf {
+        let domain = domains.join(name);
+        fs::create_dir(&domain).expect("create domain");
+        fs::write(domain.join("__init__.py"), "\n").expect("write domain public API");
+        let migrations = domain.join("migrations");
+        fs::create_dir(&migrations).expect("create domain migrations");
+        migrations
+    }
+
+    #[test]
+    fn applies_one_global_history_across_domain_owned_migrations() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let domains = directory.path().join("domains");
+        fs::create_dir(&domains).expect("create domains");
+        let entries = create_domain(&domains, "entry_register");
+        let reporting = create_domain(&domains, "daily_reporting");
+        bootstrap(&entries);
+        write_migration(
+            &reporting,
+            "0001_add_status.sql",
+            "ALTER TABLE example ADD COLUMN status TEXT NOT NULL DEFAULT 'open';",
+        );
+        write_migration(
+            &entries,
+            "0002_seed_entry.sql",
+            "INSERT INTO example(value, status) VALUES ('ordered', 'done');",
+        );
+        let database = directory.path().join("data.db");
+
+        let report = migrate_domains(&database, &domains).expect("apply domain migrations");
+
+        assert_eq!(report.applied_now, 3);
+        assert_eq!(report.current_version, 2);
+        let connection = Connection::open(database).expect("open migrated database");
+        let status: String = connection
+            .query_row("SELECT status FROM example", [], |row| row.get(0))
+            .expect("read globally ordered migration result");
+        assert_eq!(status, "done");
+    }
+
+    #[test]
+    fn validates_domain_migrations_without_mutating_the_database() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let domains = directory.path().join("domains");
+        fs::create_dir(&domains).expect("create domains");
+        let migrations = create_domain(&domains, "entry_register");
+        bootstrap(&migrations);
+        let database = directory.path().join("data.db");
+
+        let validation =
+            validate_domain_migrations(&database, &domains).expect("validate domain migrations");
+
+        assert_eq!(validation.total, 1);
+        assert_eq!(validation.pending, 1);
+        assert!(!validation.database_exists);
+        assert!(!database.exists());
+    }
+
+    #[test]
+    fn rejects_duplicate_versions_across_domains() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let domains = directory.path().join("domains");
+        fs::create_dir(&domains).expect("create domains");
+        let first = create_domain(&domains, "entry_register");
+        let second = create_domain(&domains, "daily_reporting");
+        bootstrap(&first);
+        write_migration(&second, "0000_duplicate.sql", "SELECT 1;");
+
+        let error = migrate_domains(&directory.path().join("data.db"), &domains)
+            .expect_err("duplicate domain versions fail")
+            .to_string();
+
+        assert!(error.contains("duplicate migration version 0000"));
+        assert!(error.contains("entry_register"));
+        assert!(error.contains("daily_reporting"));
+    }
+
+    #[test]
+    fn next_domain_migration_filename_uses_the_global_count() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let domains = directory.path().join("domains");
+        fs::create_dir(&domains).expect("create domains");
+        let first = create_domain(&domains, "entry_register");
+        let second = create_domain(&domains, "daily_reporting");
+        bootstrap(&first);
+        write_migration(&second, "0001_add_summary.sql", "SELECT 1;");
+
+        let filename = next_domain_migration_filename(&domains, "record_source")
+            .expect("find next global version");
+
+        assert_eq!(filename, "0002_record_source.sql");
+    }
+
+    #[test]
+    fn rejects_invalid_or_incomplete_domain_migration_roots() {
+        let missing_api = tempfile::tempdir().expect("create missing API directory");
+        let domains = missing_api.path().join("domains");
+        fs::create_dir(&domains).expect("create domains");
+        fs::create_dir_all(domains.join("entry_register").join("migrations"))
+            .expect("create incomplete domain");
+        let error = migrate_domains(&missing_api.path().join("data.db"), &domains)
+            .expect_err("missing domain API fails")
+            .to_string();
+        assert!(error.contains("__init__.py"));
+
+        let invalid_name = tempfile::tempdir().expect("create invalid-name directory");
+        let domains = invalid_name.path().join("domains");
+        fs::create_dir(&domains).expect("create domains");
+        fs::create_dir(domains.join("Entry Register")).expect("create invalid domain");
+        let error = migrate_domains(&invalid_name.path().join("data.db"), &domains)
+            .expect_err("invalid domain name fails")
+            .to_string();
+        assert!(error.contains("lower_snake_case"));
+
+        #[cfg(unix)]
+        {
+            let linked = tempfile::tempdir().expect("create symlink directory");
+            let domains = linked.path().join("domains");
+            fs::create_dir(&domains).expect("create domains");
+            let real_domain = linked.path().join("real_domain");
+            fs::create_dir(&real_domain).expect("create real domain");
+            std::os::unix::fs::symlink(&real_domain, domains.join("linked_domain"))
+                .expect("create domain symlink");
+            let error = migrate_domains(&linked.path().join("data.db"), &domains)
+                .expect_err("domain symlink fails")
+                .to_string();
+            assert!(error.contains("not a symlink"));
+        }
     }
 
     #[test]
