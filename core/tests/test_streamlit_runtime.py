@@ -31,6 +31,7 @@ class DefaultDashboardIdentityTests(unittest.TestCase):
             title=lambda value: calls.append(("title", value)),
             caption=lambda value: calls.append(("caption", value)),
             warning=lambda value: calls.append(("warning", value)),
+            html=lambda value, **kwargs: calls.append(("html", (value, kwargs))),
         )
         fake_dashboard = SimpleNamespace(
             render_widgets=lambda: calls.append(("render_widgets", None))
@@ -50,13 +51,19 @@ class DefaultDashboardIdentityTests(unittest.TestCase):
         self.assertIn(("title", "Unnamed"), calls)
         self.assertTrue(
             any(
-                kind == "warning"
-                and "app" in value.lower()
-                and "name" in value.lower()
+                kind == "warning" and "app" in value.lower() and "name" in value.lower()
                 for kind, value in calls
             ),
             "the fresh dashboard must make the missing app name visible",
         )
+        warning_html, warning_options = next(
+            value for kind, value in calls if kind == "html"
+        )
+        self.assertIn("This dashboard has no authentication", warning_html)
+        self.assertIn("Don't show again", warning_html)
+        self.assertIn("window.localStorage.getItem", warning_html)
+        self.assertIn("window.localStorage.setItem", warning_html)
+        self.assertEqual(warning_options, {"unsafe_allow_javascript": True})
         self.assertIn(("render_widgets", None), calls)
 
 

@@ -13,6 +13,10 @@ Streamlit `st.App` is mounted at `/`; FastMCP serves modern Streamable HTTP at
 > use the writable workspace. Dashboard results and submitted data are visible
 > to anyone who can reach the LAN address. Use it only on a trusted LAN.
 
+The dashboard warning has a **Don't show again** button. Its dismissal is kept
+in browser `localStorage` for that app origin; it does not add authentication or
+suppress the terminal security warning.
+
 ## Build a release
 
 Each distributable is one self-bootstrapping executable. It embeds the default
