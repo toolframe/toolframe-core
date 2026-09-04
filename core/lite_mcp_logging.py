@@ -8,7 +8,6 @@ contract, rather than best-effort diagnostic messages.  Callers must treat a
 from __future__ import annotations
 
 import base64
-import fcntl
 import hashlib
 import json
 import math
@@ -22,6 +21,11 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Self
+
+if os.name == "nt":
+    import msvcrt as _platform_locking
+else:
+    import fcntl as _platform_locking
 
 Channel = Literal["audit", "mcp"]
 Clock = Callable[[], datetime]
@@ -294,8 +298,8 @@ class StructuredLogs:
         if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
             raise StructuredLogError(f"invalid structured log lock path: {lock_path}")
         try:
-            handle = lock_path.open("a+", encoding="utf-8")
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            handle = lock_path.open("a+b")
+            _lock_handle(handle)
         except (OSError, BlockingIOError) as error:
             try:
                 handle.close()
@@ -529,14 +533,43 @@ class StructuredLogs:
                 first_error = first_error or error
         self._handles.clear()
         if self._lock_handle is not None:
+            lock_handle = self._lock_handle
+            self._lock_handle = None
             try:
-                fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_UN)
-                self._lock_handle.close()
+                _unlock_handle(lock_handle)
             except (OSError, ValueError) as error:
                 first_error = first_error or error
-            self._lock_handle = None
+            try:
+                lock_handle.close()
+            except (OSError, ValueError) as error:
+                first_error = first_error or error
         if first_error is not None:
             raise first_error
+
+
+def _lock_handle(handle: Any) -> None:
+    if os.name == "nt":
+        # msvcrt locks byte ranges from the current position and requires the
+        # range to exist. The marker is private runtime metadata; its content
+        # is deliberately irrelevant.
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        _platform_locking.locking(handle.fileno(), _platform_locking.LK_NBLCK, 1)
+        return
+    _platform_locking.flock(
+        handle.fileno(), _platform_locking.LOCK_EX | _platform_locking.LOCK_NB
+    )
+
+
+def _unlock_handle(handle: Any) -> None:
+    if os.name == "nt":
+        handle.seek(0)
+        _platform_locking.locking(handle.fileno(), _platform_locking.LK_UNLCK, 1)
+        return
+    _platform_locking.flock(handle.fileno(), _platform_locking.LOCK_UN)
 
 
 def _normalize(value: Any, *, _seen: set[int] | None = None) -> Any:

@@ -6,16 +6,21 @@ import threading
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
+import lite_mcp_logging
 from lite_mcp_logging import (
     StructuredLogError,
     StructuredLogs,
     StructuredLogSettings,
+    _lock_handle,
+    _unlock_handle,
 )
 
 
@@ -241,6 +246,28 @@ class StructuredLoggingTests(unittest.TestCase):
             first.close()
         second = StructuredLogs(self.settings(), clock=self.clock)
         second.close()
+
+    def test_windows_lock_uses_a_real_marker_byte_and_matching_range(self):
+        locking = Mock()
+        platform_locking = SimpleNamespace(
+            LK_NBLCK=2,
+            LK_UNLCK=0,
+            locking=locking,
+        )
+        lock_path = self.root / "windows.lock"
+        with (
+            lock_path.open("a+b") as handle,
+            patch.object(lite_mcp_logging.os, "name", "nt"),
+            patch.object(lite_mcp_logging, "_platform_locking", platform_locking),
+        ):
+            _lock_handle(handle)
+            self.assertEqual(lock_path.read_bytes(), b"\0")
+            self.assertEqual(handle.tell(), 0)
+            locking.assert_called_once_with(handle.fileno(), 2, 1)
+
+            _unlock_handle(handle)
+            self.assertEqual(handle.tell(), 0)
+            self.assertEqual(locking.call_args_list[-1].args, (handle.fileno(), 0, 1))
 
     def test_rejects_managed_symlinks_and_directories(self):
         for invalid_kind in ("symlink", "directory"):
