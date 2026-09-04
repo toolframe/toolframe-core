@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use lite_mcp::{
     db,
     development::{self, ScaffoldKind},
-    runtime, tools,
+    runtime, tools, uv,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -35,7 +35,6 @@ const READY_SENTINEL: &str = "LITE_MCP_READY";
 const FATAL_SENTINEL: &str = "LITE_MCP_FATAL ";
 const STDERR_HISTORY_LINES: usize = 80;
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
-const MINIMUM_UV_VERSION: (u64, u64, u64) = (0, 12, 8);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConsoleCategory {
@@ -252,11 +251,11 @@ struct Cli {
     #[arg(long, env = "LITE_MCP_WORKSPACE", global = true)]
     workspace_dir: Option<PathBuf>,
 
-    /// Private UV project, Python installation, lock, and cache directory.
+    /// Private runtime state directory. Defaults to .lite-mcp beside the executable.
     #[arg(long, env = "LITE_MCP_RUNTIME", global = true)]
     runtime_dir: Option<PathBuf>,
 
-    /// Root LAN agent context index. Relative paths resolve from the current directory.
+    /// LAN agent context index. Defaults to llms/llms.txt beside the executable.
     #[arg(long, env = "LITE_MCP_LLMS_FILE", global = true)]
     llms_file: Option<PathBuf>,
 
@@ -289,11 +288,11 @@ struct Cli {
     )]
     no_color: bool,
 
-    /// UV executable. Resolution order is this override, bundled sibling, then PATH.
+    /// Explicit UV executable. When omitted, the pinned build is downloaded and managed.
     #[arg(long, env = "LITE_MCP_UV", global = true)]
     uv_path: Option<PathBuf>,
 
-    /// Resolve only from artifacts already available to UV.
+    /// Disable UV, Python, and dependency downloads.
     #[arg(long, env = "LITE_MCP_OFFLINE", default_value_t = false, global = true)]
     offline: bool,
 
@@ -521,8 +520,9 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     let startup_dependency_context =
         format_startup_dependency_context(&catalog, &dashboard_manifest, &dashboard_manifest_path);
     let prepared = runtime::prepare_runtime(&runtime_dir, &catalog, &dashboard_manifest)?;
-    let uv = runtime::locate_uv(cli.uv_path.as_deref(), &executable_root)?;
-    let uv_version = validate_uv_version(&uv).await?;
+    let resolved_uv = uv::resolve(cli.uv_path.as_deref(), &runtime_dir, cli.offline).await?;
+    let uv = resolved_uv.path;
+    let uv_version = resolved_uv.version;
     console.print(
         ConsoleCategory::Uv,
         format!("runtime prepared with {} (uv {uv_version})", uv.display()),
@@ -558,8 +558,9 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     if cli.offline {
         command.arg("--offline");
     }
+    command.arg("run");
+    configure_uv_run_platform(&mut command);
     command
-        .arg("run")
         .arg("--project")
         .arg(&prepared.project)
         .arg("--python")
@@ -571,6 +572,7 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONPYCACHEPREFIX", runtime_dir.join("pycache"))
         .env("UV_MANAGED_PYTHON", "1")
         .env("UV_CACHE_DIR", runtime_dir.join("cache"))
         .env("UV_PYTHON_INSTALL_DIR", runtime_dir.join("python"))
@@ -819,8 +821,9 @@ async fn prepare_development_runtime(
     let dashboard_manifest =
         tools::inspect_dashboard_manifest(&dashboard_dir.join("pyproject.toml"))?;
     let prepared = runtime::prepare_runtime(&runtime_dir, &catalog, &dashboard_manifest)?;
-    let uv = runtime::locate_uv(cli.uv_path.as_deref(), &executable_root)?;
-    let uv_version = validate_uv_version(&uv).await?;
+    let resolved_uv = uv::resolve(cli.uv_path.as_deref(), &runtime_dir, cli.offline).await?;
+    let uv = resolved_uv.path;
+    let uv_version = resolved_uv.version;
     Ok(DevelopmentRuntime {
         paths,
         migrations,
@@ -923,7 +926,7 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
                 development.uv_version
             );
             println!("  network     no listener bound");
-            println!("  database    configured data.db was not changed");
+            println!("  database    configured database was not changed");
         }
     }
     Ok(0)
@@ -1000,8 +1003,9 @@ async fn run_cli_python(
     if cli.offline {
         command.arg("--offline");
     }
+    command.arg("run");
+    configure_uv_run_platform(&mut command);
     command
-        .arg("run")
         .arg("--project")
         .arg(&development.prepared.project)
         .arg("--python")
@@ -1037,7 +1041,10 @@ async fn run_cli_python(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .env("PYTHONUNBUFFERED", "1")
-        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env(
+            "PYTHONPYCACHEPREFIX",
+            development.runtime_dir.join("pycache"),
+        )
         .env("UV_MANAGED_PYTHON", "1")
         .env("UV_CACHE_DIR", development.runtime_dir.join("cache"))
         .env(
@@ -1102,6 +1109,15 @@ fn format_child_stderr(stderr: &[u8]) -> String {
         String::new()
     } else {
         format!("\n{stderr}")
+    }
+}
+
+fn configure_uv_run_platform(command: &mut Command) {
+    if let Some(target) = uv::current_target() {
+        command
+            .arg("--python-platform")
+            .arg(target)
+            .env("MACOSX_DEPLOYMENT_TARGET", uv::MINIMUM_MACOS_VERSION);
     }
 }
 
@@ -1253,72 +1269,6 @@ fn child_log_levels(verbose: bool) -> (&'static str, &'static str) {
     } else {
         ("WARNING", "warning")
     }
-}
-
-async fn validate_uv_version(path: &Path) -> Result<String> {
-    let output = time::timeout(
-        Duration::from_secs(5),
-        Command::new(path)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .output(),
-    )
-    .await
-    .with_context(|| format!("timed out checking UV version at {}", path.display()))?
-    .with_context(|| format!("could not run {} --version", path.display()))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "{} --version failed ({}): {}",
-            path.display(),
-            output.status,
-            stderr.trim()
-        );
-    }
-    let stdout = String::from_utf8(output.stdout).context("UV version output was not UTF-8")?;
-    let (display, parsed) = parse_uv_version(&stdout)?;
-    if parsed < MINIMUM_UV_VERSION {
-        bail!(
-            "UV {display} is too old; lite-mcp requires UV {}.{}.{} or newer",
-            MINIMUM_UV_VERSION.0,
-            MINIMUM_UV_VERSION.1,
-            MINIMUM_UV_VERSION.2
-        );
-    }
-    Ok(display)
-}
-
-fn parse_uv_version(output: &str) -> Result<(String, (u64, u64, u64))> {
-    let mut parts = output.split_whitespace();
-    if parts.next() != Some("uv") {
-        bail!("unexpected UV version output: {}", output.trim());
-    }
-    let display = parts
-        .next()
-        .ok_or_else(|| anyhow!("UV version output did not include a version"))?;
-    let components = display
-        .split('.')
-        .take(3)
-        .map(|component| {
-            let digits = component
-                .chars()
-                .take_while(|character| character.is_ascii_digit())
-                .collect::<String>();
-            if digits.is_empty() {
-                bail!("invalid UV version component {component:?}");
-            }
-            digits
-                .parse::<u64>()
-                .with_context(|| format!("invalid UV version component {component:?}"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    if components.len() != 3 {
-        bail!("UV version must contain major, minor, and patch components");
-    }
-    Ok((
-        display.to_owned(),
-        (components[0], components[1], components[2]),
-    ))
 }
 
 fn is_routine_info(line: &str) -> bool {
@@ -1926,7 +1876,7 @@ mod tests {
         let default_cli = Cli::try_parse_from(["lite-mcp"]).expect("parse default cli");
         let root = Path::new("/tmp/lite-mcp-llms-defaults");
         let paths = resolve_cli_paths(&default_cli, root).expect("resolve default paths");
-        assert_eq!(paths.llms_file, root.join("llms.txt"));
+        assert_eq!(paths.llms_file, root.join("llms").join("llms.txt"));
         assert_eq!(paths.llms_dir, root.join("llms"));
     }
 
@@ -2015,20 +1965,6 @@ mod tests {
     fn verbose_controls_python_emission_levels() {
         assert_eq!(child_log_levels(false), ("WARNING", "warning"));
         assert_eq!(child_log_levels(true), ("DEBUG", "debug"));
-    }
-
-    #[test]
-    fn parses_uv_semantic_versions_for_runtime_minimum_check() {
-        assert_eq!(
-            parse_uv_version("uv 0.12.8 (abcdef 2026-08-01)").expect("parse version"),
-            ("0.12.8".to_owned(), (0, 12, 8))
-        );
-        assert_eq!(
-            parse_uv_version("uv 1.0.0\n").expect("parse major version"),
-            ("1.0.0".to_owned(), (1, 0, 0))
-        );
-        assert!(parse_uv_version("uv unknown").is_err());
-        assert!(parse_uv_version("not-uv 0.12.8").is_err());
     }
 
     #[test]

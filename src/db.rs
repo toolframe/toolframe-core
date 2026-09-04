@@ -198,7 +198,7 @@ fn migrate_connection(
 }
 
 /// Exercise production migration discovery, history validation, and pending
-/// application against an in-memory snapshot without changing data.db.
+/// application against an in-memory snapshot without changing the configured database.
 pub fn validate_migrations(
     database_path: &Path,
     migrations_dir: &Path,
@@ -391,7 +391,7 @@ fn configure_connection(connection: &Connection, database_path: &Path) -> Result
                 None,
                 database_path,
                 &error,
-                "Ensure data.db is writable and not held by an incompatible process.",
+                "Ensure the configured database is writable and not held by an incompatible process.",
             )
         })?;
 
@@ -409,7 +409,7 @@ fn configure_connection(connection: &Connection, database_path: &Path) -> Result
                     None,
                     database_path,
                     &error,
-                    "Ensure data.db is writable and not held by an incompatible process.",
+                    "Ensure the configured database is writable and not held by an incompatible process.",
                 ));
             }
         }

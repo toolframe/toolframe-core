@@ -95,9 +95,12 @@ def _validated_llms_source(index_file: Path, docs_dir: Path) -> tuple[list[str],
     _validate_llms_index_format(index_file, index_text)
 
     _validate_llms_directory(docs_dir)
+    index_location = index_file.absolute()
     documents: list[str] = []
     for entry in _scan_llms_directory(docs_dir):
         entry_path = Path(entry.path)
+        if entry_path.absolute() == index_location:
+            continue
         if entry.is_symlink():
             raise LlmsValidationError(
                 entry_path,

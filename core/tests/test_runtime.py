@@ -110,6 +110,16 @@ class RuntimeTests(unittest.TestCase):
             ["overview.md", "workflow_notes.md"],
         )
 
+    def test_validate_llms_source_accepts_index_inside_details_directory(self):
+        index_path, llms_dir = self.write_llms_source()
+        nested_index_path = llms_dir / "llms.txt"
+        index_path.replace(nested_index_path)
+
+        self.assertEqual(
+            runtime.validate_llms_source(nested_index_path, llms_dir),
+            ["overview.md"],
+        )
+
     def test_validate_llms_source_accepts_v2_bom_and_blank_line_before_summary(self):
         index_path, llms_dir = self.write_llms_source(
             index=(

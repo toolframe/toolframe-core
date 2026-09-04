@@ -14,6 +14,9 @@ const PYTHON_VERSION: &str = "3.14.0";
 const PYTHON_REQUIREMENT: &str = ">=3.14,<3.15";
 const CORE_DEPENDENCIES: &[&str] = &[
     "anyio>=4.10,<5",
+    // 49.0.0 and newer no longer publish an Intel macOS wheel. Keep the
+    // runtime installable on supported Monterey-era Intel machines.
+    "cryptography==48.0.1",
     "fastapi==0.135.2",
     "fastmcp==4.0.0",
     "pydantic==2.12.5",
@@ -498,6 +501,11 @@ mod tests {
             1
         );
         assert!(dependencies.iter().any(|item| item == "duckdb==1.4.0"));
+        assert!(
+            dependencies
+                .iter()
+                .any(|item| item == "cryptography==48.0.1")
+        );
         assert!(dependencies.iter().any(|item| item == "streamlit==1.61.0"));
 
         let project = runtime_project_toml(&catalog, &dashboard).expect("render UV project");

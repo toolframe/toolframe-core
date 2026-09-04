@@ -1,0 +1,3 @@
+# target                     version  archive_sha256                                                    executable_sha256
+aarch64-apple-darwin         0.12.8   8ce083658dbff20143607ca7af8e0c1d64b6fd7bf03a5cdcb62bf3d47d991b5f  e053a85d61ffa0790b564afe56bb7314d69334ff33b77175df03f9de2f11dd46
+x86_64-apple-darwin          0.12.8   bfcd4407de99e0a2c1904df0902fa1795653d4edd145358e6561527e746a4f16  c7dd0293072831b718924b82f390bb2d179666cec739118eb781a755c5504334

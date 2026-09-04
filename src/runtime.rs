@@ -34,8 +34,16 @@ const DASHBOARD_WIDGETS_INIT: &str = include_str!("../dashboard/widgets/__init__
 const DASHBOARD_EXAMPLE_CARD: &str = include_str!("../dashboard/widgets/example_card.py");
 const DEFAULT_BOOTSTRAP_MIGRATION: &str = include_str!("../migrations/0000_bootstrap.sql");
 const DEFAULT_MIGRATION_README: &str = include_str!("../migrations/README.md");
-const DEFAULT_LLMS_FILE: &str = include_str!("../llms.txt");
-const EMBEDDED_LLMS_FILES: &[(&str, &str)] = &[
+const DEFAULT_LLMS_FILE: &str = include_str!("../llms/llms.txt");
+const EMBEDDED_LLMS_DETAIL_FILES: &[(&str, &str)] = &[
+    ("agent-guide.md", include_str!("../llms/agent-guide.md")),
+    ("capabilities.md", include_str!("../llms/capabilities.md")),
+    ("context.md", include_str!("../llms/context.md")),
+    ("workflow.md", include_str!("../llms/workflow.md")),
+    ("operations.md", include_str!("../llms/operations.md")),
+];
+const EMBEDDED_LLMS_TREE: &[(&str, &str)] = &[
+    ("llms.txt", include_str!("../llms/llms.txt")),
     ("agent-guide.md", include_str!("../llms/agent-guide.md")),
     ("capabilities.md", include_str!("../llms/capabilities.md")),
     ("context.md", include_str!("../llms/context.md")),
@@ -120,7 +128,7 @@ pub fn prepare_logs_dir(root: &Path, configured: Option<&Path>) -> Result<PathBu
     let path = match configured {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         Some(path) => root.join(path),
-        None => root.join("logs"),
+        None => root.join(".lite-mcp").join("logs"),
     };
     fs::create_dir_all(&path)
         .with_context(|| format!("could not create logs directory {}", path.display()))?;
@@ -342,33 +350,23 @@ pub fn resolve_paths(
     llms_dir: Option<PathBuf>,
 ) -> Result<AppPaths> {
     let cwd = env::current_dir().context("could not read the current directory")?;
+    let llms_dir_default = root.join("llms");
     Ok(AppPaths {
-        database: absolute_override(database, &cwd, &root.join("data.db")),
+        database: absolute_override(database, &cwd, &root.join("data").join("data.db")),
         migrations: absolute_override(migrations, &cwd, &root.join("migrations")),
         tools: absolute_override(tools, &cwd, &root.join("tools")),
         dashboard: absolute_override(dashboard, &cwd, &root.join("dashboard")),
         workspace: absolute_override(workspace, &cwd, &root.join("workspace")),
-        runtime: absolute_override(runtime, &cwd, &root.join("runtime")),
-        llms_file: absolute_override(llms_file, &cwd, &root.join("llms.txt")),
-        llms_dir: absolute_override(llms_dir, &cwd, &root.join("llms")),
+        runtime: absolute_override(runtime, &cwd, &root.join(".lite-mcp")),
+        llms_file: absolute_override(llms_file, &cwd, &llms_dir_default.join("llms.txt")),
+        llms_dir: absolute_override(llms_dir, &cwd, &llms_dir_default),
     })
 }
 
 pub fn prepare_directories(paths: &AppPaths) -> Result<PreparedDirectories> {
-    let llms_scaffolded = validate_llms_pair(&paths.llms_file, &paths.llms_dir)?;
-    let llms_file_scaffolded = if llms_scaffolded {
-        scaffold_llms_file_if_missing(&paths.llms_file)?
-    } else {
-        false
-    };
-    let llms_dir_scaffolded = if llms_scaffolded {
-        scaffold_llms_directory_if_missing(&paths.llms_dir)?
-    } else {
-        false
-    };
-    // Keep the pair-level invariant true even if a concurrent launcher changed
-    // one target while this process was staging the default source.
-    validate_llms_pair(&paths.llms_file, &paths.llms_dir)?;
+    prepare_database_parent(&paths.database)?;
+    let (llms_file_scaffolded, llms_dir_scaffolded) =
+        prepare_llms_source(&paths.llms_file, &paths.llms_dir)?;
     let migrations_scaffolded = scaffold_migrations_if_missing(&paths.migrations)?;
     let tools_created = create_directory_if_missing(&paths.tools, "tools")?;
     create_directory_if_missing(&paths.workspace, "workspace")?;
@@ -493,26 +491,6 @@ pub fn prepare_runtime(
     })
 }
 
-pub fn locate_uv(explicit: Option<&Path>, executable_root: &Path) -> Result<PathBuf> {
-    if let Some(path) = explicit {
-        return validate_uv(path).context("the configured UV executable is invalid");
-    }
-
-    let sibling_name = if cfg!(windows) { "uv.exe" } else { "uv" };
-    let sibling = executable_root.join(sibling_name);
-    if sibling.is_file() {
-        return validate_uv(&sibling).context("the bundled UV executable is invalid");
-    }
-
-    if let Some(path) = find_on_path(sibling_name) {
-        return validate_uv(&path).context("the UV executable on PATH is invalid");
-    }
-
-    bail!(
-        "could not find UV; pass --uv-path, set LITE_MCP_UV, place {sibling_name} beside lite-mcp, or install uv on PATH"
-    )
-}
-
 pub fn allowed_hosts(bind_host: IpAddr) -> Vec<String> {
     let mut hosts = BTreeSet::from([
         "localhost".to_owned(),
@@ -581,6 +559,14 @@ fn create_directory_if_missing(path: &Path, label: &str) -> Result<bool> {
     fs::create_dir_all(path)
         .with_context(|| format!("could not create {label} directory {}", path.display()))?;
     Ok(true)
+}
+
+fn prepare_database_parent(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("database path {} has no parent directory", path.display()))?;
+    create_directory_if_missing(parent, "database parent")?;
+    Ok(())
 }
 
 fn scaffold_dashboard_if_missing(path: &Path) -> Result<bool> {
@@ -666,6 +652,42 @@ fn validate_llms_pair(file: &Path, directory: &Path) -> Result<bool> {
     Ok(file_missing)
 }
 
+fn prepare_llms_source(file: &Path, directory: &Path) -> Result<(bool, bool)> {
+    if file == directory.join("llms.txt") {
+        let directory_missing = validate_llms_directory_path(directory)?;
+        if directory_missing {
+            let published = scaffold_directory_if_missing(directory, "llms", EMBEDDED_LLMS_TREE)?;
+            if published {
+                return Ok((true, true));
+            }
+        }
+
+        if validate_llms_file_path(file)? {
+            bail!(
+                "llms source is partial: index file {} is missing from existing llms directory {}; the directory is user-owned and is not repaired automatically",
+                file.display(),
+                directory.display()
+            );
+        }
+        validate_llms_directory_path(directory)?;
+        return Ok((false, false));
+    }
+
+    let llms_scaffolded = validate_llms_pair(file, directory)?;
+    let file_scaffolded = if llms_scaffolded {
+        scaffold_llms_file_if_missing(file)?
+    } else {
+        false
+    };
+    let directory_scaffolded = if llms_scaffolded {
+        scaffold_llms_directory_if_missing(directory)?
+    } else {
+        false
+    };
+    validate_llms_pair(file, directory)?;
+    Ok((file_scaffolded, directory_scaffolded))
+}
+
 fn scaffold_llms_file_if_missing(path: &Path) -> Result<bool> {
     if !validate_llms_file_path(path)? {
         return Ok(false);
@@ -737,7 +759,7 @@ fn scaffold_llms_directory_if_missing(path: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    let published = scaffold_directory_if_missing(path, "llms", EMBEDDED_LLMS_FILES)?;
+    let published = scaffold_directory_if_missing(path, "llms", EMBEDDED_LLMS_DETAIL_FILES)?;
     if !published {
         // The directory may have been created by another launcher while the
         // complete staged tree was being written. Confirm its type without
@@ -998,39 +1020,6 @@ fn write_managed(path: &Path, content: &str) -> Result<()> {
     fs::rename(&temporary, path)
         .with_context(|| format!("could not replace managed file {}", path.display()))?;
     Ok(())
-}
-
-fn validate_uv(path: &Path) -> Result<PathBuf> {
-    let path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        env::current_dir()
-            .context("could not read current directory")?
-            .join(path)
-    };
-    let metadata =
-        fs::metadata(&path).with_context(|| format!("could not inspect {}", path.display()))?;
-    if !metadata.is_file() {
-        bail!("{} is not a file", path.display());
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o111 == 0 {
-            bail!("{} is not executable", path.display());
-        }
-    }
-
-    Ok(path.canonicalize().unwrap_or(path))
-}
-
-fn find_on_path(name: &str) -> Option<PathBuf> {
-    env::var_os("PATH").and_then(|path| {
-        env::split_paths(&path)
-            .map(|directory| directory.join(name))
-            .find(|candidate| candidate.is_file())
-    })
 }
 
 #[cfg(test)]
@@ -1326,15 +1315,16 @@ mod tests {
     #[test]
     fn scaffolds_llms_file_and_directory_once_without_repairing_user_content() {
         let directory = tempfile::tempdir().expect("create temp directory");
+        let llms_dir = directory.path().join("llms");
         let paths = AppPaths {
-            database: directory.path().join("data.db"),
+            database: directory.path().join("data").join("data.db"),
             migrations: directory.path().join("migrations"),
             tools: directory.path().join("tools"),
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),
-            runtime: directory.path().join("runtime"),
-            llms_file: directory.path().join("llms.txt"),
-            llms_dir: directory.path().join("llms"),
+            runtime: directory.path().join(".lite-mcp"),
+            llms_file: llms_dir.join("llms.txt"),
+            llms_dir,
         };
 
         let prepared = prepare_directories(&paths).expect("prepare llms defaults");
@@ -1347,7 +1337,7 @@ mod tests {
         );
         assert!(DEFAULT_LLMS_FILE.starts_with("# Unnamed\n"));
         assert!(DEFAULT_LLMS_FILE.contains("built on the Lite MCP framework"));
-        for (relative, expected) in EMBEDDED_LLMS_FILES {
+        for (relative, expected) in EMBEDDED_LLMS_TREE {
             let child = paths.llms_dir.join(relative);
             assert!(child.is_file(), "missing llms scaffold file {relative}");
             assert_eq!(
@@ -1372,29 +1362,30 @@ mod tests {
     }
 
     #[test]
-    fn existing_empty_llms_directory_is_not_scaffolded() {
+    fn existing_llms_directory_with_an_index_is_not_repaired() {
         let directory = tempfile::tempdir().expect("create temp directory");
+        let llms_dir = directory.path().join("llms");
         let paths = AppPaths {
-            database: directory.path().join("data.db"),
+            database: directory.path().join("data").join("data.db"),
             migrations: directory.path().join("migrations"),
             tools: directory.path().join("tools"),
             dashboard: directory.path().join("dashboard"),
             workspace: directory.path().join("workspace"),
-            runtime: directory.path().join("runtime"),
-            llms_file: directory.path().join("llms.txt"),
-            llms_dir: directory.path().join("llms"),
+            runtime: directory.path().join(".lite-mcp"),
+            llms_file: llms_dir.join("llms.txt"),
+            llms_dir,
         };
-        fs::write(&paths.llms_file, "# user-owned guide\n").expect("create user llms guide");
         fs::create_dir(&paths.llms_dir).expect("create user llms directory");
+        fs::write(&paths.llms_file, "# user-owned guide\n").expect("create user llms guide");
 
         let prepared = prepare_directories(&paths).expect("prepare existing llms directory");
         assert!(!prepared.llms_file_scaffolded);
         assert!(!prepared.llms_dir_scaffolded);
-        assert!(
+        assert_eq!(
             fs::read_dir(&paths.llms_dir)
                 .expect("read llms directory")
-                .next()
-                .is_none()
+                .count(),
+            1
         );
     }
 
@@ -1530,13 +1521,13 @@ mod tests {
         let root = Path::new("/tmp/lite-mcp-dist");
         let paths = resolve_paths(root, None, None, None, None, None, None, None, None)
             .expect("resolve paths");
-        assert_eq!(paths.database, root.join("data.db"));
+        assert_eq!(paths.database, root.join("data").join("data.db"));
         assert_eq!(paths.migrations, root.join("migrations"));
         assert_eq!(paths.tools, root.join("tools"));
         assert_eq!(paths.dashboard, root.join("dashboard"));
         assert_eq!(paths.workspace, root.join("workspace"));
-        assert_eq!(paths.runtime, root.join("runtime"));
-        assert_eq!(paths.llms_file, root.join("llms.txt"));
+        assert_eq!(paths.runtime, root.join(".lite-mcp"));
+        assert_eq!(paths.llms_file, root.join("llms").join("llms.txt"));
         assert_eq!(paths.llms_dir, root.join("llms"));
     }
 
@@ -1559,6 +1550,7 @@ mod tests {
             defaults,
             directory
                 .path()
+                .join(".lite-mcp")
                 .join("logs")
                 .canonicalize()
                 .expect("canonical default logs")

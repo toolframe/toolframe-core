@@ -1,5 +1,8 @@
 /target/
 /dist/
+/.lite-mcp/
+/data/
+# Legacy pre-0.1 runtime locations remain ignored during upgrades.
 /runtime/
 /logs/
 /data.db
