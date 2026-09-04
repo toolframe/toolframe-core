@@ -46,13 +46,37 @@ def _configure_diagnostics() -> None:
         child.setLevel(logging.NOTSET)
 
 
+def _listener_arguments() -> dict[str, int | str]:
+    """Return the platform-appropriate Uvicorn listener arguments."""
+
+    inherited_fd = os.environ.get("LITE_MCP_LISTEN_FD", "").strip()
+    if inherited_fd:
+        try:
+            descriptor = int(inherited_fd)
+        except ValueError as error:
+            raise RuntimeError("LITE_MCP_LISTEN_FD must be an integer") from error
+        if descriptor < 0:
+            raise RuntimeError("LITE_MCP_LISTEN_FD must not be negative")
+        return {"fd": descriptor}
+
+    host = os.environ.get("LITE_MCP_HOST", "").strip()
+    if not host:
+        raise RuntimeError("LITE_MCP_HOST is required without an inherited listener")
+    try:
+        port = int(os.environ.get("LITE_MCP_PORT", ""))
+    except ValueError as error:
+        raise RuntimeError("LITE_MCP_PORT must be an integer") from error
+    if not 1 <= port <= 65535:
+        raise RuntimeError("LITE_MCP_PORT must be between 1 and 65535")
+    return {"host": host, "port": port}
+
+
 def main() -> None:
     _configure_diagnostics()
     app = build_application()
-    listen_fd = int(os.environ["LITE_MCP_LISTEN_FD"])
     uvicorn.run(
         app,
-        fd=listen_fd,
+        **_listener_arguments(),
         workers=1,
         access_log=False,
         log_config=None,

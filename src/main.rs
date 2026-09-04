@@ -535,7 +535,6 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     let standard_listener = listener
         .into_std()
         .context("could not prepare the inherited HTTP listener")?;
-    let listen_fd = inherited_listener_fd(&standard_listener)?;
 
     let allowed_hosts = runtime::allowed_hosts(cli.host);
     let allowed_origins = runtime::allowed_origins(cli.host, address.port());
@@ -598,7 +597,6 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         .env("LITE_MCP_MANIFEST", &prepared.manifest)
         .env("LITE_MCP_INFO_PAGE", &prepared.info_page)
         .env("LITE_MCP_DASHBOARD_RUNNER", &prepared.dashboard_runner)
-        .env("LITE_MCP_LISTEN_FD", listen_fd.to_string())
         .env("LITE_MCP_READY_TOKEN", ready_token)
         .env("LITE_MCP_HOST", cli.host.to_string())
         .env("LITE_MCP_PORT", address.port().to_string())
@@ -619,19 +617,14 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         .env("LITE_MCP_RESULT_LIMIT_BYTES", cli.result_limit.to_string())
         .env("LITE_MCP_VERSION", env!("CARGO_PKG_VERSION"));
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.as_std_mut().process_group(0);
-    }
+    let listener_guard = configure_server_listener(&mut command, standard_listener)?;
+    configure_child_process(&mut command);
 
     let mut child = command
         .spawn()
         .with_context(|| format!("could not start UV at {}", uv.display()))?;
-    drop(standard_listener);
-    let child_pid = child
-        .id()
-        .ok_or_else(|| anyhow!("UV child process did not report a process id"))?;
+    drop(listener_guard);
+    let process_tree = ChildProcessTree::attach(&child)?;
     let stdout = child
         .stdout
         .take()
@@ -667,11 +660,11 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
                 let status = match time::timeout(Duration::from_secs(2), &mut wait).await {
                     Ok(status) => status.context("could not wait for UV during startup")?,
                     Err(_) => {
-                        terminate_process_group(child_pid, libc::SIGTERM);
+                        process_tree.terminate_gracefully();
                         match time::timeout(Duration::from_secs(5), &mut wait).await {
                             Ok(status) => status.context("could not wait for UV during startup")?,
                             Err(_) => {
-                                terminate_process_group(child_pid, libc::SIGKILL);
+                                process_tree.terminate_forcefully();
                                 wait.await.context("could not wait for UV after forced startup termination")?
                             }
                         }
@@ -691,13 +684,13 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
             bail!("Python runtime exited before startup completed ({status}){fatal}{diagnostics}{startup_dependency_context}");
         }
         _ = &mut deadline => {
-            terminate_process_group(child_pid, libc::SIGTERM);
+            process_tree.terminate_gracefully();
             match time::timeout(Duration::from_secs(5), &mut wait).await {
                 Ok(status) => {
                     status.context("could not wait for UV after startup timeout")?;
                 }
                 Err(_) => {
-                    terminate_process_group(child_pid, libc::SIGKILL);
+                    process_tree.terminate_forcefully();
                     wait.await.context("could not wait for UV after startup timeout")?;
                 }
             }
@@ -729,12 +722,12 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         }
         _ = shutdown_signal() => {
             console.print(ConsoleCategory::Shutdown, "shutdown requested; stopping Python runtime");
-            terminate_process_group(child_pid, libc::SIGTERM);
+            process_tree.terminate_gracefully();
             let status = match time::timeout(Duration::from_secs(5), &mut wait).await {
                 Ok(status) => status.context("could not wait for the Python runtime during shutdown")?,
                 Err(_) => {
                     warn!(target: "lite_mcp::shutdown", "Python runtime did not stop in 5 seconds; forcing termination");
-                    terminate_process_group(child_pid, libc::SIGKILL);
+                    process_tree.terminate_forcefully();
                     wait.await.context("could not wait for the Python runtime after forced shutdown")?
                 }
             };
@@ -1075,9 +1068,11 @@ async fn run_cli_python(
     if let Some(tool) = tool {
         command.arg("--tool").arg(tool);
     }
+    configure_child_process(&mut command);
     let mut child = command
         .spawn()
         .with_context(|| format!("could not start UV at {}", development.uv.display()))?;
+    let _process_tree = ChildProcessTree::attach(&child)?;
     if let Some(input) = stdin {
         let mut child_stdin = child
             .stdin
@@ -1114,10 +1109,9 @@ fn format_child_stderr(stderr: &[u8]) -> String {
 
 fn configure_uv_run_platform(command: &mut Command) {
     if let Some(target) = uv::current_target() {
-        command
-            .arg("--python-platform")
-            .arg(target)
-            .env("MACOSX_DEPLOYMENT_TARGET", uv::MINIMUM_MACOS_VERSION);
+        command.arg("--python-platform").arg(target);
+        #[cfg(target_os = "macos")]
+        command.env("MACOSX_DEPLOYMENT_TARGET", uv::MINIMUM_MACOS_VERSION);
     }
 }
 
@@ -1381,27 +1375,193 @@ fn inherited_listener_fd(listener: &std::net::TcpListener) -> Result<i32> {
     Ok(fd)
 }
 
+#[cfg(unix)]
+fn configure_server_listener(
+    command: &mut Command,
+    listener: std::net::TcpListener,
+) -> Result<Option<std::net::TcpListener>> {
+    command.env(
+        "LITE_MCP_LISTEN_FD",
+        inherited_listener_fd(&listener)?.to_string(),
+    );
+    Ok(Some(listener))
+}
+
 #[cfg(not(unix))]
-fn inherited_listener_fd(_: &std::net::TcpListener) -> Result<i32> {
-    bail!("inherited listener startup is currently supported on macOS and other Unix systems")
+fn configure_server_listener(
+    command: &mut Command,
+    listener: std::net::TcpListener,
+) -> Result<Option<std::net::TcpListener>> {
+    // Windows sockets cannot be inherited as Unix file descriptors. Release
+    // the selected port immediately before spawning Python, which binds the
+    // same host and port from LITE_MCP_HOST/LITE_MCP_PORT.
+    command.env_remove("LITE_MCP_LISTEN_FD");
+    drop(listener);
+    Ok(None)
 }
 
 #[cfg(unix)]
-fn terminate_process_group(pid: u32, signal: i32) {
-    if let Ok(pid) = i32::try_from(pid) {
+fn configure_child_process(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.kill_on_drop(true);
+    command.as_std_mut().process_group(0);
+}
+
+#[cfg(windows)]
+fn configure_child_process(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP;
+
+    command.kill_on_drop(true);
+    command
+        .as_std_mut()
+        .creation_flags(CREATE_NEW_PROCESS_GROUP);
+}
+
+#[cfg(not(any(unix, windows)))]
+fn configure_child_process(command: &mut Command) {
+    command.kill_on_drop(true);
+}
+
+#[cfg(unix)]
+struct ChildProcessTree {
+    pid: u32,
+}
+
+#[cfg(unix)]
+impl ChildProcessTree {
+    fn attach(child: &tokio::process::Child) -> Result<Self> {
+        let pid = child
+            .id()
+            .ok_or_else(|| anyhow!("UV child process did not report a process id"))?;
+        Ok(Self { pid })
+    }
+
+    fn terminate_gracefully(&self) {
+        self.signal(libc::SIGTERM);
+    }
+
+    fn terminate_forcefully(&self) {
+        self.signal(libc::SIGKILL);
+    }
+
+    fn signal(&self, signal: i32) {
+        let Ok(pid) = i32::try_from(self.pid) else {
+            return;
+        };
         // SAFETY: negative pid targets only the dedicated child process group.
         let result = unsafe { libc::kill(-pid, signal) };
         if result < 0 {
             let error = std::io::Error::last_os_error();
             if error.raw_os_error() != Some(libc::ESRCH) {
-                warn!(target: "lite_mcp::shutdown", %error, pid, signal, "could not signal Python process group");
+                warn!(target: "lite_mcp::shutdown", %error, pid = self.pid, signal, "could not signal Python process group");
             }
         }
     }
 }
 
-#[cfg(not(unix))]
-fn terminate_process_group(_: u32, _: i32) {}
+#[cfg(windows)]
+struct ChildProcessTree {
+    job: std::os::windows::io::OwnedHandle,
+    pid: u32,
+}
+
+#[cfg(windows)]
+impl ChildProcessTree {
+    fn attach(child: &tokio::process::Child) -> Result<Self> {
+        use std::{
+            mem::size_of,
+            os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        };
+        use windows_sys::Win32::{
+            Foundation::HANDLE,
+            System::JobObjects::{
+                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+                SetInformationJobObject,
+            },
+        };
+
+        let pid = child
+            .id()
+            .ok_or_else(|| anyhow!("UV child process did not report a process id"))?;
+        // SAFETY: null security attributes and name create an unnamed job with
+        // default access. The returned owned handle is closed exactly once.
+        let raw_job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if raw_job.is_null() {
+            return Err(std::io::Error::last_os_error())
+                .context("could not create a Windows process job for UV");
+        }
+        // SAFETY: CreateJobObjectW returned a fresh, non-null owned handle.
+        let job = unsafe { OwnedHandle::from_raw_handle(raw_job as _) };
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: both handles remain valid for the call and `limits` has the
+        // exact structure and byte length required by this information class.
+        if unsafe {
+            SetInformationJobObject(
+                job.as_raw_handle() as HANDLE,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&limits).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error())
+                .context("could not configure the Windows process job for UV");
+        }
+        let child_handle = child
+            .raw_handle()
+            .ok_or_else(|| anyhow!("UV child process exited before job assignment"))?;
+        // SAFETY: the job and Tokio child process handles are valid and owned
+        // by this process for the duration of the call.
+        if unsafe {
+            AssignProcessToJobObject(job.as_raw_handle() as HANDLE, child_handle as HANDLE)
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error())
+                .context("could not attach UV to its Windows process job");
+        }
+        Ok(Self { job, pid })
+    }
+
+    fn terminate_gracefully(&self) {
+        use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
+
+        // SAFETY: configure_child_process created a process group whose id is
+        // the UV process id. CTRL_BREAK is limited to that child group.
+        if unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.pid) } == 0 {
+            let error = std::io::Error::last_os_error();
+            warn!(target: "lite_mcp::shutdown", %error, pid = self.pid, "could not send Ctrl-Break to the Python process tree");
+        }
+    }
+
+    fn terminate_forcefully(&self) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{Foundation::HANDLE, System::JobObjects::TerminateJobObject};
+
+        // SAFETY: `job` is a live job handle owned by this value.
+        if unsafe { TerminateJobObject(self.job.as_raw_handle() as HANDLE, 1) } == 0 {
+            let error = std::io::Error::last_os_error();
+            warn!(target: "lite_mcp::shutdown", %error, pid = self.pid, "could not terminate the Windows Python process job");
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+struct ChildProcessTree;
+
+#[cfg(not(any(unix, windows)))]
+impl ChildProcessTree {
+    fn attach(_: &tokio::process::Child) -> Result<Self> {
+        Ok(Self)
+    }
+
+    fn terminate_gracefully(&self) {}
+
+    fn terminate_forcefully(&self) {}
+}
 
 struct Announcement<'a> {
     address: SocketAddr,
