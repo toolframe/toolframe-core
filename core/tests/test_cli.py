@@ -68,20 +68,27 @@ class CliRunnerTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
-        self.tools = self.root / "tools"
-        self.tools.mkdir()
+        self.domains = self.root / "domains"
+        domain = self.domains / "entry_register"
+        self.tools = domain / "tools"
+        for child in ("llms", "model", "tools", "ui", "migrations"):
+            (domain / child).mkdir(parents=True, exist_ok=True)
+        (domain / "__init__.py").write_text("\n", encoding="utf-8")
+        (self.tools / "__init__.py").write_text("\n", encoding="utf-8")
+        (domain / "ui" / "__init__.py").write_text("\n", encoding="utf-8")
         tool_path = self.tools / "echo.py"
         tool_path.write_text(TOOL_SOURCE, encoding="utf-8")
         self.manifest = self.root / "manifest.json"
         self.manifest.write_text(
             json.dumps(
                 {
-                    "version": 1,
+                    "version": 2,
                     "pythonVersion": "3.14.0",
-                    "toolsDir": str(self.tools),
+                    "domainsDir": str(self.domains),
                     "tools": [
                         {
                             "name": "echo",
+                            "domain": "entry_register",
                             "path": str(tool_path),
                             "sourceFilename": "echo.py",
                             "sourceSha256": hashlib.sha256(
@@ -95,29 +102,26 @@ class CliRunnerTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.dashboard = self.root / "dashboard"
-        widgets = self.dashboard / "widgets"
-        widgets.mkdir(parents=True)
-        (self.dashboard / "app.py").write_text("pass\n", encoding="utf-8")
-        (widgets / "card.py").write_text(
+        self.app = self.root / "app"
+        self.app.mkdir()
+        (self.app / "dashboard.py").write_text("pass\n", encoding="utf-8")
+        (domain / "ui" / "card.py").write_text(
             'print("widget import noise")\n\nTITLE = "Card"\n\ndef render(context):\n    pass\n',
             encoding="utf-8",
         )
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
-        self.llms_dir = self.root / "llms"
-        self.llms_dir.mkdir()
-        (self.llms_dir / "overview.md").write_text(
+        (domain / "llms" / "overview.md").write_text(
             "# Overview\n\nDetails.\n", encoding="utf-8"
         )
-        self.llms_file = self.root / "llms.txt"
+        self.llms_file = self.app / "llms.txt"
         self.llms_file.write_text(
             "# toolframe\n"
             "> LAN MCP server context.\n"
             "\n"
             "## Documents\n"
             "\n"
-            "- [Overview](/llms/overview.md)\n",
+            "- [Overview](/llms/entry_register/overview.md)\n",
             encoding="utf-8",
         )
 
@@ -128,10 +132,9 @@ class CliRunnerTests(unittest.TestCase):
         values = {
             "mode": mode,
             "manifest": self.manifest,
-            "dashboard": self.dashboard,
+            "app": self.app,
+            "domains": self.domains,
             "workspace": self.workspace,
-            "llms_file": self.llms_file,
-            "llms_dir": self.llms_dir,
             "tool": None,
             "timeout": 60.0,
             "result_limit": 4096,
@@ -164,25 +167,26 @@ class CliRunnerTests(unittest.TestCase):
         report = json.loads(output.getvalue())
         self.assertEqual(exit_code, 0)
         self.assertEqual(report["loadedToolCount"], 1)
-        self.assertEqual(report["widgets"][0]["name"], "card")
+        self.assertEqual(report["widgets"][0]["name"], "entry_register.card")
         self.assertFalse(configured_database.exists())
         self.assertIn("tool import noise", noise.getvalue())
         self.assertIn("widget import noise", noise.getvalue())
         self.assertNotIn("noise", output.getvalue())
 
         self.assertEqual(
-            json.loads(output.getvalue())["agentDocuments"], ["overview.md"]
+            json.loads(output.getvalue())["agentDocuments"],
+            ["entry_register/overview.md"],
         )
 
-    def test_parser_requires_llms_source_arguments(self):
+    def test_parser_requires_app_and_domains_arguments(self):
         with self.assertRaises(SystemExit):
             cli._parser().parse_args(
                 [
                     "check",
                     "--manifest",
                     str(self.manifest),
-                    "--dashboard",
-                    str(self.dashboard),
+                    "--app",
+                    str(self.app),
                     "--workspace",
                     str(self.workspace),
                 ]
@@ -193,18 +197,16 @@ class CliRunnerTests(unittest.TestCase):
                 "check",
                 "--manifest",
                 str(self.manifest),
-                "--dashboard",
-                str(self.dashboard),
+                "--app",
+                str(self.app),
+                "--domains",
+                str(self.domains),
                 "--workspace",
                 str(self.workspace),
-                "--llms-file",
-                str(self.llms_file),
-                "--llms-dir",
-                str(self.llms_dir),
             ]
         )
-        self.assertEqual(arguments.llms_file, self.llms_file)
-        self.assertEqual(arguments.llms_dir, self.llms_dir)
+        self.assertEqual(arguments.app, self.app)
+        self.assertEqual(arguments.domains, self.domains)
 
     def test_check_configures_tool_helpers_in_temporary_paths(self):
         self.replace_tool(CONTEXT_TOOL_SOURCE)
@@ -238,7 +240,8 @@ class CliRunnerTests(unittest.TestCase):
         self.assertIn("tool invocation noise", noise.getvalue())
         self.assertNotIn("noise", output.getvalue())
 
-    def test_invoke_does_not_validate_llms_source(self):
+    def test_invoke_does_not_validate_agent_guide(self):
+        self.llms_file.unlink()
         output = io.StringIO()
         with (
             patch.dict(os.environ, {"TOOLFRAME_DB": str(self.root / "data.db")}),
@@ -246,14 +249,7 @@ class CliRunnerTests(unittest.TestCase):
             redirect_stdout(output),
             redirect_stderr(io.StringIO()),
         ):
-            exit_code = cli._invoke(
-                self.arguments(
-                    "invoke",
-                    tool="echo",
-                    llms_file=self.root / "missing-llms.txt",
-                    llms_dir=self.root / "missing-llms",
-                )
-            )
+            exit_code = cli._invoke(self.arguments("invoke", tool="echo"))
 
         self.assertEqual(exit_code, 0)
 

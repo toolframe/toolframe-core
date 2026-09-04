@@ -18,9 +18,9 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
+import server as runtime_server
 import toolframe_dashboard_runner as runner
 import toolframe_runtime as runtime
-import server as runtime_server
 
 
 class DefaultDashboardIdentityTests(unittest.TestCase):
@@ -30,8 +30,7 @@ class DefaultDashboardIdentityTests(unittest.TestCase):
             set_page_config=lambda **kwargs: calls.append(("page_config", kwargs)),
             title=lambda value: calls.append(("title", value)),
             caption=lambda value: calls.append(("caption", value)),
-            warning=lambda value: calls.append(("warning", value)),
-            html=lambda value, **kwargs: calls.append(("html", (value, kwargs))),
+            warning=lambda value, **kwargs: calls.append(("warning", (value, kwargs))),
         )
         fake_dashboard = SimpleNamespace(
             render_widgets=lambda: calls.append(("render_widgets", None))
@@ -44,26 +43,27 @@ class DefaultDashboardIdentityTests(unittest.TestCase):
                 "toolframe_dashboard": fake_dashboard,
             },
         ):
-            runpy.run_path(str(REPOSITORY_ROOT / "dashboard" / "app.py"))
+            runpy.run_path(str(REPOSITORY_ROOT / "app" / "dashboard.py"))
 
         page_config = next(value for kind, value in calls if kind == "page_config")
         self.assertEqual(page_config["page_title"], "Unnamed")
         self.assertIn(("title", "Unnamed"), calls)
         self.assertTrue(
             any(
-                kind == "warning" and "app" in value.lower() and "name" in value.lower()
+                kind == "warning"
+                and "app" in value[0].lower()
+                and "name" in value[0].lower()
                 for kind, value in calls
             ),
             "the fresh dashboard must make the missing app name visible",
         )
-        warning_html, warning_options = next(
-            value for kind, value in calls if kind == "html"
+        security_warning, warning_options = next(
+            value
+            for kind, value in calls
+            if kind == "warning" and "authentication" in value[0].lower()
         )
-        self.assertIn("This dashboard has no authentication", warning_html)
-        self.assertIn("Don't show again", warning_html)
-        self.assertIn("window.localStorage.getItem", warning_html)
-        self.assertIn("window.localStorage.setItem", warning_html)
-        self.assertEqual(warning_options, {"unsafe_allow_javascript": True})
+        self.assertIn("No authentication", security_warning)
+        self.assertEqual(warning_options, {"icon": "⚠️"})
         self.assertIn(("render_widgets", None), calls)
 
 
@@ -707,16 +707,16 @@ class DashboardFatalReporterTests(unittest.TestCase):
 class ManagedRunnerTests(unittest.TestCase):
     def test_compile_error_references_user_app(self):
         with tempfile.TemporaryDirectory() as directory:
-            dashboard = Path(directory)
-            app = dashboard / "app.py"
+            app_dir = Path(directory)
+            app = app_dir / "dashboard.py"
             app.write_text("def broken(:\n", encoding="utf-8")
 
             previous_reporter = runtime._DASHBOARD_FATAL_REPORTER
-            runtime.configure_dashboard_fatal_reporter(dashboard)
+            runtime.configure_dashboard_fatal_reporter(app_dir)
             stderr = io.StringIO()
             try:
                 with (
-                    patch.dict(os.environ, {"TOOLFRAME_DASHBOARD_DIR": str(dashboard)}),
+                    patch.dict(os.environ, {"TOOLFRAME_APP_DIR": str(app_dir)}),
                     patch("toolframe_runtime.os.kill") as kill,
                     redirect_stderr(stderr),
                     self.assertRaises(SyntaxError) as raised,
@@ -736,14 +736,14 @@ class ManagedRunnerTests(unittest.TestCase):
             self.skipTest("Streamlit is not installed in this test environment")
 
         with tempfile.TemporaryDirectory() as directory:
-            dashboard = Path(directory)
-            (dashboard / "app.py").write_text(
+            app_dir = Path(directory)
+            (app_dir / "dashboard.py").write_text(
                 "from streamlit.runtime.scriptrunner_utils.exceptions import StopException\n"
                 "raise StopException()\n",
                 encoding="utf-8",
             )
             with (
-                patch.dict(os.environ, {"TOOLFRAME_DASHBOARD_DIR": str(dashboard)}),
+                patch.dict(os.environ, {"TOOLFRAME_APP_DIR": str(app_dir)}),
                 self.assertRaises(StopException),
             ):
                 runner.main()

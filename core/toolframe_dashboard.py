@@ -53,7 +53,6 @@ __all__ = [
     "discover_widgets",
     "get_context",
     "preflight_app",
-    "preflight_dashboard",
     "render_error_card",
     "render_widget",
     "render_widgets",
@@ -258,13 +257,13 @@ class DashboardWidget:
     path: Path
     module_name: str
     module: ModuleType = field(repr=False, compare=False)
-    domain: str | None = None
+    domain: str
 
 
 @dataclass(frozen=True, slots=True)
 class _SdkConfiguration:
     app_dir: Path
-    domains_dir: Path | None
+    domains_dir: Path
     base_context: DashboardContext
 
 
@@ -1507,28 +1506,17 @@ def _configure(
     workspace: Path,
     logger: logging.Logger,
     runtime: Mapping[str, Any],
-    app_dir: Path | None = None,
-    domains_dir: Path | None = None,
-    dashboard_dir: Path | None = None,
+    app_dir: Path,
+    domains_dir: Path,
     audit_sink: Any | None = None,
     artifacts: ArtifactStore | None = None,
 ) -> DashboardContext:
     """Configure the process-global SDK before preflight and HTTP readiness."""
 
     global _configuration
-    if dashboard_dir is not None:
-        if app_dir is not None or domains_dir is not None:
-            raise RuntimeError(
-                "dashboard_dir cannot be combined with app_dir or domains_dir"
-            )
-        app_candidate = Path(dashboard_dir).expanduser().absolute()
-        domains_path = None
-    else:
-        if app_dir is None or domains_dir is None:
-            raise RuntimeError("app_dir and domains_dir are required")
-        app_candidate = Path(app_dir).expanduser().absolute()
-        domains_candidate = Path(domains_dir).expanduser().absolute()
-        domains_path = _real_directory(domains_candidate, "domains directory")
+    app_candidate = Path(app_dir).expanduser().absolute()
+    domains_candidate = Path(domains_dir).expanduser().absolute()
+    domains_path = _real_directory(domains_candidate, "domains directory")
     app_path = _real_directory(app_candidate, "app directory")
     workspace_path = Path(workspace).expanduser().resolve(strict=False)
     if artifacts is None:
@@ -1550,8 +1538,7 @@ def _configure(
     with _configuration_lock:
         _configuration = _SdkConfiguration(app_path, domains_path, context)
         _ensure_import_path(app_path)
-        if domains_path is not None:
-            _ensure_domain_namespace(domains_path)
+        _ensure_domain_namespace(domains_path)
     return context
 
 
@@ -1565,29 +1552,6 @@ def get_context() -> DashboardContext:
         if _configuration is None:
             raise RuntimeError("toolframe_dashboard is not configured")
         return _configuration.base_context
-
-
-def preflight_dashboard(
-    dashboard_dir: Path | None = None,
-) -> tuple[DashboardWidget, ...]:
-    """Compile the dashboard entry point and import/validate every public widget."""
-
-    root = _resolve_dashboard_dir(dashboard_dir)
-    if root.is_symlink() or not root.is_dir():
-        raise RuntimeError(f"dashboard directory is not a regular directory: {root}")
-    root = root.resolve(strict=False)
-    app_path = root / "app.py"
-    if app_path.is_symlink() or not app_path.is_file():
-        raise RuntimeError(
-            f"dashboard app.py is missing or not a regular file: {app_path}"
-        )
-    try:
-        compile(app_path.read_bytes(), os.fspath(app_path), "exec")
-    except Exception as error:
-        raise RuntimeError(
-            f"dashboard app.py failed compile validation: {type(error).__name__}: {error}"
-        ) from error
-    return discover_widgets(root / "widgets")
 
 
 def preflight_app(
@@ -1609,55 +1573,10 @@ def preflight_app(
     return discover_domain_widgets(domains_root)
 
 
-def discover_widgets(widgets_dir: Path | None = None) -> tuple[DashboardWidget, ...]:
-    """Reload and validate direct public ``widgets/*.py`` modules."""
+def discover_widgets() -> tuple[DashboardWidget, ...]:
+    """Reload and validate every public domain UI widget."""
 
-    if widgets_dir is None:
-        with _configuration_lock:
-            if _configuration is not None and _configuration.domains_dir is not None:
-                return discover_domain_widgets(_configuration.domains_dir)
-        root = _resolve_dashboard_dir(None)
-        directory = root / "widgets"
-    else:
-        directory = Path(widgets_dir).expanduser().absolute()
-        root = directory.parent
-
-    if directory.is_symlink() or not directory.is_dir():
-        raise RuntimeError(
-            f"dashboard widgets directory is missing or invalid: {directory}"
-        )
-    directory = directory.resolve(strict=False)
-    root = root.resolve(strict=False)
-
-    with _configuration_lock:
-        _ensure_import_path(root)
-        importlib.invalidate_caches()
-        _purge_dashboard_modules(root)
-        package_name = _ensure_widget_package(root, directory)
-        widget_paths = sorted(
-            (
-                path
-                for path in directory.iterdir()
-                if not path.name.startswith((".", "_"))
-                and path.suffix == ".py"
-                and not path.is_symlink()
-                and path.is_file()
-            ),
-            key=lambda path: path.name,
-        )
-        widgets = tuple(_load_widget(path, package_name) for path in widget_paths)
-
-    explicit_orders: dict[int, Path] = {}
-    for widget in widgets:
-        if "ORDER" not in vars(widget.module):
-            continue
-        previous = explicit_orders.setdefault(widget.order, widget.path)
-        if previous != widget.path:
-            raise RuntimeError(
-                "dashboard widget ORDER values must be unique: "
-                f"{previous.name} and {widget.path.name} both use {widget.order}"
-            )
-    return tuple(sorted(widgets, key=lambda widget: (widget.order, widget.path.name)))
+    return discover_domain_widgets()
 
 
 def discover_domain_widgets(
@@ -1667,7 +1586,7 @@ def discover_domain_widgets(
 
     if domains_dir is None:
         with _configuration_lock:
-            if _configuration is None or _configuration.domains_dir is None:
+            if _configuration is None:
                 raise RuntimeError("toolframe domain UI is not configured")
             domains_root = _configuration.domains_dir
     else:
@@ -1714,7 +1633,7 @@ def discover_domain_widgets(
             widgets,
             key=lambda widget: (
                 widget.order,
-                widget.domain or "",
+                widget.domain,
                 widget.path.name,
             ),
         )
@@ -1805,15 +1724,6 @@ def _collect_dashboard_request_metadata() -> dict[str, Any]:
         "userAgent": user_agent,
         "widget": None,
     }
-
-
-def _resolve_dashboard_dir(dashboard_dir: Path | None) -> Path:
-    if dashboard_dir is not None:
-        return Path(dashboard_dir).expanduser().absolute()
-    with _configuration_lock:
-        if _configuration is None:
-            raise RuntimeError("toolframe_dashboard is not configured")
-        return _configuration.app_dir
 
 
 def _resolve_app_layout(
@@ -1916,44 +1826,6 @@ def _public_widget_paths(directory: Path) -> tuple[Path, ...]:
     return tuple(paths)
 
 
-def _widget_package_name(root: Path) -> str:
-    digest = hashlib.sha256(os.fsencode(root)).hexdigest()[:16]
-    return f"_toolframe_user_dashboard_{digest}.widgets"
-
-
-def _ensure_widget_package(root: Path, widgets_dir: Path) -> str:
-    widgets_package = _widget_package_name(root)
-    root_package = widgets_package.rpartition(".")[0]
-    for name, path in ((root_package, root), (widgets_package, widgets_dir)):
-        module = ModuleType(name)
-        module.__package__ = name
-        module.__path__ = [os.fspath(path)]
-        module.__spec__ = importlib.util.spec_from_loader(
-            name, loader=None, is_package=True
-        )
-        sys.modules[name] = module
-    return widgets_package
-
-
-def _purge_dashboard_modules(root: Path) -> None:
-    package_prefix = _widget_package_name(root).rpartition(".")[0]
-    for name, module in tuple(sys.modules.items()):
-        if name == package_prefix or name.startswith(f"{package_prefix}."):
-            sys.modules.pop(name, None)
-            continue
-        module_path = getattr(module, "__file__", None)
-        if not module_path:
-            continue
-        try:
-            resolved = Path(module_path).resolve(strict=False)
-            relative = resolved.relative_to(root)
-        except (OSError, ValueError):
-            continue
-        if relative == Path("app.py"):
-            continue
-        sys.modules.pop(name, None)
-
-
 def _purge_domain_modules(root: Path) -> None:
     for name, module in tuple(sys.modules.items()):
         if name == "domains" or name.startswith("domains."):
@@ -1973,10 +1845,9 @@ def _load_widget(
     path: Path,
     package_name: str,
     *,
-    widget_id: str | None = None,
-    domain: str | None = None,
+    widget_id: str,
+    domain: str,
 ) -> DashboardWidget:
-    widget_id = widget_id or path.stem
     if path.stem.isidentifier() and not keyword.iskeyword(path.stem):
         module_component = path.stem
     else:

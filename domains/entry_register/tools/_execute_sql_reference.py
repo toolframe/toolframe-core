@@ -5,7 +5,12 @@
 # ]
 # ///
 
-"""Fallback data-access example built on Toolframe's shared database adapter."""
+"""Private database-adapter reference for the master development agent.
+
+The leading underscore keeps this module out of MCP discovery. Never rename or
+publish it as a generic SQL tool. Add a narrow business command or query when a
+peer agent needs a new capability.
+"""
 
 import logging as _logging
 import math as _math
@@ -14,7 +19,6 @@ from typing import Any as _Any
 from typing import Literal as _Literal
 
 from fastmcp.tools import ToolResult as _ToolResult
-from fastmcp.tools import tool as _tool
 from toolframe_db import DatabaseError as _DatabaseError
 from toolframe_db import get_database as _get_database
 
@@ -109,26 +113,17 @@ def _frame_payload(frame: _Any) -> dict[str, _Any]:
     }
 
 
-@_tool(
-    description=(
-        "Fallback access to app data through Toolframe's bounded database adapter. "
-        "Use read mode for one parameterized row-returning statement or write mode "
-        "for one parameterized INSERT, UPDATE, DELETE, or REPLACE. This tool cannot "
-        "change schema, run PRAGMA/ATTACH/maintenance SQL, or mutate runtime-owned "
-        "tables. Prefer the app's Business RPC commands and queries whenever they "
-        "exist."
-    )
-)
-def execute_sql(
+def execute_sql_reference(
     sql: str,
     params: _SqlParams = None,
     mode: _SqlMode = "read",
 ) -> _ToolResult:
-    """Read or mutate app data through the configured runtime adapter.
+    """Demonstrate bounded reads or DML through the configured adapter.
 
     This is a fallback and implementation reference, not a schema-management
-    tool. A primary coding agent must put durable schema changes in the next
-    migration and restart Toolframe.
+    This private function is not an MCP capability. A master development agent
+    must put durable schema changes in the next migration and expose only
+    intent-shaped business tools.
     """
 
     if mode not in {"read", "write"}:

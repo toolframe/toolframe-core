@@ -25,18 +25,15 @@ const CORE_DEPENDENCIES: &[&str] = &[
     "streamlit==1.61.0",
     "uvicorn==0.42.0",
 ];
-const DASHBOARD_PROJECT_NAME: &str = "toolframe-dashboard";
-const DASHBOARD_PROJECT_VERSION: &str = "0.0.0";
+const APP_PROJECT_NAME: &str = "toolframe-app";
+const APP_PROJECT_VERSION: &str = "0.0.0";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolManifest {
     pub version: u8,
     pub python_version: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools_dir: Option<PathBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub domains_dir: Option<PathBuf>,
+    pub domains_dir: PathBuf,
     pub tools: Vec<DiscoveredTool>,
 }
 
@@ -44,8 +41,7 @@ pub struct ToolManifest {
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveredTool {
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
+    pub domain: String,
     pub path: PathBuf,
     pub source_filename: String,
     pub source_sha256: String,
@@ -60,7 +56,7 @@ pub struct ToolCatalog {
 }
 
 #[derive(Debug, Clone)]
-pub struct DashboardManifest {
+pub struct AppManifest {
     pub requires_python: String,
     pub dependencies: Vec<String>,
 }
@@ -75,13 +71,13 @@ struct ScriptMetadata {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DashboardMetadata {
-    project: DashboardProjectMetadata,
+struct AppMetadata {
+    project: AppProjectMetadata,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct DashboardProjectMetadata {
+struct AppProjectMetadata {
     name: String,
     version: String,
     requires_python: String,
@@ -113,32 +109,21 @@ struct UvConfig {
     package: bool,
 }
 
-pub fn discover(tools_dir: &Path) -> Result<ToolCatalog> {
-    let paths = discover_tool_paths(tools_dir, None)?;
-    let tools_dir = tools_dir
-        .canonicalize()
-        .unwrap_or_else(|_| tools_dir.to_path_buf());
-    build_catalog(1, Some(tools_dir), None, paths)
-}
-
 /// Discover every public direct tool across all complete business domains.
-pub fn discover_domains(domains_dir: &Path) -> Result<ToolCatalog> {
-    let domains = domains::discover(domains_dir)
+pub fn discover(domains_dir: &Path) -> Result<ToolCatalog> {
+    let discovered_domains = domains::discover(domains_dir)
         .with_context(|| format!("could not discover tools below {}", domains_dir.display()))?;
     let mut paths = Vec::new();
-    for domain in domains {
-        paths.extend(discover_tool_paths(&domain.tools, Some(&domain.name))?);
+    for domain in discovered_domains {
+        paths.extend(discover_tool_paths(&domain.tools, &domain.name)?);
     }
     let domains_dir = domains_dir
         .canonicalize()
         .unwrap_or_else(|_| domains_dir.to_path_buf());
-    build_catalog(2, None, Some(domains_dir), paths)
+    build_catalog(domains_dir, paths)
 }
 
-fn discover_tool_paths(
-    tools_dir: &Path,
-    domain: Option<&str>,
-) -> Result<Vec<(Option<String>, PathBuf)>> {
+fn discover_tool_paths(tools_dir: &Path, domain: &str) -> Result<Vec<(String, PathBuf)>> {
     let metadata = fs::symlink_metadata(tools_dir)
         .with_context(|| format!("could not inspect tools directory {}", tools_dir.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -166,25 +151,17 @@ fn discover_tool_paths(
             .file_type()
             .with_context(|| format!("{} [metadata]", path.display()))?;
         if file_type.is_symlink() || !file_type.is_file() {
-            if domain.is_some() {
-                bail!(
-                    "{} [path]: public tool must be a direct regular file, not a symlink or directory",
-                    path.display()
-                );
-            }
-            continue;
+            bail!(
+                "{} [path]: public tool must be a direct regular file, not a symlink or directory",
+                path.display()
+            );
         }
-        paths.push((domain.map(str::to_owned), path));
+        paths.push((domain.to_owned(), path));
     }
     Ok(paths)
 }
 
-fn build_catalog(
-    version: u8,
-    tools_dir: Option<PathBuf>,
-    domains_dir: Option<PathBuf>,
-    paths: Vec<(Option<String>, PathBuf)>,
-) -> Result<ToolCatalog> {
+fn build_catalog(domains_dir: PathBuf, paths: Vec<(String, PathBuf)>) -> Result<ToolCatalog> {
     let python = Version::from_str(PYTHON_VERSION).expect("static Python version is valid");
     let mut failures = Vec::new();
     let mut tools = Vec::new();
@@ -195,7 +172,7 @@ fn build_catalog(
         .collect::<BTreeSet<_>>();
 
     for (domain, path) in paths {
-        match inspect_tool(&path, domain.as_deref(), &python) {
+        match inspect_tool(&path, &domain, &python) {
             Ok(tool) => {
                 if !names.insert(tool.name.clone()) {
                     failures.push(format!(
@@ -218,9 +195,8 @@ fn build_catalog(
 
     Ok(ToolCatalog {
         manifest: ToolManifest {
-            version,
+            version: 2,
             python_version: PYTHON_VERSION,
-            tools_dir,
             domains_dir,
             tools,
         },
@@ -228,21 +204,21 @@ fn build_catalog(
     })
 }
 
-pub fn inspect_dashboard_manifest(path: &Path) -> Result<DashboardManifest> {
+pub fn inspect_app_manifest(path: &Path) -> Result<AppManifest> {
     let source = fs::read_to_string(path)
-        .with_context(|| format!("could not read dashboard manifest {}", path.display()))?;
-    let metadata: DashboardMetadata = toml::from_str(&source)
-        .map_err(|error| anyhow!("invalid dashboard manifest {}: {error}", path.display()))?;
+        .with_context(|| format!("could not read app manifest {}", path.display()))?;
+    let metadata: AppMetadata = toml::from_str(&source)
+        .map_err(|error| anyhow!("invalid app manifest {}: {error}", path.display()))?;
 
-    if metadata.project.name != DASHBOARD_PROJECT_NAME {
+    if metadata.project.name != APP_PROJECT_NAME {
         bail!(
-            "dashboard manifest {} [project.name]: must be {DASHBOARD_PROJECT_NAME:?}",
+            "app manifest {} [project.name]: must be {APP_PROJECT_NAME:?}",
             path.display()
         );
     }
-    if metadata.project.version != DASHBOARD_PROJECT_VERSION {
+    if metadata.project.version != APP_PROJECT_VERSION {
         bail!(
-            "dashboard manifest {} [project.version]: must be {DASHBOARD_PROJECT_VERSION:?}",
+            "app manifest {} [project.version]: must be {APP_PROJECT_VERSION:?}",
             path.display()
         );
     }
@@ -254,7 +230,7 @@ pub fn inspect_dashboard_manifest(path: &Path) -> Result<DashboardManifest> {
         .find(|(_, dependency)| dependency.trim().is_empty())
     {
         bail!(
-            "dashboard manifest {} [project.dependencies]: entry {index} must not be empty",
+            "app manifest {} [project.dependencies]: entry {index} must not be empty",
             path.display()
         );
     }
@@ -262,41 +238,38 @@ pub fn inspect_dashboard_manifest(path: &Path) -> Result<DashboardManifest> {
     let specifiers =
         VersionSpecifiers::from_str(&metadata.project.requires_python).map_err(|error| {
             anyhow!(
-                "dashboard manifest {} [project.requires-python]: invalid specifier: {error}",
+                "app manifest {} [project.requires-python]: invalid specifier: {error}",
                 path.display()
             )
         })?;
     let python = Version::from_str(PYTHON_VERSION).expect("static Python version is valid");
     if !specifiers.contains(&python) {
         bail!(
-            "dashboard manifest {} [project.requires-python]: {:?} does not accept Python {PYTHON_VERSION}",
+            "app manifest {} [project.requires-python]: {:?} does not accept Python {PYTHON_VERSION}",
             path.display(),
             metadata.project.requires_python
         );
     }
 
-    Ok(DashboardManifest {
+    Ok(AppManifest {
         requires_python: metadata.project.requires_python,
         dependencies: metadata.project.dependencies,
     })
 }
 
-pub fn runtime_dependencies(catalog: &ToolCatalog, dashboard: &DashboardManifest) -> Vec<String> {
+pub fn runtime_dependencies(catalog: &ToolCatalog, app: &AppManifest) -> Vec<String> {
     catalog
         .dependencies
         .iter()
-        .chain(&dashboard.dependencies)
+        .chain(&app.dependencies)
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
 }
 
-pub fn runtime_project_toml(
-    catalog: &ToolCatalog,
-    dashboard: &DashboardManifest,
-) -> Result<String> {
-    let dependencies = runtime_dependencies(catalog, dashboard);
+pub fn runtime_project_toml(catalog: &ToolCatalog, app: &AppManifest) -> Result<String> {
+    let dependencies = runtime_dependencies(catalog, app);
     toml::to_string_pretty(&RuntimeProject {
         project: ProjectMetadata {
             name: "toolframe-runtime",
@@ -319,7 +292,7 @@ pub fn content_hash(content: impl AsRef<[u8]>) -> String {
     format!("{:x}", Sha256::digest(content.as_ref()))
 }
 
-fn inspect_tool(path: &Path, domain: Option<&str>, python: &Version) -> Result<DiscoveredTool> {
+fn inspect_tool(path: &Path, domain: &str, python: &Version) -> Result<DiscoveredTool> {
     let source = fs::read_to_string(path).context("[read] could not read Python source")?;
     let metadata_toml = extract_script_metadata(&source).context("[metadata]")?;
     let metadata: ScriptMetadata = toml::from_str(&metadata_toml)
@@ -358,7 +331,7 @@ fn inspect_tool(path: &Path, domain: Option<&str>, python: &Version) -> Result<D
 
     Ok(DiscoveredTool {
         name: name.to_owned(),
-        domain: domain.map(str::to_owned),
+        domain: domain.to_owned(),
         source_filename: path
             .file_name()
             .and_then(|name| name.to_str())
@@ -430,9 +403,9 @@ mod tests {
         path
     }
 
-    fn write_dashboard_manifest(directory: &Path, project_fields: &str) -> PathBuf {
+    fn write_app_manifest(directory: &Path, project_fields: &str) -> PathBuf {
         let path = directory.join("pyproject.toml");
-        fs::write(&path, format!("[project]\n{project_fields}")).expect("write dashboard manifest");
+        fs::write(&path, format!("[project]\n{project_fields}")).expect("write app manifest");
         path
     }
 
@@ -462,29 +435,19 @@ mod tests {
             "# requires-python = \">=3.14,<3.15\"\n# dependencies = []\n",
         );
 
-        let catalog = discover_domains(directory.path()).expect("discover domain tools");
+        let catalog = discover(directory.path()).expect("discover domain tools");
 
         assert_eq!(catalog.manifest.version, 2);
-        assert_eq!(catalog.manifest.tools_dir, None);
         assert_eq!(
-            catalog.manifest.domains_dir.as_deref(),
-            Some(
-                directory
-                    .path()
-                    .canonicalize()
-                    .expect("canonicalize domains")
-                    .as_path()
-            )
+            catalog.manifest.domains_dir,
+            directory
+                .path()
+                .canonicalize()
+                .expect("canonicalize domains")
         );
         assert_eq!(catalog.manifest.tools.len(), 2);
-        assert_eq!(
-            catalog.manifest.tools[0].domain.as_deref(),
-            Some("daily_reporting")
-        );
-        assert_eq!(
-            catalog.manifest.tools[1].domain.as_deref(),
-            Some("entry_register")
-        );
+        assert_eq!(catalog.manifest.tools[0].domain, "daily_reporting");
+        assert_eq!(catalog.manifest.tools[1].domain, "entry_register");
         assert!(
             catalog
                 .dependencies
@@ -494,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_or_linked_public_tools_across_domains() {
+    fn rejects_duplicate_linked_or_invalid_public_tools() {
         let duplicate = tempfile::tempdir().expect("create duplicate root");
         let first = create_domain(duplicate.path(), "entry_register");
         let second = create_domain(duplicate.path(), "daily_reporting");
@@ -505,10 +468,24 @@ mod tests {
                 "# requires-python = \">=3.14,<3.15\"\n# dependencies = []\n",
             );
         }
-        let error = discover_domains(duplicate.path())
+        let error = discover(duplicate.path())
             .expect_err("duplicate tool name fails")
             .to_string();
         assert!(error.contains("duplicate tool name list_entries"));
+
+        let incompatible = tempfile::tempdir().expect("create incompatible root");
+        let domain = create_domain(incompatible.path(), "entry_register");
+        write_tool(
+            &domain.join("tools"),
+            "future.py",
+            "# requires-python = \">=3.15\"\n# dependencies = []\n",
+        );
+        assert!(
+            discover(incompatible.path())
+                .unwrap_err()
+                .to_string()
+                .contains("Python 3.14.0")
+        );
 
         #[cfg(unix)]
         {
@@ -525,7 +502,7 @@ mod tests {
                 domain.join("tools").join("entry_register_list_entries.py"),
             )
             .expect("create public tool symlink");
-            let error = discover_domains(linked.path())
+            let error = discover(linked.path())
                 .expect_err("public tool symlink fails")
                 .to_string();
             assert!(error.contains("public tool must be a direct regular file"));
@@ -533,69 +510,12 @@ mod tests {
     }
 
     #[test]
-    fn discovers_direct_tools_and_aggregates_dependencies() {
-        let directory = tempfile::tempdir().expect("create temp directory");
+    fn rejects_tool_uv_configuration_and_extracts_pep_723_comments() {
+        let directory = tempfile::tempdir().expect("create root");
+        let domain = create_domain(directory.path(), "entry_register");
         write_tool(
-            directory.path(),
-            "weather.py",
-            "# requires-python = \">=3.14,<3.15\"\n# dependencies = [\"httpx==1.0.0\"]\n",
-        );
-        write_tool(
-            directory.path(),
-            "_helper.py",
-            "# requires-python = \">=3.14\"\n# dependencies = []\n",
-        );
-        let nested = directory.path().join("nested");
-        fs::create_dir(&nested).expect("create nested directory");
-        write_tool(
-            &nested,
-            "nested_tool.py",
-            "# requires-python = \">=3.14\"\n# dependencies = []\n",
-        );
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(
-            directory.path().join("weather.py"),
-            directory.path().join("linked.py"),
-        )
-        .expect("create tool symlink");
-
-        let catalog = discover(directory.path()).expect("discover tools");
-        assert_eq!(catalog.manifest.tools.len(), 1);
-        assert_eq!(catalog.manifest.tools[0].name, "weather");
-        assert!(
-            catalog
-                .dependencies
-                .iter()
-                .any(|item| item == "httpx==1.0.0")
-        );
-        assert!(
-            catalog
-                .dependencies
-                .iter()
-                .any(|item| item == "fastmcp==4.0.0")
-        );
-    }
-
-    #[test]
-    fn rejects_incompatible_python_and_tool_uv_configuration() {
-        let directory = tempfile::tempdir().expect("create temp directory");
-        write_tool(
-            directory.path(),
-            "future.py",
-            "# requires-python = \">=3.15\"\n# dependencies = []\n",
-        );
-        assert!(
-            discover(directory.path())
-                .unwrap_err()
-                .to_string()
-                .contains("Python 3.14.0")
-        );
-
-        fs::remove_file(directory.path().join("future.py")).expect("remove incompatible tool");
-        write_tool(
-            directory.path(),
-            "custom.py",
+            &domain.join("tools"),
+            "entry_register_custom.py",
             "# requires-python = \">=3.14\"\n# dependencies = []\n# [tool.uv]\n# resolution = \"lowest-direct\"\n",
         );
         assert!(
@@ -604,10 +524,7 @@ mod tests {
                 .to_string()
                 .contains("[tool.uv]")
         );
-    }
 
-    #[test]
-    fn extracts_pep_723_comments() {
         let metadata = extract_script_metadata(
             "#!/usr/bin/env python\n# /// script\n# requires-python = \">=3.14\"\n# dependencies = []\n# ///\n",
         )
@@ -617,22 +534,26 @@ mod tests {
     }
 
     #[test]
-    fn validates_dashboard_manifest_and_merges_dependencies_deterministically() {
+    fn validates_app_manifest_and_merges_dependencies_deterministically() {
         let directory = tempfile::tempdir().expect("create temp directory");
+        let domains = directory.path().join("domains");
+        fs::create_dir(&domains).expect("create domains");
+        let domain = create_domain(&domains, "entry_register");
         write_tool(
-            directory.path(),
-            "weather.py",
+            &domain.join("tools"),
+            "entry_register_weather.py",
             "# requires-python = \">=3.14,<3.15\"\n# dependencies = [\"httpx==1.0.0\"]\n",
         );
-        let dashboard_path = write_dashboard_manifest(
-            directory.path(),
-            "name = \"toolframe-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14,<3.15\"\ndependencies = [\"duckdb==1.4.0\", \"httpx==1.0.0\"]\n",
+        let app = directory.path().join("app");
+        fs::create_dir(&app).expect("create app");
+        let app_path = write_app_manifest(
+            &app,
+            "name = \"toolframe-app\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14,<3.15\"\ndependencies = [\"duckdb==1.4.0\", \"httpx==1.0.0\"]\n",
         );
 
-        let catalog = discover(directory.path()).expect("discover tools");
-        let dashboard =
-            inspect_dashboard_manifest(&dashboard_path).expect("inspect dashboard manifest");
-        let dependencies = runtime_dependencies(&catalog, &dashboard);
+        let catalog = discover(&domains).expect("discover tools");
+        let app = inspect_app_manifest(&app_path).expect("inspect app manifest");
+        let dependencies = runtime_dependencies(&catalog, &app);
 
         assert!(dependencies.windows(2).all(|items| items[0] < items[1]));
         assert_eq!(
@@ -643,14 +564,9 @@ mod tests {
             1
         );
         assert!(dependencies.iter().any(|item| item == "duckdb==1.4.0"));
-        assert!(
-            dependencies
-                .iter()
-                .any(|item| item == "cryptography==48.0.1")
-        );
         assert!(dependencies.iter().any(|item| item == "streamlit==1.61.0"));
 
-        let project = runtime_project_toml(&catalog, &dashboard).expect("render UV project");
+        let project = runtime_project_toml(&catalog, &app).expect("render UV project");
         let parsed: toml::Value = toml::from_str(&project).expect("parse generated UV project");
         let rendered = parsed["project"]["dependencies"]
             .as_array()
@@ -665,14 +581,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_or_incompatible_dashboard_manifest_fields() {
+    fn rejects_unsupported_or_incompatible_app_manifest_fields() {
         let directory = tempfile::tempdir().expect("create temp directory");
-        let path = write_dashboard_manifest(
+        let path = write_app_manifest(
             directory.path(),
-            "name = \"toolframe-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.15\"\ndependencies = []\n",
+            "name = \"toolframe-app\"\nversion = \"0.0.0\"\nrequires-python = \">=3.15\"\ndependencies = []\n",
         );
         assert!(
-            inspect_dashboard_manifest(&path)
+            inspect_app_manifest(&path)
                 .unwrap_err()
                 .to_string()
                 .contains("does not accept Python 3.14.0")
@@ -680,11 +596,11 @@ mod tests {
 
         fs::write(
             &path,
-            "[project]\nname = \"toolframe-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = [\"   \"]\n",
+            "[project]\nname = \"toolframe-app\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = [\"   \"]\n",
         )
-        .expect("replace dashboard manifest");
+        .expect("replace app manifest");
         assert!(
-            inspect_dashboard_manifest(&path)
+            inspect_app_manifest(&path)
                 .unwrap_err()
                 .to_string()
                 .contains("must not be empty")
@@ -692,10 +608,10 @@ mod tests {
 
         fs::write(
             &path,
-            "[project]\nname = \"toolframe-dashboard\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = []\ndescription = \"unsupported\"\n\n[tool.uv]\npackage = false\n",
+            "[project]\nname = \"toolframe-app\"\nversion = \"0.0.0\"\nrequires-python = \">=3.14\"\ndependencies = []\ndescription = \"unsupported\"\n\n[tool.uv]\npackage = false\n",
         )
-        .expect("replace dashboard manifest");
-        let error = inspect_dashboard_manifest(&path).unwrap_err().to_string();
+        .expect("replace app manifest");
+        let error = inspect_app_manifest(&path).unwrap_err().to_string();
         assert!(error.contains("unknown field"), "unexpected error: {error}");
     }
 }

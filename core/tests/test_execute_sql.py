@@ -14,7 +14,13 @@ if str(_CORE_DIRECTORY) not in sys.path:
 
 import toolframe_db as _database_sdk
 
-_TOOL_PATH = _REPOSITORY_ROOT / "tools" / "execute_sql.py"
+_TOOL_PATH = (
+    _REPOSITORY_ROOT
+    / "domains"
+    / "entry_register"
+    / "tools"
+    / "_execute_sql_reference.py"
+)
 _SPEC = importlib.util.spec_from_file_location("execute_sql_reference", _TOOL_PATH)
 if _SPEC is None or _SPEC.loader is None:
     raise ImportError(f"Could not load {_TOOL_PATH}")
@@ -22,7 +28,7 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 
 
-class ExecuteSqlTests(unittest.TestCase):
+class ExecuteSqlReferenceTests(unittest.TestCase):
     def setUp(self):
         self._temporary_directory = tempfile.TemporaryDirectory()
         self.database_path = Path(self._temporary_directory.name) / "test.db"
@@ -44,7 +50,7 @@ class ExecuteSqlTests(unittest.TestCase):
         self._temporary_directory.cleanup()
 
     def _call(self, sql, params=None, mode="read"):
-        return _MODULE.execute_sql(sql, params, mode)
+        return _MODULE.execute_sql_reference(sql, params, mode)
 
     def _assert_error(self, result, code, retryable=False):
         self.assertTrue(result.is_error)
@@ -84,8 +90,8 @@ class ExecuteSqlTests(unittest.TestCase):
             for name, value in vars(_MODULE).items()
             if not name.startswith("_") and inspect.isfunction(value)
         ]
-        self.assertEqual(published_functions, ["execute_sql"])
-        signature = inspect.signature(_MODULE.execute_sql)
+        self.assertEqual(published_functions, ["execute_sql_reference"])
+        signature = inspect.signature(_MODULE.execute_sql_reference)
         self.assertEqual(list(signature.parameters), ["sql", "params", "mode"])
         self.assertIs(signature.parameters["sql"].default, inspect.Parameter.empty)
         self.assertIsNone(signature.parameters["params"].default)
@@ -192,9 +198,9 @@ class ExecuteSqlTests(unittest.TestCase):
         )
         with closing(sqlite3.connect(self.database_path)) as connection:
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM _toolframe_private").fetchone()[
-                    0
-                ],
+                connection.execute(
+                    "SELECT COUNT(*) FROM _toolframe_private"
+                ).fetchone()[0],
                 0,
             )
 

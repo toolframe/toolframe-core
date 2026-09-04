@@ -18,11 +18,7 @@ use tokio::{
     sync::{Mutex, oneshot},
     time,
 };
-use toolframe::{
-    db,
-    development::{self, ScaffoldKind},
-    runtime, tools, uv,
-};
+use toolframe::{db, development, runtime, tools, uv};
 use tracing::{Event, Subscriber, info, warn};
 use tracing_subscriber::{
     fmt::{FmtContext, FormatEvent, FormatFields, format::Writer},
@@ -235,17 +231,13 @@ struct Cli {
     #[arg(long, env = "TOOLFRAME_DB", global = true)]
     database: Option<PathBuf>,
 
-    /// Startup-only SQL migration directory.
-    #[arg(long, env = "TOOLFRAME_MIGRATIONS_DIR", global = true)]
-    migrations_dir: Option<PathBuf>,
+    /// Editable app source directory containing dashboard.py and llms.txt.
+    #[arg(long, env = "TOOLFRAME_APP_DIR", global = true)]
+    app_dir: Option<PathBuf>,
 
-    /// Startup-only Python tool directory.
-    #[arg(long, env = "TOOLFRAME_TOOLS", global = true)]
-    tools_dir: Option<PathBuf>,
-
-    /// Editable Streamlit dashboard directory. Source changes load on browser rerun.
-    #[arg(long, env = "TOOLFRAME_DASHBOARD_DIR", global = true)]
-    dashboard_dir: Option<PathBuf>,
+    /// Editable business domain source root.
+    #[arg(long, env = "TOOLFRAME_DOMAINS_DIR", global = true)]
+    domains_dir: Option<PathBuf>,
 
     /// Working directory and trusted read/write area for Python tools.
     #[arg(long, env = "TOOLFRAME_WORKSPACE", global = true)]
@@ -254,14 +246,6 @@ struct Cli {
     /// Private runtime state directory. Defaults to .toolframe beside the executable.
     #[arg(long, env = "TOOLFRAME_RUNTIME", global = true)]
     runtime_dir: Option<PathBuf>,
-
-    /// LAN agent context index. Defaults to llms/llms.txt beside the executable.
-    #[arg(long, env = "TOOLFRAME_LLMS_FILE", global = true)]
-    llms_file: Option<PathBuf>,
-
-    /// LAN agent context detail directory. Relative paths resolve from the current directory.
-    #[arg(long, env = "TOOLFRAME_LLMS_DIR", global = true)]
-    llms_dir: Option<PathBuf>,
 
     /// Structured audit and MCP JSONL directory. Relative paths resolve from the executable root.
     #[arg(long, env = "TOOLFRAME_LOGS_DIR", global = true)]
@@ -351,7 +335,7 @@ enum CliCommand {
         #[arg(long, default_value = "{}")]
         json: String,
     },
-    /// Create one migration, tool, or dashboard widget without overwriting files.
+    /// Create one domain-owned source without overwriting files.
     Scaffold {
         #[command(subcommand)]
         command: ScaffoldCommand,
@@ -360,12 +344,14 @@ enum CliCommand {
 
 #[derive(Debug, Subcommand)]
 enum ScaffoldCommand {
-    /// Create the next numbered SQL migration.
-    Migration { description: String },
-    /// Create a PEP 723 FastMCP tool module.
-    Tool { name: String },
-    /// Create a Streamlit dashboard widget module.
-    Widget { name: String },
+    /// Create a complete business domain.
+    Domain { domain: String },
+    /// Create the next globally numbered SQL migration in one domain.
+    Migration { domain: String, description: String },
+    /// Create a PEP 723 FastMCP tool module in one domain.
+    Tool { domain: String, name: String },
+    /// Create a Streamlit dashboard widget module in one domain.
+    Widget { domain: String, name: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -440,50 +426,33 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     let paths = runtime::resolve_paths(
         &executable_root,
         cli.database,
-        cli.migrations_dir,
-        cli.tools_dir,
-        cli.dashboard_dir,
+        cli.app_dir,
+        cli.domains_dir,
         cli.workspace_dir,
         cli.runtime_dir,
-        cli.llms_file,
-        cli.llms_dir,
     )?;
     let directories = runtime::prepare_directories(&paths)?;
-    if directories.tools_scaffolded {
-        info!(target: "toolframe::python", path = %paths.tools.display(), "created tools directory and SQL reference tool");
+    if directories.app_scaffolded {
+        info!(target: "toolframe::dashboard", path = %paths.app.display(), "created editable app scaffold");
     }
-    if directories.dashboard_scaffolded {
-        info!(target: "toolframe::dashboard", path = %paths.dashboard.display(), "created editable Streamlit dashboard scaffold");
+    if directories.domains_scaffolded {
+        info!(target: "toolframe::python", path = %paths.domains.display(), "created editable example business domain");
     }
-    if directories.migrations_scaffolded {
-        info!(target: "toolframe::db", path = %paths.migrations.display(), "created editable SQL migration scaffold");
+    if directories.app_context_scaffolded {
+        info!(target: "toolframe::skill", path = %paths.root.join("APP_CONTEXT.md").display(), "created master-agent app context");
     }
-    if directories.llms_file_scaffolded {
-        console.print(
-            ConsoleCategory::Mcp,
-            format!(
-                "created LAN agent guide index at {}",
-                paths.llms_file.display()
-            ),
-        );
-    }
-    if directories.llms_dir_scaffolded {
-        console.print(
-            ConsoleCategory::Mcp,
-            format!(
-                "created LAN agent guide documents at {}",
-                paths.llms_dir.display()
-            ),
-        );
+    if directories.domain_model_scaffolded {
+        info!(target: "toolframe::skill", path = %paths.root.join("DOMAIN_MODEL.md").display(), "created master-agent domain model");
     }
 
-    let migration_report = db::migrate(&paths.database, &paths.migrations).with_context(|| {
-        format!(
-            "failed to migrate {} from {}",
-            paths.database.display(),
-            paths.migrations.display()
-        )
-    })?;
+    let migration_report =
+        db::migrate_domains(&paths.database, &paths.domains).with_context(|| {
+            format!(
+                "failed to migrate {} from {}",
+                paths.database.display(),
+                paths.domains.display()
+            )
+        })?;
     console.print(
         ConsoleCategory::Db,
         format!(
@@ -497,22 +466,14 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
             paths.database.display()
         )
     })?;
-    let migrations_dir = paths.migrations.canonicalize().with_context(|| {
-        format!(
-            "could not resolve migrations path {}",
-            paths.migrations.display()
-        )
-    })?;
-    let tools_dir = paths
-        .tools
+    let domains_dir = paths
+        .domains
         .canonicalize()
-        .with_context(|| format!("could not resolve tools path {}", paths.tools.display()))?;
-    let dashboard_dir = paths.dashboard.canonicalize().with_context(|| {
-        format!(
-            "could not resolve dashboard path {}",
-            paths.dashboard.display()
-        )
-    })?;
+        .with_context(|| format!("could not resolve domains path {}", paths.domains.display()))?;
+    let app_dir = paths
+        .app
+        .canonicalize()
+        .with_context(|| format!("could not resolve app path {}", paths.app.display()))?;
     let workspace = paths.workspace.canonicalize().with_context(|| {
         format!(
             "could not resolve workspace path {}",
@@ -524,12 +485,12 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("could not resolve runtime path {}", paths.runtime.display()))?;
 
-    let catalog = tools::discover(&tools_dir)?;
-    let dashboard_manifest_path = dashboard_dir.join("pyproject.toml");
-    let dashboard_manifest = tools::inspect_dashboard_manifest(&dashboard_manifest_path)?;
+    let catalog = tools::discover(&domains_dir)?;
+    let app_manifest_path = app_dir.join("pyproject.toml");
+    let app_manifest = tools::inspect_app_manifest(&app_manifest_path)?;
     let startup_dependency_context =
-        format_startup_dependency_context(&catalog, &dashboard_manifest, &dashboard_manifest_path);
-    let prepared = runtime::prepare_runtime(&runtime_dir, &catalog, &dashboard_manifest)?;
+        format_startup_dependency_context(&catalog, &app_manifest, &app_manifest_path);
+    let prepared = runtime::prepare_runtime(&runtime_dir, &catalog, &app_manifest)?;
     let resolved_uv = uv::resolve(cli.uv_path.as_deref(), &runtime_dir, cli.offline).await?;
     let uv = resolved_uv.path;
     let uv_version = resolved_uv.version;
@@ -586,11 +547,8 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         .env("UV_CACHE_DIR", runtime_dir.join("cache"))
         .env("UV_PYTHON_INSTALL_DIR", runtime_dir.join("python"))
         .env("TOOLFRAME_DB", &database)
-        .env("TOOLFRAME_MIGRATIONS_DIR", &migrations_dir)
-        .env("TOOLFRAME_TOOLS", &tools_dir)
-        .env("TOOLFRAME_DASHBOARD_DIR", &dashboard_dir)
-        .env("TOOLFRAME_LLMS_FILE", &paths.llms_file)
-        .env("TOOLFRAME_LLMS_DIR", &paths.llms_dir)
+        .env("TOOLFRAME_APP_DIR", &app_dir)
+        .env("TOOLFRAME_DOMAINS_DIR", &domains_dir)
         .env("TOOLFRAME_WORKSPACE", &workspace)
         .env("TOOLFRAME_RUNTIME", &runtime_dir)
         .env("TOOLFRAME_LOGS_DIR", &logs_dir)
@@ -714,10 +672,9 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     announce(Announcement {
         address,
         database: &database,
-        migrations_dir: &migrations_dir,
+        domains_dir: &domains_dir,
         migrations: migration_report,
-        tools_dir: &tools_dir,
-        dashboard_dir: &dashboard_dir,
+        app_dir: &app_dir,
         tool_count: catalog.manifest.tools.len(),
         logs_dir: &logs_dir,
         retention_days: cli.log_retention_days,
@@ -779,22 +736,20 @@ async fn prepare_development_runtime(
     let executable_root = runtime::executable_root()?;
     let paths = resolve_cli_paths(cli, &executable_root)?;
     let migrations =
-        db::validate_migrations(&paths.database, &paths.migrations).with_context(|| {
+        db::validate_domain_migrations(&paths.database, &paths.domains).with_context(|| {
             format!(
-                "failed to validate migrations in {}",
-                paths.migrations.display()
+                "failed to validate domain migrations in {}",
+                paths.domains.display()
             )
         })?;
-    let tools_dir = paths
-        .tools
+    let domains_dir = paths
+        .domains
         .canonicalize()
-        .with_context(|| format!("could not resolve tools path {}", paths.tools.display()))?;
-    let dashboard_dir = paths.dashboard.canonicalize().with_context(|| {
-        format!(
-            "could not resolve dashboard path {}",
-            paths.dashboard.display()
-        )
-    })?;
+        .with_context(|| format!("could not resolve domains path {}", paths.domains.display()))?;
+    let app_dir = paths
+        .app
+        .canonicalize()
+        .with_context(|| format!("could not resolve app path {}", paths.app.display()))?;
     let workspace = if paths.workspace.is_dir() {
         paths.workspace.canonicalize().with_context(|| {
             format!(
@@ -820,10 +775,9 @@ async fn prepare_development_runtime(
         .runtime
         .canonicalize()
         .with_context(|| format!("could not resolve runtime path {}", paths.runtime.display()))?;
-    let catalog = tools::discover(&tools_dir)?;
-    let dashboard_manifest =
-        tools::inspect_dashboard_manifest(&dashboard_dir.join("pyproject.toml"))?;
-    let prepared = runtime::prepare_runtime(&runtime_dir, &catalog, &dashboard_manifest)?;
+    let catalog = tools::discover(&domains_dir)?;
+    let app_manifest = tools::inspect_app_manifest(&app_dir.join("pyproject.toml"))?;
+    let prepared = runtime::prepare_runtime(&runtime_dir, &catalog, &app_manifest)?;
     let resolved_uv = uv::resolve(cli.uv_path.as_deref(), &runtime_dir, cli.offline).await?;
     let uv = resolved_uv.path;
     let uv_version = resolved_uv.version;
@@ -865,13 +819,10 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
             .unwrap_or_else(|| serde_json::json!([])),
         "paths": {
             "database": development.paths.database,
-            "migrations": development.paths.migrations,
-            "tools": development.paths.tools,
-            "dashboard": development.paths.dashboard,
+            "app": development.paths.app,
+            "domains": development.paths.domains,
             "workspace": development.paths.workspace,
             "runtime": development.paths.runtime,
-            "llmsFile": development.paths.llms_file,
-            "llmsDir": development.paths.llms_dir,
         },
         "migrations": {
             "total": development.migrations.total,
@@ -962,20 +913,19 @@ async fn run_invoke(cli: &Cli, tool: &str, arguments: &str) -> Result<i32> {
 fn run_scaffold(cli: &Cli, command: &ScaffoldCommand) -> Result<i32> {
     let executable_root = runtime::executable_root()?;
     let paths = resolve_cli_paths(cli, &executable_root)?;
-    let (kind, name, root) = match command {
-        ScaffoldCommand::Migration { description } => (
-            ScaffoldKind::Migration,
-            description.as_str(),
-            paths.migrations,
-        ),
-        ScaffoldCommand::Tool { name } => (ScaffoldKind::Tool, name.as_str(), paths.tools),
-        ScaffoldCommand::Widget { name } => (
-            ScaffoldKind::Widget,
-            name.as_str(),
-            paths.dashboard.join("widgets"),
-        ),
+    let destination = match command {
+        ScaffoldCommand::Domain { domain } => development::scaffold_domain(&paths.domains, domain)?,
+        ScaffoldCommand::Migration {
+            domain,
+            description,
+        } => development::scaffold_migration(&paths.domains, domain, description)?,
+        ScaffoldCommand::Tool { domain, name } => {
+            development::scaffold_tool(&paths.domains, domain, name)?
+        }
+        ScaffoldCommand::Widget { domain, name } => {
+            development::scaffold_widget(&paths.domains, domain, name)?
+        }
     };
-    let destination = development::scaffold(kind, name, &root)?;
     println!("{}", destination.display());
     Ok(0)
 }
@@ -984,13 +934,10 @@ fn resolve_cli_paths(cli: &Cli, executable_root: &Path) -> Result<runtime::AppPa
     runtime::resolve_paths(
         executable_root,
         cli.database.clone(),
-        cli.migrations_dir.clone(),
-        cli.tools_dir.clone(),
-        cli.dashboard_dir.clone(),
+        cli.app_dir.clone(),
+        cli.domains_dir.clone(),
         cli.workspace_dir.clone(),
         cli.runtime_dir.clone(),
-        cli.llms_file.clone(),
-        cli.llms_dir.clone(),
     )
 }
 
@@ -1018,12 +965,10 @@ async fn run_cli_python(
         .arg(mode)
         .arg("--manifest")
         .arg(&development.prepared.manifest)
-        .arg("--dashboard")
-        .arg(&development.paths.dashboard)
-        .arg("--llms-file")
-        .arg(&development.paths.llms_file)
-        .arg("--llms-dir")
-        .arg(&development.paths.llms_dir)
+        .arg("--app")
+        .arg(&development.paths.app)
+        .arg("--domains")
+        .arg(&development.paths.domains)
         .arg("--workspace")
         .arg(&development.workspace)
         .arg("--timeout")
@@ -1055,11 +1000,8 @@ async fn run_cli_python(
             development.runtime_dir.join("python"),
         )
         .env("TOOLFRAME_DB", &development.paths.database)
-        .env("TOOLFRAME_MIGRATIONS_DIR", &development.paths.migrations)
-        .env("TOOLFRAME_TOOLS", &development.paths.tools)
-        .env("TOOLFRAME_DASHBOARD_DIR", &development.paths.dashboard)
-        .env("TOOLFRAME_LLMS_FILE", &development.paths.llms_file)
-        .env("TOOLFRAME_LLMS_DIR", &development.paths.llms_dir)
+        .env("TOOLFRAME_APP_DIR", &development.paths.app)
+        .env("TOOLFRAME_DOMAINS_DIR", &development.paths.domains)
         .env("TOOLFRAME_WORKSPACE", &development.workspace)
         .env("TOOLFRAME_RUNTIME", &development.runtime_dir)
         .env("TOOLFRAME_MANIFEST", &development.prepared.manifest)
@@ -1576,10 +1518,9 @@ impl ChildProcessTree {
 struct Announcement<'a> {
     address: SocketAddr,
     database: &'a Path,
-    migrations_dir: &'a Path,
+    domains_dir: &'a Path,
     migrations: db::MigrationReport,
-    tools_dir: &'a Path,
-    dashboard_dir: &'a Path,
+    app_dir: &'a Path,
     tool_count: usize,
     logs_dir: &'a Path,
     retention_days: u64,
@@ -1591,10 +1532,9 @@ fn announce(announcement: Announcement<'_>) {
     let Announcement {
         address,
         database,
-        migrations_dir,
+        domains_dir,
         migrations,
-        tools_dir,
-        dashboard_dir,
+        app_dir,
         tool_count,
         logs_dir,
         retention_days,
@@ -1634,7 +1574,7 @@ fn announce(announcement: Announcement<'_>) {
         ConsoleCategory::Db,
         format!(
             "Migrations {} (current {:04}; {} applied this start; {} total)",
-            migrations_dir.display(),
+            domains_dir.display(),
             migrations.current_version,
             migrations.applied_now,
             migrations.total
@@ -1642,11 +1582,14 @@ fn announce(announcement: Announcement<'_>) {
     );
     console.print(
         ConsoleCategory::Python,
-        format!("Tools      {} ({tool_count} loaded)", tools_dir.display()),
+        format!(
+            "Domains    {} ({tool_count} tools loaded)",
+            domains_dir.display()
+        ),
     );
     console.print(
         ConsoleCategory::Dashboard,
-        format!("Files      {}", dashboard_dir.display()),
+        format!("App        {}", app_dir.display()),
     );
     console.print(
         ConsoleCategory::Security,
@@ -1731,23 +1674,23 @@ fn machine_stdout_lines(local_url: &str) -> [String; 2] {
 
 fn format_startup_dependency_context(
     catalog: &tools::ToolCatalog,
-    dashboard: &tools::DashboardManifest,
-    dashboard_manifest_path: &Path,
+    app: &tools::AppManifest,
+    app_manifest_path: &Path,
 ) -> String {
-    let dashboard_dependencies = if dashboard.dependencies.is_empty() {
+    let app_dependencies = if app.dependencies.is_empty() {
         "none".to_owned()
     } else {
-        dashboard.dependencies.join(", ")
+        app.dependencies.join(", ")
     };
-    let dashboard_declaration = format!(
-        "\nDashboard dependency declaration:\n- {} (requires-python {}; dependencies: {})",
-        dashboard_manifest_path.display(),
-        dashboard.requires_python,
-        dashboard_dependencies
+    let app_declaration = format!(
+        "\nApp dependency declaration:\n- {} (requires-python {}; dependencies: {})",
+        app_manifest_path.display(),
+        app.requires_python,
+        app_dependencies
     );
 
     if catalog.manifest.tools.is_empty() {
-        return format!("{dashboard_declaration}\nStartup tool declarations: none");
+        return format!("{app_declaration}\nStartup tool declarations: none");
     }
 
     let tool_declarations = catalog
@@ -1769,7 +1712,7 @@ fn format_startup_dependency_context(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    format!("{dashboard_declaration}\nStartup tool declarations:\n{tool_declarations}")
+    format!("{app_declaration}\nStartup tool declarations:\n{tool_declarations}")
 }
 
 fn initialize_logging(style: ConsoleStyle) {
@@ -1999,8 +1942,8 @@ mod tests {
             "check",
             "--format",
             "json",
-            "--tools-dir",
-            "custom-tools",
+            "--domains-dir",
+            "custom-domains",
         ])
         .expect("parse check command");
         assert!(matches!(
@@ -2009,7 +1952,7 @@ mod tests {
                 format: CheckFormat::Json
             })
         ));
-        assert_eq!(check.tools_dir, Some(PathBuf::from("custom-tools")));
+        assert_eq!(check.domains_dir, Some(PathBuf::from("custom-domains")));
 
         let invoke = Cli::try_parse_from([
             "toolframe",
@@ -2031,23 +1974,23 @@ mod tests {
     }
 
     #[test]
-    fn parses_llms_flags_and_resolves_executable_root_defaults() {
+    fn parses_source_flags_and_resolves_executable_root_defaults() {
         let cli = Cli::try_parse_from([
             "toolframe",
-            "--llms-file",
-            "custom-guide.txt",
-            "--llms-dir",
-            "custom-guides",
+            "--app-dir",
+            "custom-app",
+            "--domains-dir",
+            "custom-domains",
         ])
-        .expect("parse llms flags");
-        assert_eq!(cli.llms_file, Some(PathBuf::from("custom-guide.txt")));
-        assert_eq!(cli.llms_dir, Some(PathBuf::from("custom-guides")));
+        .expect("parse source flags");
+        assert_eq!(cli.app_dir, Some(PathBuf::from("custom-app")));
+        assert_eq!(cli.domains_dir, Some(PathBuf::from("custom-domains")));
 
         let default_cli = Cli::try_parse_from(["toolframe"]).expect("parse default cli");
-        let root = Path::new("/tmp/toolframe-llms-defaults");
+        let root = Path::new("/tmp/toolframe-source-defaults");
         let paths = resolve_cli_paths(&default_cli, root).expect("resolve default paths");
-        assert_eq!(paths.llms_file, root.join("llms").join("llms.txt"));
-        assert_eq!(paths.llms_dir, root.join("llms"));
+        assert_eq!(paths.app, root.join("app"));
+        assert_eq!(paths.domains, root.join("domains"));
     }
 
     #[test]
@@ -2160,12 +2103,12 @@ mod tests {
     #[test]
     fn parses_structured_dashboard_fatal_sentinel() {
         let fatal = parse_fatal_sentinel(
-            r#"TOOLFRAME_FATAL {"traceId":"trace-42","phase":"render","path":"/dashboard/app.py","widget":"example_card","exceptionType":"RuntimeError","message":"boom","retryable":false}"#,
+            r#"TOOLFRAME_FATAL {"traceId":"trace-42","phase":"render","path":"/app/dashboard.py","widget":"entry_register.entries","exceptionType":"RuntimeError","message":"boom","retryable":false}"#,
         )
         .expect("parse fatal sentinel");
 
         assert!(fatal.summary().contains("traceId=trace-42"));
-        assert!(fatal.summary().contains("widget=example_card"));
+        assert!(fatal.summary().contains("widget=entry_register.entries"));
         assert!(fatal.summary().contains("retryable=false"));
         assert!(fatal.summary().ends_with(": boom"));
     }

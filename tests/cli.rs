@@ -24,12 +24,10 @@ fn json_check_failure_is_machine_readable_and_does_not_create_data_db() {
         .arg("json")
         .arg("--database")
         .arg(&database)
-        .arg("--migrations-dir")
-        .arg(directory.path().join("missing-migrations"))
-        .arg("--tools-dir")
-        .arg(directory.path().join("missing-tools"))
-        .arg("--dashboard-dir")
-        .arg(directory.path().join("missing-dashboard"))
+        .arg("--domains-dir")
+        .arg(directory.path().join("missing-domains"))
+        .arg("--app-dir")
+        .arg(directory.path().join("missing-app"))
         .arg("--workspace-dir")
         .arg(directory.path().join("missing-workspace"))
         .arg("--runtime-dir")
@@ -66,7 +64,7 @@ fn non_server_commands_do_not_install_the_agent_skill() {
                     .arg("check")
                     .arg("--format")
                     .arg("json")
-                    .arg("--migrations-dir")
+                    .arg("--domains-dir")
                     .arg(&missing);
             }
             "invoke" => {
@@ -75,15 +73,16 @@ fn non_server_commands_do_not_install_the_agent_skill() {
                     .arg("missing_tool")
                     .arg("--json")
                     .arg("{}")
-                    .arg("--migrations-dir")
+                    .arg("--domains-dir")
                     .arg(&missing);
             }
             "scaffold" => {
                 command
                     .arg("scaffold")
                     .arg("tool")
+                    .arg("sample_domain")
                     .arg("sample_tool")
-                    .arg("--tools-dir")
+                    .arg("--domains-dir")
                     .arg(&missing);
             }
             _ => unreachable!(),
@@ -98,13 +97,8 @@ fn non_server_commands_do_not_install_the_agent_skill() {
             !directory.path().join(".agents").exists(),
             "{command_name} must not install the production skill"
         );
-        assert!(
-            !directory.path().join("llms.txt").exists(),
-            "{command_name} must not scaffold the root llms file"
-        );
-        assert!(
-            !directory.path().join("llms").exists(),
-            "{command_name} must not scaffold the llms directory"
-        );
+        assert!(!directory.path().join("app").exists());
+        assert!(!directory.path().join("domains").exists());
+        assert!(!directory.path().join("APP_CONTEXT.md").exists());
     }
 }

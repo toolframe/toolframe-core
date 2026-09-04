@@ -25,7 +25,6 @@ from toolframe_runtime import (
     _pydantic_json,
     load_tools,
     validate_domain_llms_source,
-    validate_llms_source,
 )
 
 
@@ -33,12 +32,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("check", "invoke"))
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--app", type=Path)
-    parser.add_argument("--domains", type=Path)
-    parser.add_argument("--dashboard", type=Path)
+    parser.add_argument("--app", type=Path, required=True)
+    parser.add_argument("--domains", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
-    parser.add_argument("--llms-file", type=Path, required=True)
-    parser.add_argument("--llms-dir", type=Path)
     parser.add_argument("--tool")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--result-limit", type=int, default=4_194_304)
@@ -80,19 +76,9 @@ def _configure_tool_support(database: Path, workspace: Path) -> Any:
 
 def _check(arguments: argparse.Namespace) -> int:
     _require_python()
-    app_dir = getattr(arguments, "app", None)
-    domains_dir = getattr(arguments, "domains", None)
-    domain_layout = app_dir is not None or domains_dir is not None
-    if domain_layout:
-        if app_dir is None or domains_dir is None:
-            raise RuntimeError("--app and --domains must be supplied together")
-        agent_documents = validate_domain_llms_source(arguments.llms_file, domains_dir)
-    else:
-        if arguments.dashboard is None or arguments.llms_dir is None:
-            raise RuntimeError(
-                "--dashboard and --llms-dir are required for the legacy layout"
-            )
-        agent_documents = validate_llms_source(arguments.llms_file, arguments.llms_dir)
+    app_dir = arguments.app.resolve(strict=True)
+    domains_dir = arguments.domains.resolve(strict=True)
+    agent_documents = validate_domain_llms_source(app_dir / "llms.txt", domains_dir)
     with tempfile.TemporaryDirectory(prefix="toolframe-check-") as temporary:
         temporary_root = Path(temporary)
         database = temporary_root / "data.db"
@@ -106,24 +92,16 @@ def _check(arguments: argparse.Namespace) -> int:
 
             import toolframe_dashboard as dashboard_sdk
 
-            dashboard_configuration = {
-                "database_path": database,
-                "workspace": workspace,
-                "logger": logging.getLogger("toolframe.check"),
-                "runtime": {"startupOnly": True, "preflight": True},
-                "artifacts": artifact_store,
-            }
-            if domain_layout:
-                dashboard_configuration["app_dir"] = app_dir
-                dashboard_configuration["domains_dir"] = domains_dir
-            else:
-                dashboard_configuration["dashboard_dir"] = arguments.dashboard
-            dashboard_sdk._configure(**dashboard_configuration)
-            widgets = (
-                dashboard_sdk.preflight_app(app_dir, domains_dir)
-                if domain_layout
-                else dashboard_sdk.preflight_dashboard(arguments.dashboard)
+            dashboard_sdk._configure(
+                database_path=database,
+                app_dir=app_dir,
+                domains_dir=domains_dir,
+                workspace=workspace,
+                logger=logging.getLogger("toolframe.check"),
+                runtime={"startupOnly": True, "preflight": True},
+                artifacts=artifact_store,
             )
+            widgets = dashboard_sdk.preflight_app(app_dir, domains_dir)
         _emit(
             {
                 "pythonVersion": sys.version.split()[0],
@@ -132,16 +110,8 @@ def _check(arguments: argparse.Namespace) -> int:
                     {
                         "name": widget.widget_id,
                         "title": widget.title,
-                        "sourceFile": (
-                            widget.path.name
-                            if widget.domain is None
-                            else widget.path.relative_to(domains_dir).as_posix()
-                        ),
-                        **(
-                            {"domain": widget.domain}
-                            if widget.domain is not None
-                            else {}
-                        ),
+                        "sourceFile": widget.path.relative_to(domains_dir).as_posix(),
+                        "domain": widget.domain,
                     }
                     for widget in widgets
                 ],

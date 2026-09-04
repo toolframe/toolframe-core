@@ -18,7 +18,7 @@ class DashboardExecutionError(RuntimeError):
 
 
 def main() -> None:
-    dashboard_dir, app_path = _dashboard_source()
+    app_dir, app_path = _dashboard_source()
     namespace: dict[str, Any] = {
         "__name__": "__main__",
         "__file__": str(app_path),
@@ -26,9 +26,9 @@ def main() -> None:
         "__cached__": None,
         "__spec__": None,
     }
-    inserted_path = str(dashboard_dir) not in sys.path
+    inserted_path = str(app_dir) not in sys.path
     if inserted_path:
-        sys.path.insert(0, str(dashboard_dir))
+        sys.path.insert(0, str(app_dir))
     try:
         if not app_path.is_file() or app_path.is_symlink():
             raise RuntimeError(
@@ -53,35 +53,26 @@ def main() -> None:
     finally:
         if inserted_path:
             try:
-                sys.path.remove(str(dashboard_dir))
+                sys.path.remove(str(app_dir))
             except ValueError:
                 pass
 
 
-def _dashboard_directory() -> Path:
+def _app_directory() -> Path:
     app_value = os.environ.get("TOOLFRAME_APP_DIR", "").strip()
-    if app_value:
-        path = Path(app_value)
-        source_name = "TOOLFRAME_APP_DIR"
-    else:
-        dashboard_value = os.environ.get("TOOLFRAME_DASHBOARD_DIR", "").strip()
-        if not dashboard_value:
-            raise RuntimeError("TOOLFRAME_APP_DIR is required")
-        path = Path(dashboard_value)
-        source_name = "TOOLFRAME_DASHBOARD_DIR"
+    if not app_value:
+        raise RuntimeError("TOOLFRAME_APP_DIR is required")
+    path = Path(app_value)
     if not path.is_absolute():
-        raise RuntimeError(f"{source_name} must be an absolute path")
+        raise RuntimeError("TOOLFRAME_APP_DIR must be an absolute path")
     if not path.is_dir() or path.is_symlink():
-        raise RuntimeError(f"{source_name} must name a directory, not a symlink")
+        raise RuntimeError("TOOLFRAME_APP_DIR must name a directory, not a symlink")
     return path
 
 
 def _dashboard_source() -> tuple[Path, Path]:
-    directory = _dashboard_directory()
-    filename = (
-        "dashboard.py" if os.environ.get("TOOLFRAME_APP_DIR", "").strip() else "app.py"
-    )
-    return directory, directory / filename
+    directory = _app_directory()
+    return directory, directory / "dashboard.py"
 
 
 def _is_streamlit_control_exception(error: BaseException) -> bool:

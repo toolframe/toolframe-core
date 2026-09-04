@@ -512,6 +512,7 @@ class DashboardAuditTests(unittest.TestCase):
             path=Path("identity.py"),
             module_name="audited_widget",
             module=module,
+            domain="entry_register",
         )
         context = dashboard.DashboardContext(
             db=self.database,
@@ -544,21 +545,29 @@ class DashboardAuditTests(unittest.TestCase):
 class WidgetDiscoveryTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary_directory.name) / "dashboard"
-        self.widgets = self.root / "widgets"
-        self.widgets.mkdir(parents=True)
-        (self.root / "app.py").write_text(
+        self.root = Path(self.temporary_directory.name)
+        self.app = self.root / "app"
+        self.domains = self.root / "domains"
+        domain = self.domains / "entry_register"
+        self.widgets = domain / "ui"
+        self.app.mkdir(parents=True)
+        for child in ("llms", "model", "tools", "ui", "migrations"):
+            (domain / child).mkdir(parents=True, exist_ok=True)
+        (domain / "__init__.py").write_text("\n", encoding="utf-8")
+        (self.widgets / "__init__.py").write_text("\n", encoding="utf-8")
+        (self.app / "dashboard.py").write_text(
             "from toolframe_dashboard import render_widgets\nrender_widgets()\n",
             encoding="utf-8",
         )
-        self.database_path = self.root.parent / "data.db"
+        self.database_path = self.root / "data.db"
         sqlite3.connect(self.database_path).close()
         dashboard._configure(
             database_path=self.database_path,
-            dashboard_dir=self.root,
-            workspace=self.root.parent / "workspace",
+            app_dir=self.app,
+            domains_dir=self.domains,
+            workspace=self.root / "workspace",
             logger=logging.getLogger("widget-test"),
-            runtime={"tools": ["execute_sql"], "nested": {"ready": True}},
+            runtime={"tools": ["entry_register_list"], "nested": {"ready": True}},
         )
 
     def tearDown(self):
@@ -575,7 +584,7 @@ class WidgetDiscoveryTests(unittest.TestCase):
         self.assertIsNotNone(context.artifacts)
         self.assertEqual(
             context.artifacts.root,
-            (self.root.parent / "workspace" / "artifacts").resolve(),
+            (self.root / "workspace" / "artifacts").resolve(),
         )
 
     def test_discovery_contract_order_and_ignore_rules(self):
@@ -589,15 +598,13 @@ class WidgetDiscoveryTests(unittest.TestCase):
         nested = self.widgets / "nested"
         nested.mkdir()
         (nested / "ignored.py").write_text("raise RuntimeError('must not import')\n")
-        symlink = self.widgets / "linked.py"
-        try:
-            symlink.symlink_to(self.widgets / "_draft.py")
-        except OSError:
-            pass
 
-        widgets = dashboard.preflight_dashboard()
+        widgets = dashboard.preflight_app()
 
-        self.assertEqual([widget.widget_id for widget in widgets], ["first", "later"])
+        self.assertEqual(
+            [widget.widget_id for widget in widgets],
+            ["entry_register.first", "entry_register.later"],
+        )
         self.assertEqual(widgets[0].title, "First")
         self.assertEqual(widgets[1].title, "Later")
         self.assertEqual(
@@ -619,27 +626,17 @@ class WidgetDiscoveryTests(unittest.TestCase):
                         child.unlink()
                 self.write_widget(filename, source)
                 with self.assertRaises(RuntimeError):
-                    dashboard.preflight_dashboard()
+                    dashboard.preflight_app()
 
-    def test_public_widget_stems_need_not_be_python_identifiers(self):
-        for order, filename in enumerate(("foo-bar.py", "123.py", "with.py")):
-            self.write_widget(
-                filename,
-                f"ORDER = {order}\ndef render(context):\n    pass\n",
-            )
-
-        widgets = dashboard.preflight_dashboard()
-
-        self.assertEqual(
-            [widget.widget_id for widget in widgets],
-            ["foo-bar", "123", "with"],
-        )
-        self.assertTrue(
-            all(
-                widget.module_name.rsplit(".", 1)[-1].isidentifier()
-                for widget in widgets
-            )
-        )
+    def test_public_widget_stems_must_be_lower_snake_case_identifiers(self):
+        for filename in ("foo-bar.py", "123.py", "with.py"):
+            with self.subTest(filename=filename):
+                for child in self.widgets.glob("*.py"):
+                    if child.name != "__init__.py":
+                        child.unlink()
+                self.write_widget(filename, "def render(context):\n    pass\n")
+                with self.assertRaisesRegex(RuntimeError, "lower_snake_case"):
+                    dashboard.preflight_app()
 
     def test_widget_runtime_error_has_filename_and_phase_context(self):
         self.write_widget("broken.py", "raise RuntimeError('boom')\n")
@@ -648,26 +645,29 @@ class WidgetDiscoveryTests(unittest.TestCase):
             RuntimeError,
             r"broken\.py failed import/contract validation: RuntimeError: boom",
         ):
-            dashboard.preflight_dashboard()
+            dashboard.preflight_app()
 
-    def test_symlinked_dashboard_and_widgets_directories_are_rejected(self):
-        linked_dashboard = self.root.parent / "linked-dashboard"
-        linked_dashboard.symlink_to(self.root, target_is_directory=True)
-        with self.assertRaisesRegex(RuntimeError, "dashboard directory"):
-            dashboard.preflight_dashboard(linked_dashboard)
+    def test_symlinked_app_and_domain_ui_directories_are_rejected(self):
+        linked_app = self.root / "linked-app"
+        linked_app.symlink_to(self.app, target_is_directory=True)
+        with self.assertRaisesRegex(RuntimeError, "app directory"):
+            dashboard.preflight_app(linked_app, self.domains)
 
-        real_widgets = self.root.parent / "real-widgets"
+        real_widgets = self.root / "real-widgets"
         real_widgets.mkdir()
-        linked_widgets = self.root.parent / "linked-widgets"
-        linked_widgets.symlink_to(real_widgets, target_is_directory=True)
-        with self.assertRaisesRegex(RuntimeError, "widgets directory"):
-            dashboard.discover_widgets(linked_widgets)
+        (self.widgets / "__init__.py").unlink()
+        self.widgets.rmdir()
+        self.widgets.symlink_to(real_widgets, target_is_directory=True)
+        with self.assertRaisesRegex(RuntimeError, "entry_register ui"):
+            dashboard.preflight_app()
 
     def test_duplicate_explicit_order_fails(self):
         self.write_widget("one.py", "ORDER = 1\ndef render(context):\n    pass\n")
         self.write_widget("two.py", "ORDER = 1\ndef render(context):\n    pass\n")
 
-        with self.assertRaisesRegex(RuntimeError, "ORDER values must be unique"):
+        with self.assertRaisesRegex(
+            RuntimeError, "ORDER values must be globally unique"
+        ):
             dashboard.discover_widgets()
 
     def test_source_changes_reload_with_stable_module_name(self):
@@ -691,7 +691,7 @@ class WidgetDiscoveryTests(unittest.TestCase):
             "capture.py",
             """
 def render(context):
-    assert context.widget_id == 'capture'
+    assert context.widget_id == 'entry_register.capture'
     assert context.runtime['nested']['ready'] is True
     context.runtime['changed'] = True
 """,
@@ -709,14 +709,15 @@ def render(context):
             dashboard.render_widget(widget)
 
     def test_components_are_not_auto_executed(self):
-        components = self.root / "components"
-        components.mkdir()
-        (components / "unused.py").write_text("raise RuntimeError('must not import')\n")
+        model = self.domains / "entry_register" / "model"
+        (model / "unused.py").write_text("raise RuntimeError('must not import')\n")
         self.write_widget("valid.py", "def render(context):\n    pass\n")
 
-        widgets = dashboard.preflight_dashboard()
+        widgets = dashboard.preflight_app()
 
-        self.assertEqual([widget.widget_id for widget in widgets], ["valid"])
+        self.assertEqual(
+            [widget.widget_id for widget in widgets], ["entry_register.valid"]
+        )
 
 
 class DomainWidgetDiscoveryTests(unittest.TestCase):
@@ -854,21 +855,19 @@ class StandardErrorCardTests(unittest.TestCase):
 
 class DefaultWidgetContractTests(unittest.TestCase):
     def test_example_widget_handles_expected_database_conditions(self):
-        path = REPOSITORY_ROOT / "dashboard" / "widgets" / "example_card.py"
+        path = REPOSITORY_ROOT / "domains" / "entry_register" / "ui" / "entries.py"
+        domains_root = REPOSITORY_ROOT / "domains"
+        dashboard._purge_domain_modules(domains_root)
+        dashboard._ensure_domain_namespace(domains_root)
         spec = importlib.util.spec_from_file_location("default_example_card", path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        self.assertTrue(
-            {
-                "constraint_violation",
-                "database_busy",
-                "database_io",
-                "result_too_large",
-            }.issubset(module._EXPECTED_DATABASE_ERRORS)
-        )
+        self.assertTrue(callable(module.render))
+        self.assertTrue(callable(module._interaction_error))
+        self.assertIn("render_error_card", path.read_text(encoding="utf-8"))
         self.assertNotIn("CREATE TABLE", path.read_text(encoding="utf-8"))
 
 

@@ -46,42 +46,25 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
-        self.tools = self.root / "tools"
-        self.tools.mkdir()
 
     def tearDown(self):
         self.temporary_directory.cleanup()
 
     def write_manifest(self, source=TOOL_SOURCE):
-        tool_path = self.tools / "echo.py"
-        tool_path.write_text(source, encoding="utf-8")
-        manifest = {
-            "version": 1,
-            "pythonVersion": "3.14.0",
-            "toolsDir": str(self.tools),
-            "tools": [
-                {
-                    "name": "echo",
-                    "path": str(tool_path),
-                    "sourceFilename": "echo.py",
-                    "sourceSha256": hashlib.sha256(source.encode()).hexdigest(),
-                    "dependencies": [],
-                    "requiresPython": ">=3.14,<3.15",
-                }
-            ],
-        }
-        manifest_path = self.root / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-        return manifest_path, tool_path
+        return self.write_domain_manifest(source)
 
     def write_domain_manifest(self, source=TOOL_SOURCE):
         domains = self.root / "domains"
         domain = domains / "entry_register"
         tools = domain / "tools"
-        tools.mkdir(parents=True)
+        tools.mkdir(parents=True, exist_ok=True)
         (domain / "__init__.py").write_text(
             'PUBLIC_LABEL = "entry register"\n', encoding="utf-8"
         )
+        for child in ("llms", "model", "ui", "migrations"):
+            (domain / child).mkdir(exist_ok=True)
+        (tools / "__init__.py").write_text("\n", encoding="utf-8")
+        (domain / "ui" / "__init__.py").write_text("\n", encoding="utf-8")
         tool_path = tools / "echo.py"
         tool_path.write_text(source, encoding="utf-8")
         manifest = {
@@ -104,28 +87,16 @@ class RuntimeTests(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         return manifest_path, tool_path
 
-    def write_llms_source(self, *, index=None, documents=None):
-        llms_dir = self.root / "llms"
-        llms_dir.mkdir(exist_ok=True)
-        documents = documents or {"overview": "# Overview\n\nDetails.\n"}
-        for name, contents in documents.items():
-            (llms_dir / f"{name}.md").write_text(contents, encoding="utf-8")
-        index_path = self.root / "llms.txt"
-        index_path.write_text(
-            index
-            or "# toolframe\n> LAN MCP server context.\n\n## Documents\n\n- [Overview](/llms/overview.md)\n",
-            encoding="utf-8",
-        )
-        return index_path, llms_dir
-
     def write_domain_llms_source(self, *, index=None):
         domains = self.root / "domains"
         docs = domains / "entry_register" / "llms"
-        docs.mkdir(parents=True)
+        docs.mkdir(parents=True, exist_ok=True)
         (docs / "capabilities.md").write_text(
             "# Entry register capabilities\n", encoding="utf-8"
         )
-        index_path = self.root / "app-llms.txt"
+        app = self.root / "app"
+        app.mkdir(exist_ok=True)
+        index_path = app / "llms.txt"
         index_path.write_text(
             index
             or (
@@ -183,96 +154,14 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "capabilities.md.*symlink"):
             runtime.validate_domain_llms_source(index_path, domains)
 
-    def test_validate_llms_source_returns_safe_reachable_document_allowlist(self):
-        index_path, llms_dir = self.write_llms_source(
-            index=(
-                "# toolframe\n"
-                "> LAN MCP server context.\n"
-                "\n"
-                "## Documents\n"
-                "\n"
-                "- [Overview](/llms/overview.md)\n"
-                "- [Workflow](/llms/workflow_notes.md)\n"
-            ),
-            documents={
-                "overview": "# Overview\n\nDetails.\n",
-                "workflow_notes": "# Workflow\n\nDetails.\n",
-            },
-        )
-
-        self.assertEqual(
-            runtime.validate_llms_source(index_path, llms_dir),
-            ["overview.md", "workflow_notes.md"],
-        )
-
-    def test_validate_llms_source_accepts_index_inside_details_directory(self):
-        index_path, llms_dir = self.write_llms_source()
-        nested_index_path = llms_dir / "llms.txt"
-        index_path.replace(nested_index_path)
-
-        self.assertEqual(
-            runtime.validate_llms_source(nested_index_path, llms_dir),
-            ["overview.md"],
-        )
-
-    def test_validate_llms_source_accepts_v2_bom_and_blank_line_before_summary(self):
-        index_path, llms_dir = self.write_llms_source(
-            index=(
-                "\ufeff# toolframe\n"
-                "\n"
-                "> LAN MCP server context.\n"
-                "\n"
-                "## Documents\n"
-                "\n"
-                "- [Overview](/llms/overview.md)\n"
-            )
-        )
-
-        self.assertEqual(
-            runtime.validate_llms_source(index_path, llms_dir), ["overview.md"]
-        )
-
-    def test_validate_llms_source_rejects_unlinked_or_unsafe_documents(self):
-        index_path, llms_dir = self.write_llms_source(
-            documents={
-                "overview": "# Overview\n\nDetails.\n",
-                "orphan": "# Orphan\n\nNot linked.\n",
-            }
-        )
-
-        with self.assertRaisesRegex(ValueError, "orphan.md.*not reachable"):
-            runtime.validate_llms_source(index_path, llms_dir)
-
-        unsafe = llms_dir / "Unsafe.md"
-        unsafe.write_text("# Unsafe\n", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "Unsafe.md.*safe"):
-            runtime.validate_llms_source(index_path, llms_dir)
-
-    def test_validate_llms_source_rejects_symlink_utf8_and_oversize_sources(self):
-        index_path, llms_dir = self.write_llms_source()
-        target = self.root / "outside.md"
-        target.write_text("# Outside\n", encoding="utf-8")
-        (llms_dir / "overview.md").unlink()
-        (llms_dir / "overview.md").symlink_to(target)
-        with self.assertRaisesRegex(ValueError, "overview.md.*symlink"):
-            runtime.validate_llms_source(index_path, llms_dir)
-
-        (llms_dir / "overview.md").unlink()
-        (llms_dir / "overview.md").write_bytes(b"# Overview\n\xff")
-        with self.assertRaisesRegex(ValueError, "overview.md.*UTF-8"):
-            runtime.validate_llms_source(index_path, llms_dir)
-
-        (llms_dir / "overview.md").write_bytes(b"x" * (256 * 1024 + 1))
-        with self.assertRaisesRegex(ValueError, "overview.md.*256 KiB"):
-            runtime.validate_llms_source(index_path, llms_dir)
-
     def test_loads_exactly_one_decorated_tool(self):
         manifest_path, _ = self.write_manifest()
 
         tools, details, dependencies = runtime.load_tools(manifest_path)
 
         self.assertEqual([tool.name for tool in tools], ["echo"])
-        self.assertEqual(details[0]["sourceFile"], "echo.py")
+        self.assertEqual(details[0]["sourceFile"], "entry_register/tools/echo.py")
+        self.assertEqual(details[0]["domain"], "entry_register")
         self.assertIn("supplied value", details[0]["description"])
         self.assertEqual(dependencies, [])
 
@@ -538,12 +427,11 @@ def second() -> str:
 
     def test_application_has_startup_only_routes(self):
         manifest_path, _ = self.write_manifest(DATABASE_CONTEXT_TOOL_SOURCE)
-        llms_file, llms_dir = self.write_llms_source()
+        llms_file, domains, docs = self.write_domain_llms_source()
         database = self.root / "data.db"
         sqlite3.connect(database).close()
-        dashboard = self.root / "dashboard"
-        dashboard.mkdir()
-        (dashboard / "app.py").write_text("pass\n", encoding="utf-8")
+        app_dir = llms_file.parent
+        (app_dir / "dashboard.py").write_text("pass\n", encoding="utf-8")
         workspace = self.root / "workspace"
         workspace.mkdir()
         info_page = self.root / "index.html"
@@ -553,12 +441,11 @@ def second() -> str:
         environment = {
             "TOOLFRAME_MANIFEST": str(manifest_path),
             "TOOLFRAME_DB": str(database),
-            "TOOLFRAME_DASHBOARD_DIR": str(dashboard),
+            "TOOLFRAME_APP_DIR": str(app_dir),
+            "TOOLFRAME_DOMAINS_DIR": str(domains),
             "TOOLFRAME_DASHBOARD_RUNNER": str(runner_path),
             "TOOLFRAME_INFO_PAGE": str(info_page),
             "TOOLFRAME_WORKSPACE": str(workspace),
-            "TOOLFRAME_LLMS_FILE": str(llms_file),
-            "TOOLFRAME_LLMS_DIR": str(llms_dir),
             "TOOLFRAME_PORT": "8000",
             "TOOLFRAME_ALLOWED_HOSTS": '["localhost","127.0.0.1"]',
             "TOOLFRAME_ALLOWED_ORIGINS": '["http://localhost:8000"]',
@@ -590,7 +477,7 @@ def second() -> str:
         fake_streamlit = types.SimpleNamespace(App=FakeStreamlitApp)
         fake_dashboard_sdk = types.SimpleNamespace(
             _configure=lambda **_: None,
-            preflight_dashboard=lambda _: (),
+            preflight_app=lambda *_: (),
         )
         previous_reporter = runtime._DASHBOARD_FATAL_REPORTER
         try:
@@ -614,7 +501,7 @@ def second() -> str:
         self.assertIn("/api/runtime", paths)
         self.assertIn("/llms.txt", paths)
         self.assertIn("/llms.txt/{unsupported_path:path}", paths)
-        self.assertIn("/llms/{document_name}.md", paths)
+        self.assertIn("/llms/{domain_name}/{document_name}.md", paths)
         self.assertIn("/llms", paths)
         self.assertIn("/llms/{unsupported_path:path}", paths)
         self.assertIn("/mcp", paths)
@@ -641,21 +528,22 @@ def second() -> str:
             "\n"
             "## Documents\n"
             "\n"
-            "- [Overview](/llms/overview.md)\n",
+            "- [Capabilities](/llms/entry_register/capabilities.md)\n",
             encoding="utf-8",
         )
         self.assertEqual(client.get("/llms.txt").content, llms_file.read_bytes())
 
-        detail_response = client.get("/llms/overview.md")
+        detail_response = client.get("/llms/entry_register/capabilities.md")
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(
             detail_response.headers["link"], '</llms.txt>; rel="describedby"'
         )
-        self.assertEqual(detail_response.content, b"# Overview\n\nDetails.\n")
+        self.assertEqual(detail_response.content, b"# Entry register capabilities\n")
 
-        (llms_dir / "overview.md").write_bytes(b"# Overview\n\nChanged.\n")
+        (docs / "capabilities.md").write_bytes(b"# Capabilities\n\nChanged.\n")
         self.assertEqual(
-            client.get("/llms/overview.md").content, b"# Overview\n\nChanged.\n"
+            client.get("/llms/entry_register/capabilities.md").content,
+            b"# Capabilities\n\nChanged.\n",
         )
         head_response = client.head("/llms.txt")
         self.assertEqual(head_response.status_code, 200)
@@ -663,7 +551,7 @@ def second() -> str:
         self.assertEqual(
             head_response.headers["content-type"], "text/markdown; charset=utf-8"
         )
-        self.assertEqual(client.get("/llms/unknown.md").status_code, 404)
+        self.assertEqual(client.get("/llms/entry_register/unknown.md").status_code, 404)
         self.assertEqual(client.get("/llms/%2E%2E/outside.md").status_code, 404)
         self.assertEqual(client.get("/llms").status_code, 404)
         method_rejected = client.post("/llms.txt")
@@ -674,16 +562,19 @@ def second() -> str:
         self.assertEqual(client.get("/llms.txt/extra").status_code, 404)
         self.assertEqual(client.request("PROPFIND", "/llms.txt").status_code, 405)
         self.assertEqual(client.request("PROPFIND", "/llms.txt/extra").status_code, 404)
-        self.assertEqual(client.request("FOO", "/llms/overview.md").status_code, 404)
+        self.assertEqual(
+            client.request("FOO", "/llms/entry_register/capabilities.md").status_code,
+            404,
+        )
 
-        (llms_dir / "overview.md").write_bytes(b"# Overview\n\xff")
-        invalid = client.get("/llms/overview.md")
+        (docs / "capabilities.md").write_bytes(b"# Capabilities\n\xff")
+        invalid = client.get("/llms/entry_register/capabilities.md")
         self.assertEqual(invalid.status_code, 503)
         self.assertNotIn("Overview", invalid.text)
 
-        (llms_dir / "overview.md").write_bytes(b"# Overview\n\nChanged.\n")
-        (llms_dir / "overview.md").unlink()
-        unavailable = client.get("/llms/overview.md")
+        (docs / "capabilities.md").write_bytes(b"# Capabilities\n\nChanged.\n")
+        (docs / "capabilities.md").unlink()
+        unavailable = client.get("/llms/entry_register/capabilities.md")
         self.assertEqual(unavailable.status_code, 503)
         self.assertNotIn("Overview", unavailable.text)
 

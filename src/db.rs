@@ -1694,14 +1694,14 @@ mod tests {
     #[test]
     fn source_migrations_create_the_default_runtime_tables() {
         let directory = tempfile::tempdir().expect("create temp directory");
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("domains");
         let database = directory.path().join("data.db");
 
-        migrate(&database, &source).expect("apply source migrations");
+        migrate_domains(&database, &source).expect("apply source migrations");
         let connection = Connection::open(database).expect("open database");
         let exists: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='dashboard_example_entries'",
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='entry_register_entries'",
                 [],
                 |row| row.get(0),
             )
