@@ -53,7 +53,7 @@ meaning for a canonical term.
   linked pages apply to this business app].
 - MCP: `/mcp` — [the small Business RPC catalog, separated into bounded
   business queries and guarded business commands; state each caller intent].
-- Database: `data.db` — [business data owned by this app].
+- Database: `data/data.db` — [business data owned by this app].
 - Scheduler boundary: [external trigger, cadence, or “none”].
 
 ## Boundaries
@@ -93,7 +93,7 @@ has consciously accepted the local exposure.
 | Schema | `migrations/` | [latest migration and immutable-history note] |
 | MCP tools | `tools/` | [Business RPC commands/queries, their intents, and private helper modules] |
 | Dashboard | `dashboard/app.py`, `dashboard/widgets/` | [entry point and widget list] |
-| LAN agent discovery | `llms.txt`, `llms/` | [linked capability/context/workflow pages and last reconciliation] |
+| LAN agent discovery | `llms/llms.txt`, `llms/*.md` | [linked capability/context/workflow pages and last reconciliation] |
 | Large results/files | `workspace/artifacts/` | [artifact naming and retrieval convention] |
 
 ## Decisions and open issues

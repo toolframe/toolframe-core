@@ -12,7 +12,7 @@ not apply. Do not leave two competing definitions in code and documentation.
 - Outside the app: `<scheduler, external systems, manual processes>`
 - Human entrance: `<dashboard pages/widgets>`
 - Agent entrance: `<MCP tools and `/mcp` connection>`
-- Data source and database: `<data.db and any external read-only references>`
+- Data source and database: `<data/data.db and any external read-only references>`
 
 ## Ubiquitous language
 

@@ -63,7 +63,7 @@ surfaces:
 
 - `APP_CONTEXT.md` App identity — authoritative name and rationale;
 - `dashboard/app.py` `APP_NAME` — browser title and visible heading;
-- `llms.txt` H1 and summary — LAN agent identity; and
+- `llms/llms.txt` H1 and summary — LAN agent identity; and
 - `llms/context.md` App identity — app name, framework attribution, and rationale.
 
 Completion requires all four surfaces to use the same app name and none to
@@ -85,7 +85,7 @@ Read the local `README.md`, `migrations/README.md`, existing migrations,
 production migration path against an isolated SQLite snapshot, resolves the
 shared UV project, imports every startup tool, materializes its MCP schema,
 and validates the dashboard and widgets. It can provision the managed runtime;
-it does not apply changes to the configured `data.db`, bind a port, create logs,
+it does not apply changes to the configured `data/data.db`, bind a port, create logs,
 or scaffold missing source directories. Treat the resulting JSON document and
 the packaged README as the portable evidence; a release folder does not include
 the Rust/Python launcher source tree.
@@ -140,7 +140,7 @@ Keep each fact authoritative in one place:
 - app identity, why the app exists, and how another agent takes over:
   `APP_CONTEXT.md`;
 - implementation details: the tool/widget source and their docstrings.
-- what a remote LAN agent may discover: the short `llms.txt` index and its
+- what a remote LAN agent may discover: the short `llms/llms.txt` index and its
   linked `llms/*.md` projection of those authoritative facts.
 
 At handoff, update both app-local documents with the current schema version,
@@ -165,7 +165,7 @@ development sequence below assumes those rules but does not redefine them.
 
 ### B. Design the schema as durable history
 
-The `migrations/` directory is the source of truth for `data.db`. Start with
+The `migrations/` directory is the source of truth for `data/data.db`. Start with
 the supplied `0000_bootstrap.sql` and add the next contiguous migration with
 the scaffold command:
 
@@ -180,7 +180,7 @@ transaction. Never edit, rename, or delete an applied migration; restore its
 exact bytes and add a new migration. Never administer schema through
 `execute_sql`, another MCP tool, or a Dashboard action. Do not put transaction
 statements, connection-level PRAGMAs, `ATTACH`, `DETACH`, or `CREATE TRIGGER`
-in migration SQL. Back up `data.db` before a destructive change. Read the app
+in migration SQL. Back up `data/data.db` before a destructive change. Read the app
 folder's local `migrations/README.md` for the full authoring restrictions.
 
 Prefer tables that make the business history visible: an enduring business
@@ -309,7 +309,7 @@ environment, or network access.
 
 ### E. Publish progressive LAN-agent discovery
 
-Treat `llms.txt` as the copy/paste entry point for a peer agent that cannot
+Treat `llms/llms.txt` as the source for the `/llms.txt` copy/paste entry point for a peer agent that cannot
 read this folder. Keep the root file short: identify the app by its business
 name, attribute Lite MCP only as the framework, state the trusted LAN boundary,
 point to same-origin `/mcp`, then link the relevant detail pages.
@@ -319,7 +319,7 @@ README into the root file or link to local filesystem paths a peer cannot open.
 
 Reconcile these default editable files as one set:
 
-- `llms.txt` — index and progressive reading order;
+- `llms/llms.txt` — index and progressive reading order;
 - `llms/agent-guide.md` — client-neutral MCP connection and proof;
 - `llms/capabilities.md` — only the tools and Dashboard actions that actually
   exist;
@@ -390,7 +390,7 @@ Run these stages in order and record evidence in `APP_CONTEXT.md`:
    migration range, tool names, widget names, and dependency result.
 2. **Database:** inspect the new migration on an isolated/test database;
    verify constraints, indexes, state guards, and any rollback-safe behavior.
-3. **Startup migration:** start the app once so the configured `data.db`
+3. **Startup migration:** start the app once so the configured `data/data.db`
    receives the pending migration; preflight and `invoke` do not apply it.
    Preserve the startup diagnostics and stop the process before a local
    mutation test when that makes the evidence easier to isolate.
@@ -413,7 +413,7 @@ Run these stages in order and record evidence in `APP_CONTEXT.md`:
    dependency edits; verify the app fails clearly when an intentionally broken
    source file is present, then restore it and rerun the checks.
 8. **Handoff:** update `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, and the progressive
-   `llms.txt` document set; list the commands run and their outcomes, name known
+   `llms/llms.txt` document set; list the commands run and their outcomes, name known
    limitations, and state the next business decision. Confirm the Dashboard and
    LAN-facing documents show the same non-`Unnamed` app identity. Keep this
    evidence short and reproducible.

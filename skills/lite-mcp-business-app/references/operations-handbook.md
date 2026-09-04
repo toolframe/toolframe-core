@@ -10,8 +10,8 @@ It is also a briefing for the coding agent maintaining the business app.
 `lite-mcp` is a small, LAN-first business workspace contained in one editable
 folder. Starting the executable opens one browser dashboard for people and one
 MCP address for trusted peer agents on the same port. Business data stays in
-`data.db`; the dashboard, agent actions, database changes, working files, and
-logs live in clearly named folders beside it.
+`data/data.db`; editable source and working files remain visible, while private
+runtime state and logs stay under `.lite-mcp/`.
 
 The app is useful when a trusted team wants a quick place where:
 
@@ -38,13 +38,13 @@ Run from the packaged folder:
 ./lite-mcp
 ```
 
-`./lite-mcp serve` is the explicit equivalent. On the first online start, UV
-may download Python 3.14 and the shared dependencies into `runtime/`. The UV
-executable is selected in this order: an explicit `--uv-path` (or
-`LITE_MCP_UV`), the `uv` file beside `lite-mcp`, then `uv` on `PATH`. The
-packaged folder normally already has the sibling `uv`; an installed system UV
-is the fallback. Use the local README or `./lite-mcp --help` for current flags.
-`--offline` only works after the required Python and packages are cached.
+`./lite-mcp serve` is the explicit equivalent. On the first online start, the
+launcher downloads its pinned, CPU-matched UV into `.lite-mcp/uv`, showing a
+progress bar, transfer rate, elapsed time, and ETA. It then downloads Python
+3.14 and shared dependencies into `.lite-mcp/`. An explicit `--uv-path` (or
+`LITE_MCP_UV`) must match the pin; otherwise a supported macOS build ignores
+system UV installations. Use the local README or `./lite-mcp --help` for
+current flags. `--offline` works only after UV, Python, and packages are cached.
 
 The terminal prints several useful addresses. The first local address is for
 the same computer:
@@ -148,7 +148,7 @@ Use the executable as a startup contract:
 - Dashboard source is also validated at startup, but Streamlit reloads the
   dashboard source during a browser refresh or rerun. This is dashboard
   rerun, not MCP tool hot reload.
-- Existing startup-approved `llms.txt` and `llms/*.md` files are read again for
+- Existing startup-approved `llms/llms.txt` and `llms/*.md` files are read again for
   each request, so editing their content does not require a restart. Adding or
   renaming a linked detail file changes the startup allowlist and requires a
   complete restart. Unsafe, missing, invalid UTF-8, oversized, or unlinked
@@ -167,10 +167,9 @@ Use the JSON result when a coding agent needs a machine-readable gate. Check
 uses an isolated database snapshot, validates migration history and the
 agent-document set, resolves the real shared UV environment, loads every tool,
 and validates the dashboard and widgets. It does not mutate the configured
-`data.db`, bind a port, create server logs, or scaffold missing source. It can
-still provision managed
-runtime/dependency files, and importing trusted Python may have import-time
-side effects. Stop the running app and other database writers before checking
+`data/data.db`, bind a port, create server logs, or scaffold missing source. It
+can still provision managed runtime/dependency files, and importing trusted
+Python may have import-time side effects. Stop the running app and other database writers before checking
 a live database so it cannot change during the snapshot.
 
 For a new source file, these commands are safe and refuse to overwrite an
@@ -185,14 +184,15 @@ existing file:
 Schema history belongs in a new numbered migration authored by the primary
 development agent. The `execute_sql` fallback rejects schema changes and is
 only for bounded app-data reads/DML. Never edit, rename, or delete an
-already-applied migration. Back up the app folder, especially `data.db`, its
+already-applied migration. Back up the app folder, especially
+`data/data.db`, its
 SQLite `-wal`/`-shm` sidecars when present, `migrations/`, `tools/`,
-`dashboard/`, `workspace/`, and `logs/`, before a consequential change. Stop
-the process before copying the database or sidecars.
+`dashboard/`, `workspace/`, and `.lite-mcp/logs/`, before a consequential
+change. Stop the process before copying the database or sidecars.
 
 ## Doctor: report first, then repair
 
-Do not delete `data.db`, `runtime/`, migrations, logs, or user source as a
+Do not delete `data/data.db`, `.lite-mcp/`, migrations, or user source as a
 first response. First collect facts and preserve the failure:
 
 ```sh
@@ -203,9 +203,9 @@ first response. First collect facts and preserve the failure:
 Save the check report and the complete terminal error output. If the app has
 started, also save that date's two log files:
 
-- `logs/audit-YYYY-MM-DD.jsonl` records application changes and lifecycle
-  events;
-- `logs/mcp-YYYY-MM-DD.jsonl` records peer-agent MCP traffic.
+- `.lite-mcp/logs/audit-YYYY-MM-DD.jsonl` records application changes and
+  lifecycle events;
+- `.lite-mcp/logs/mcp-YYYY-MM-DD.jsonl` records peer-agent MCP traffic.
 
 Each line is a machine-readable JSON record intended for the coding agent doing
 the diagnosis. The files can contain database statements, submitted values,
@@ -217,7 +217,7 @@ Then classify the failure:
 | Symptom or cause | Retryable? | First safe action |
 | --- | --- | --- |
 | UV download timeout, temporary package mirror failure, or transient network I/O | Usually yes | Keep the folder, restore connectivity, then retry. Use `--offline` only when the cache is known complete. |
-| UV missing, invalid, or too old | No until fixed | Check the explicit path, the sibling `uv`, or the PATH installation; use `--help`/local README for current requirements. |
+| Managed UV missing, invalid, or wrong for this CPU | No while offline | Restore connectivity and retry the verified download, or pass an exact explicit path; preserve `.lite-mcp/` for diagnostics. |
 | Port already in use | Sometimes | Stop the other service or choose an approved port; the launcher searches its configured range, but a fully occupied range is a real failure. |
 | Database busy during a snapshot or transient disk I/O | Usually yes | Stop other writers, wait for the owner operation to finish, confirm free disk space, and retry. |
 | Migration SQL/name error, altered applied migration, checksum drift, incompatible history, or constraint failure | No | Fix the migration source or add the next migration. Do not rewrite applied history or erase the database. |
@@ -245,13 +245,13 @@ business callback, upstream service, or user input will succeed.
 
 ## What the log files contain and retain
 
-The app writes two dated log files under `logs/`. They are plain text with one
-machine-readable JSON record per line, so a coding agent can inspect them even
+The app writes two dated log files under `.lite-mcp/logs/`. They are plain text
+with one machine-readable JSON record per line, so a coding agent can inspect them even
 when the app will not start:
 
 ```text
-logs/audit-YYYY-MM-DD.jsonl
-logs/mcp-YYYY-MM-DD.jsonl
+.lite-mcp/logs/audit-YYYY-MM-DD.jsonl
+.lite-mcp/logs/mcp-YYYY-MM-DD.jsonl
 ```
 
 The MCP log records accepted peer-agent traffic in both directions, tool calls,
@@ -328,7 +328,7 @@ for the endpoint URL.
 
 ### Do edits to the agent guide need a restart?
 
-Content edits to existing approved `llms.txt` and `llms/*.md` files appear on
+Content edits to existing approved `llms/llms.txt` and `llms/*.md` files appear on
 the next request. Adding, removing, or renaming a detail file needs a restart
 because the safe file set is fixed at startup. Run `check --format json` before
 restart; `check` validates existing guide source but never creates or repairs
@@ -392,7 +392,7 @@ result before repeating.
 ### Why are logs large or sensitive?
 
 MCP and dashboard mutations are recorded for local diagnosis. Large payloads
-keep only their head and tail, but there is no secret redaction. Keep `logs/`
+keep only their head and tail, but there is no secret redaction. Keep `.lite-mcp/logs/`
 private, adjust the documented retention settings only when needed, and do
 not paste raw logs into an untrusted chat.
 

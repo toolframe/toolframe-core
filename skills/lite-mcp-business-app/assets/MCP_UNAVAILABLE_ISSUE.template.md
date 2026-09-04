@@ -63,8 +63,8 @@ paused before reading or changing a business item.
 
 - Run `./lite-mcp check --format json` in the app folder.
 - Capture complete startup/shutdown terminal output.
-- If logs exist, preserve the matching `logs/audit-YYYY-MM-DD.jsonl` and
-  `logs/mcp-YYYY-MM-DD.jsonl` files as sensitive data.
+- If logs exist, preserve the matching `.lite-mcp/logs/audit-YYYY-MM-DD.jsonl`
+  and `.lite-mcp/logs/mcp-YYYY-MM-DD.jsonl` files as sensitive data.
 - Test `/healthz` on the host first, then from the peer, and record the exact
   URL, status, and error at each hop.
 - Verify the workflow uses Streamable HTTP at the exact `/mcp` route.

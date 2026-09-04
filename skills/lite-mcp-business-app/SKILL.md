@@ -31,7 +31,7 @@ lite-mcp that a nontechnical owner can operate and another agent can inherit.
 - Treat actor names as attribution, not identity. This product is trusted-LAN,
   unauthenticated application code; a need for security boundaries triggers the
   dedicated-app escalation path.
-- Keep `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, `llms.txt`, and the linked `llms/`
+- Keep `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, `llms/llms.txt`, and the linked `llms/`
   documents aligned with migrations, tools, dashboard behavior, and tests in
   the same change. The `llms` files are a curated LAN-facing projection, not a
   second source of business truth.
@@ -86,7 +86,7 @@ unresolved business choices are visible rather than buried in implementation.
 ## 3. Implement one vertical business loop
 
 Build in dependency order: migration, private domain/storage helpers, a small
-Business RPC surface, Streamlit widgets, then the progressive `llms.txt` agent
+Business RPC surface, Streamlit widgets, then the progressive `llms/llms.txt` agent
 guide. Use the binary's scaffold commands where they apply; inspect their
 generated file before filling it. Keep one published tool per public tool file
 and place shared support behind private underscore-prefixed modules.
@@ -163,7 +163,7 @@ do not invent implementation work.
 ## Conditional references
 
 - Read [development-handbook.md](references/development-handbook.md) for any
-  schema, tool, widget, `llms.txt`, or app-document change.
+  schema, tool, widget, `llms/llms.txt`, or app-document change.
 - Read [job-domain-model.md](references/job-domain-model.md) only for queued,
   scheduled, claimed, leased, retried, or human-reviewed agent work.
 - Read [operations-handbook.md](references/operations-handbook.md) for startup,

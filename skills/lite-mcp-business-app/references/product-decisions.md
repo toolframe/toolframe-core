@@ -303,7 +303,7 @@ recommendation, answer, and rationale before implementation.
 - **Question:** Should users assemble Python services and dependencies, or hand
   an agent one editable folder with a self-contained runtime contract?
 - **Recommendation:** Keep one Rust launcher, one UV-managed Python process,
-  Python 3.14, one port, SQLite `data.db`, and editable `migrations/`,
+  Python 3.14, one port, SQLite `data/data.db`, and editable `migrations/`,
   `tools/`, and `dashboard/`; resolve/use the bundled or available UV path.
 - **Product-owner answer:** Prefer the portable one-folder experience and one
   process; no extra service, SSE, stdio, or MCP hot reload.
@@ -359,7 +359,7 @@ recommendation, answer, and rationale before implementation.
 
 ### Q30 — What is the source of truth at handoff?
 
-- **Question:** May an agent edit applied migrations, patch `data.db` silently,
+- **Question:** May an agent edit applied migrations, patch `data/data.db` silently,
   or update only generated/package files to get a green result?
 - **Recommendation:** Preserve applied migration history; add the next
   contiguous migration; keep source files canonical; reconcile docs, code,
@@ -406,8 +406,9 @@ recommendation, answer, and rationale before implementation.
 - **Question:** Should every runtime and business detail live in one root
   document, or should the app expose a small `/llms.txt` index with linked
   detail pages that a peer reads only when relevant?
-- **Recommendation:** Follow the progressive llms.txt shape: a concise root
-  index at `/llms.txt` and editable app-specific documents below `/llms/` for
+- **Recommendation:** Follow the progressive llms.txt shape: a concise source
+  index at `llms/llms.txt`, served at `/llms.txt`, and editable app-specific
+  documents below `/llms/` for
   the agent guide, capabilities, context, workflow, and operations.
 - **Product-owner answer:** Use the subpath approach. Ship a default template
   like tools and Dashboard source, then let the coding agent adapt it to the
@@ -455,7 +456,7 @@ recommendation, answer, and rationale before implementation.
 
 ## Round 11 — database adapter and schema authority (Q36–Q37)
 
-### Q36 — How should MCP tools access `data.db`?
+### Q36 — How should MCP tools access `data/data.db`?
 
 - **Question:** Should each Python tool import `sqlite3`, read `LITE_MCP_DB`,
   and create its own connection, or should it consume database access supplied

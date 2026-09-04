@@ -179,7 +179,7 @@
         "The schema, tools, widget, and local docs use visitor-log language.",
         "The MCP surface exposes only intent-shaped business queries or commands required by the visitor workflow; it does not mirror visitor tables as generic CRUD tools.",
         "The agent still applies migration, parameterization, validation, check, startup, LAN, and escalation rules.",
-        "The chosen or explicitly provisional app name replaces Unnamed consistently in the Dashboard, APP_CONTEXT.md, llms.txt, and llms/context.md while Lite MCP remains the framework name."
+        "The chosen or explicitly provisional app name replaces Unnamed consistently in the Dashboard, APP_CONTEXT.md, llms/llms.txt, and llms/context.md while Lite MCP remains the framework name."
       ]
     },
     {
@@ -230,6 +230,19 @@
       ]
     }
   ],
+  "runtime_layout": [
+    {
+      "id": "explain-current-data-and-runtime-layout",
+      "prompt": "Show me where this lite-mcp app keeps its database, LAN guide, UV runtime, Python cache, and logs after the first start.",
+      "assertions": [
+        "The business database is <executable-root>/data/data.db.",
+        "The editable discovery index is <executable-root>/llms/llms.txt while its public route remains /llms.txt, and the other direct Markdown documents stay in the same llms directory.",
+        "Private UV, Python, bytecode cache, dependency cache, generated core, manifests, environments, and logs stay under <executable-root>/.lite-mcp/.",
+        "When --uv-path is omitted and the managed UV is absent or invalid, supported macOS builds download the pinned CPU-matched UV with visible progress and ETA, verify the archive and executable checksums, and install it atomically.",
+        "Offline mode requires the verified managed UV and other runtime dependencies to exist already."
+      ]
+    }
+  ],
   "database_adapter": [
     {
       "id": "shared-data-adapter-and-schema-boundary",
@@ -264,7 +277,7 @@
       "assertions": [
         "A freshly scaffolded dashboard uses Unnamed as its browser title and visible heading.",
         "The fresh dashboard visibly explains that Unnamed must be replaced with the app's business name.",
-        "The default llms.txt H1 identifies the application as Unnamed and describes Lite MCP only as its framework.",
+        "The default llms/llms.txt H1 identifies the application as Unnamed and describes Lite MCP only as its framework.",
         "Existing Dashboard and llms source remain user-owned and are never overwritten during startup."
       ]
     }
@@ -273,8 +286,8 @@
     {
       "id": "serve-editable-llms-discovery",
       "assertions": [
-        "A normal server start creates the complete editable <executable-root>/llms.txt plus <executable-root>/llms document set only when both are absent; existing source is never repaired or overwritten, and a partial pair fails clearly.",
-        "The root source <executable-root>/llms.txt follows the llms.txt v2 H1, summary, and H2 link-list shape while keeping details in focused direct Markdown subdocuments.",
+        "A normal server start creates the complete editable <executable-root>/llms tree only when that directory is absent; an existing tree is never repaired or overwritten, and a missing index fails clearly.",
+        "The source <executable-root>/llms/llms.txt follows the llms.txt v2 H1, summary, and H2 link-list shape while keeping details in focused direct Markdown siblings.",
         "GET /llms.txt and the allowlisted /llms/<name>.md routes serve current source bytes with bounded Markdown-safe responses before the Streamlit root mount.",
         "Unknown names, traversal, directories, symlinks, non-UTF-8 content, and oversized documents never expose filesystem content and produce a clear startup or HTTP failure.",
         "The index uses same-origin links so a peer can derive /mcp from any current LAN host and port without a baked-in address.",

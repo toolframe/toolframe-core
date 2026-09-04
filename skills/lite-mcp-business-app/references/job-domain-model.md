@@ -20,7 +20,7 @@ The current product contract is:
 - One uv-managed Python runtime and process serves FastAPI, Streamlit, and
   FastMCP. MCP is Streamable HTTP at `/mcp`; SSE and stdio are not supported.
 - The app binds for LAN use without authentication. Treat every tool and
-  dashboard mutation as trusted-code access. `data.db` is the only supported
+  dashboard mutation as trusted-code access. `data/data.db` is the only supported
   database in this MVP.
 - `tools/execute_sql.py` is a trusted-LAN, data-only fallback and shared-adapter
   reference. It rejects schema/runtime-internal changes. Business agents use
