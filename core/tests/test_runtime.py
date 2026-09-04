@@ -133,7 +133,9 @@ class RuntimeTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(runtime.validate_llms_source(index_path, llms_dir), ["overview.md"])
+        self.assertEqual(
+            runtime.validate_llms_source(index_path, llms_dir), ["overview.md"]
+        )
 
     def test_validate_llms_source_rejects_unlinked_or_unsafe_documents(self):
         index_path, llms_dir = self.write_llms_source(
@@ -503,7 +505,9 @@ def second() -> str:
         root_response = client.get("/llms.txt")
         self.assertEqual(root_response.status_code, 200)
         self.assertEqual(root_response.content, llms_file.read_bytes())
-        self.assertEqual(root_response.headers["content-type"], "text/markdown; charset=utf-8")
+        self.assertEqual(
+            root_response.headers["content-type"], "text/markdown; charset=utf-8"
+        )
         self.assertEqual(root_response.headers["cache-control"], "no-store")
         self.assertEqual(root_response.headers["x-content-type-options"], "nosniff")
 
@@ -520,15 +524,21 @@ def second() -> str:
 
         detail_response = client.get("/llms/overview.md")
         self.assertEqual(detail_response.status_code, 200)
-        self.assertEqual(detail_response.headers["link"], '</llms.txt>; rel="describedby"')
+        self.assertEqual(
+            detail_response.headers["link"], '</llms.txt>; rel="describedby"'
+        )
         self.assertEqual(detail_response.content, b"# Overview\n\nDetails.\n")
 
         (llms_dir / "overview.md").write_bytes(b"# Overview\n\nChanged.\n")
-        self.assertEqual(client.get("/llms/overview.md").content, b"# Overview\n\nChanged.\n")
+        self.assertEqual(
+            client.get("/llms/overview.md").content, b"# Overview\n\nChanged.\n"
+        )
         head_response = client.head("/llms.txt")
         self.assertEqual(head_response.status_code, 200)
         self.assertEqual(head_response.content, b"")
-        self.assertEqual(head_response.headers["content-type"], "text/markdown; charset=utf-8")
+        self.assertEqual(
+            head_response.headers["content-type"], "text/markdown; charset=utf-8"
+        )
         self.assertEqual(client.get("/llms/unknown.md").status_code, 404)
         self.assertEqual(client.get("/llms/%2E%2E/outside.md").status_code, 404)
         self.assertEqual(client.get("/llms").status_code, 404)
@@ -539,9 +549,7 @@ def second() -> str:
         self.assertEqual(client.get("/llms.txt/").status_code, 404)
         self.assertEqual(client.get("/llms.txt/extra").status_code, 404)
         self.assertEqual(client.request("PROPFIND", "/llms.txt").status_code, 405)
-        self.assertEqual(
-            client.request("PROPFIND", "/llms.txt/extra").status_code, 404
-        )
+        self.assertEqual(client.request("PROPFIND", "/llms.txt/extra").status_code, 404)
         self.assertEqual(client.request("FOO", "/llms/overview.md").status_code, 404)
 
         (llms_dir / "overview.md").write_bytes(b"# Overview\n\xff")

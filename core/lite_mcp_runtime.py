@@ -495,10 +495,7 @@ class LlmsMethodGuardMiddleware:
         path = str(scope.get("path", ""))
         index = path == "/llms.txt"
         discovery_path = (
-            index
-            or path.startswith("/llms.txt/")
-            or path == "/llms"
-            or path.startswith("/llms/")
+            index or path == "/llms" or path.startswith(("/llms.txt/", "/llms/"))
         )
         if not discovery_path:
             await self.app(scope, receive, send)

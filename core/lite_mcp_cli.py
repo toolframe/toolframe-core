@@ -125,7 +125,7 @@ def _invoke(arguments: argparse.Namespace) -> int:
         raise RuntimeError("--tool is required for invoke")
     payload = json.load(sys.stdin)
     if not isinstance(payload, dict):
-        raise ValueError("tool arguments must be a JSON object")
+        raise TypeError("tool arguments must be a JSON object")
     with redirect_stdout(sys.stderr):
         database = Path(os.environ["LITE_MCP_DB"])
         _configure_tool_support(database, arguments.workspace)
@@ -161,7 +161,9 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except SystemExit:
         raise
-    except BaseException as error:
+    # This process boundary must turn interrupts and other fatal failures into
+    # the same machine-readable envelope as ordinary exceptions.
+    except BaseException as error:  # noqa: BLE001
         _emit(
             {
                 "ok": False,

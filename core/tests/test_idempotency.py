@@ -76,7 +76,9 @@ class IdempotencyTests(unittest.TestCase):
         self.assertEqual(first.original_operation_id, replay.original_operation_id)
         with closing(sqlite3.connect(self.database_path)) as connection:
             self.assertEqual(
-                connection.execute("SELECT count(*) FROM business_events").fetchone()[0],
+                connection.execute("SELECT count(*) FROM business_events").fetchone()[
+                    0
+                ],
                 1,
             )
             self.assertEqual(
@@ -154,7 +156,9 @@ class IdempotencyTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "idempotency_result_too_large")
         with closing(sqlite3.connect(self.database_path)) as connection:
             self.assertEqual(
-                connection.execute("SELECT count(*) FROM business_events").fetchone()[0],
+                connection.execute("SELECT count(*) FROM business_events").fetchone()[
+                    0
+                ],
                 0,
             )
             self.assertEqual(
@@ -206,7 +210,9 @@ class IdempotencyTests(unittest.TestCase):
                 self.assertFalse(raised.exception.retryable)
         with closing(sqlite3.connect(self.database_path)) as connection:
             self.assertEqual(
-                connection.execute("SELECT count(*) FROM business_events").fetchone()[0],
+                connection.execute("SELECT count(*) FROM business_events").fetchone()[
+                    0
+                ],
                 0,
             )
 
@@ -252,9 +258,7 @@ class IdempotencyTests(unittest.TestCase):
             )
             return {"reindexed": True}
 
-        result = self.store.run_once(
-            "events.create", "business-reindex", {}, mutation
-        )
+        result = self.store.run_once("events.create", "business-reindex", {}, mutation)
 
         self.assertEqual(result.value, {"reindexed": True})
         self.assertFalse(result.replayed)
@@ -295,7 +299,9 @@ class IdempotencyTests(unittest.TestCase):
     def test_concurrent_fresh_connections_execute_once_across_25_repetitions(self):
         for repetition in range(25):
             with self.subTest(repetition=repetition):
-                database_path = Path(self.temporary_directory.name) / f"race-{repetition}.db"
+                database_path = (
+                    Path(self.temporary_directory.name) / f"race-{repetition}.db"
+                )
                 self._create_database(database_path)
                 store = idempotency.IdempotencyStore(database_path)
                 start = threading.Barrier(2)

@@ -170,7 +170,9 @@ class CliRunnerTests(unittest.TestCase):
         self.assertIn("widget import noise", noise.getvalue())
         self.assertNotIn("noise", output.getvalue())
 
-        self.assertEqual(json.loads(output.getvalue())["agentDocuments"], ["overview.md"])
+        self.assertEqual(
+            json.loads(output.getvalue())["agentDocuments"], ["overview.md"]
+        )
 
     def test_parser_requires_llms_source_arguments(self):
         with self.assertRaises(SystemExit):
@@ -239,7 +241,7 @@ class CliRunnerTests(unittest.TestCase):
     def test_invoke_does_not_validate_llms_source(self):
         output = io.StringIO()
         with (
-            patch.dict(os.environ, {"LITE_MCP_DB": str(self.root / "data.db")} ),
+            patch.dict(os.environ, {"LITE_MCP_DB": str(self.root / "data.db")}),
             patch("sys.stdin", io.StringIO('{"value":"hello"}')),
             redirect_stdout(output),
             redirect_stderr(io.StringIO()),
