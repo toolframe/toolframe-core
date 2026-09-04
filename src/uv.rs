@@ -1,28 +1,46 @@
 use std::{
     env, fs,
-    fs::OpenOptions,
-    io::{IsTerminal, Read, Write},
+    io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use flate2::read::GzDecoder;
+use reqwest::{Client, redirect::Policy};
 use sha2::{Digest, Sha256};
-use tokio::{io::AsyncReadExt, process::Command, time};
+use tokio::{process::Command, time};
 use tracing::info;
+use zip::ZipArchive;
+
+#[cfg(unix)]
+use std::fs::OpenOptions;
 
 const RELEASE_MANIFEST: &str = include_str!("../uv-release-manifest.txt");
 const UV_RELEASE_BASE_URL: &str = "https://github.com/astral-sh/uv/releases/download";
-const CURL_PATH: &str = "/usr/bin/curl";
-const TAR_PATH: &str = "/usr/bin/tar";
 const MINIMUM_UV_VERSION: (u64, u64, u64) = (0, 12, 8);
 pub const MINIMUM_MACOS_VERSION: &str = "12.0";
 const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
-const CONTENT_LENGTH_TIMEOUT: Duration = Duration::from_secs(30);
-const EXTRACTION_TIMEOUT: Duration = Duration::from_secs(60);
+const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_EXECUTABLE_BYTES: u64 = 256 * 1024 * 1024;
 const PROGRESS_WIDTH: usize = 30;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArchiveKind {
+    TarGz,
+    Zip,
+}
+
+impl ArchiveKind {
+    const fn extension(self) -> &'static str {
+        match self {
+            Self::TarGz => "tar.gz",
+            Self::Zip => "zip",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UvRelease {
@@ -33,8 +51,23 @@ struct UvRelease {
 }
 
 impl UvRelease {
+    fn archive_kind(&self) -> ArchiveKind {
+        if self.target.ends_with("-pc-windows-msvc") {
+            ArchiveKind::Zip
+        } else {
+            ArchiveKind::TarGz
+        }
+    }
+
     fn archive_name(&self) -> String {
-        format!("uv-{}.tar.gz", self.target)
+        format!("uv-{}.{}", self.target, self.archive_kind().extension())
+    }
+
+    fn archive_member(&self) -> String {
+        match self.archive_kind() {
+            ArchiveKind::TarGz => format!("uv-{}/uv", self.target),
+            ArchiveKind::Zip => "uv.exe".to_owned(),
+        }
     }
 
     fn download_url(&self) -> String {
@@ -246,7 +279,21 @@ async fn download_and_install(
     destination: &Path,
 ) -> Result<()> {
     let url = release.download_url();
-    let expected_size = probe_content_length(&url).await;
+    let client = Client::builder()
+        .https_only(true)
+        .redirect(Policy::limited(10))
+        .connect_timeout(Duration::from_secs(30))
+        .user_agent(concat!("lite-mcp/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("could not initialize the built-in HTTPS client")?;
+    let mut response = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("could not download {url}"))?
+        .error_for_status()
+        .with_context(|| format!("UV download returned an error for {url}"))?;
+    let expected_size = response.content_length();
     if expected_size.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
         bail!(
             "UV archive is larger than the {} MiB safety limit",
@@ -256,7 +303,7 @@ async fn download_and_install(
 
     let mut archive = tempfile::Builder::new()
         .prefix(".lite-mcp-uv-archive-")
-        .suffix(".tar.gz")
+        .suffix(&format!(".{}", release.archive_kind().extension()))
         .tempfile_in(runtime_root)
         .with_context(|| {
             format!(
@@ -265,54 +312,20 @@ async fn download_and_install(
             )
         })?;
 
-    let mut child = Command::new(CURL_PATH)
-        .args([
-            "--fail",
-            "--location",
-            "--silent",
-            "--show-error",
-            "--proto",
-            "=https",
-            "--tlsv1.2",
-            "--retry",
-            "3",
-            "--retry-all-errors",
-            "--connect-timeout",
-            "30",
-            "--speed-limit",
-            "1024",
-            "--speed-time",
-            "30",
-            &url,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .kill_on_drop(true)
-        .spawn()
-        .with_context(|| format!("could not start the built-in downloader at {CURL_PATH}"))?;
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow!("could not read the UV download stream"))?;
     let mut digest = Sha256::new();
     let mut downloaded = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
     let mut progress = DownloadProgress::new(
         format!("uv {} ({})", release.version, release.target),
         expected_size,
     );
 
-    loop {
-        let count = stdout
-            .read(&mut buffer)
-            .await
-            .context("could not read the UV download stream")?;
-        if count == 0 {
-            break;
-        }
+    while let Some(chunk) = time::timeout(DOWNLOAD_STALL_TIMEOUT, response.chunk())
+        .await
+        .context("UV download stalled for 30 seconds")?
+        .context("could not read the UV download stream")?
+    {
         downloaded = downloaded
-            .checked_add(count as u64)
+            .checked_add(chunk.len() as u64)
             .ok_or_else(|| anyhow!("UV download size overflowed"))?;
         if downloaded > MAX_ARCHIVE_BYTES {
             bail!(
@@ -321,18 +334,10 @@ async fn download_and_install(
             );
         }
         archive
-            .write_all(&buffer[..count])
+            .write_all(&chunk)
             .context("could not write the UV download")?;
-        digest.update(&buffer[..count]);
+        digest.update(&chunk);
         progress.update(downloaded);
-    }
-
-    let status = child
-        .wait()
-        .await
-        .context("could not wait for UV download")?;
-    if !status.success() {
-        bail!("UV download failed with {status}");
     }
     archive
         .as_file_mut()
@@ -349,55 +354,8 @@ async fn download_and_install(
         );
     }
 
-    let extraction = tempfile::Builder::new()
-        .prefix(".lite-mcp-uv-extract-")
-        .tempdir_in(runtime_root)
-        .with_context(|| {
-            format!(
-                "could not create a UV extraction directory in {}",
-                runtime_root.display()
-            )
-        })?;
-    let archive_member = format!("uv-{}/uv", release.target);
-    let extraction_output = time::timeout(
-        EXTRACTION_TIMEOUT,
-        Command::new(TAR_PATH)
-            .arg("-xzf")
-            .arg(archive.path())
-            .arg("-C")
-            .arg(extraction.path())
-            .arg(&archive_member)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .context("timed out extracting the verified UV archive")?
-    .with_context(|| format!("could not start the built-in archive reader at {TAR_PATH}"))?;
-    if !extraction_output.status.success() {
-        bail!(
-            "could not extract UV from the verified archive ({}): {}",
-            extraction_output.status,
-            String::from_utf8_lossy(&extraction_output.stderr).trim()
-        );
-    }
-
-    let extracted = extraction.path().join(&archive_member);
-    let metadata = fs::symlink_metadata(&extracted).with_context(|| {
-        format!(
-            "verified UV archive did not contain {}",
-            extracted.display()
-        )
-    })?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        bail!(
-            "verified UV archive member {} is not a regular file",
-            extracted.display()
-        );
-    }
-    let executable_sha256 = sha256_file(&extracted)?;
+    let extracted = extract_uv(release, archive.path(), runtime_root)?;
+    let executable_sha256 = sha256_file(extracted.path())?;
     if executable_sha256 != release.executable_sha256 {
         bail!(
             "extracted UV executable checksum mismatch: expected {}, got {}",
@@ -406,7 +364,7 @@ async fn download_and_install(
         );
     }
 
-    publish_executable(&extracted, runtime_root, destination)?;
+    publish_executable(extracted.path(), runtime_root, destination)?;
     info!(
         target: "lite_mcp::uv",
         version = %release.version,
@@ -417,50 +375,86 @@ async fn download_and_install(
     Ok(())
 }
 
-async fn probe_content_length(url: &str) -> Option<u64> {
-    let output = time::timeout(
-        CONTENT_LENGTH_TIMEOUT,
-        Command::new(CURL_PATH)
-            .args([
-                "--fail",
-                "--location",
-                "--silent",
-                "--show-error",
-                "--head",
-                "--proto",
-                "=https",
-                "--tlsv1.2",
-                "--connect-timeout",
-                "15",
-                url,
-            ])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    output
-        .status
-        .success()
-        .then(|| parse_content_length(&output.stdout))
-        .flatten()
+fn extract_uv(
+    release: &UvRelease,
+    archive_path: &Path,
+    runtime_root: &Path,
+) -> Result<tempfile::NamedTempFile> {
+    let mut extracted = tempfile::Builder::new()
+        .prefix(".lite-mcp-uv-extract-")
+        .tempfile_in(runtime_root)
+        .with_context(|| {
+            format!(
+                "could not create a UV extraction file in {}",
+                runtime_root.display()
+            )
+        })?;
+    let member = release.archive_member();
+    match release.archive_kind() {
+        ArchiveKind::TarGz => {
+            let archive = fs::File::open(archive_path).with_context(|| {
+                format!("could not open verified archive {}", archive_path.display())
+            })?;
+            let mut archive = tar::Archive::new(GzDecoder::new(archive));
+            let mut found = false;
+            for entry in archive
+                .entries()
+                .context("could not read the verified UV tar archive")?
+            {
+                let mut entry = entry.context("could not read a verified UV tar entry")?;
+                if entry
+                    .path()
+                    .context("verified UV archive contained an invalid path")?
+                    != Path::new(&member)
+                {
+                    continue;
+                }
+                if found {
+                    bail!("verified UV archive contains duplicate member {member}");
+                }
+                if !entry.header().entry_type().is_file() {
+                    bail!("verified UV archive member {member} is not a regular file");
+                }
+                copy_bounded(&mut entry, extracted.as_file_mut(), &member)?;
+                found = true;
+            }
+            if !found {
+                bail!("verified UV archive did not contain {member}");
+            }
+        }
+        ArchiveKind::Zip => {
+            let archive = fs::File::open(archive_path).with_context(|| {
+                format!("could not open verified archive {}", archive_path.display())
+            })?;
+            let mut archive =
+                ZipArchive::new(archive).context("could not read the verified UV zip archive")?;
+            let mut entry = archive
+                .by_name(&member)
+                .with_context(|| format!("verified UV archive did not contain {member}"))?;
+            if !entry.is_file() {
+                bail!("verified UV archive member {member} is not a regular file");
+            }
+            copy_bounded(&mut entry, extracted.as_file_mut(), &member)?;
+        }
+    }
+    extracted
+        .as_file_mut()
+        .sync_all()
+        .context("could not sync the extracted UV executable")?;
+    Ok(extracted)
 }
 
-fn parse_content_length(headers: &[u8]) -> Option<u64> {
-    String::from_utf8_lossy(headers)
-        .lines()
-        .filter_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.trim()
-                .eq_ignore_ascii_case("content-length")
-                .then(|| value.trim().parse::<u64>().ok())
-                .flatten()
-                .filter(|value| *value > 0)
-        })
-        .next_back()
+fn copy_bounded(reader: &mut impl Read, writer: &mut impl Write, member: &str) -> Result<()> {
+    let mut limited = reader.take(MAX_EXECUTABLE_BYTES + 1);
+    let written = io::copy(&mut limited, writer)
+        .with_context(|| format!("could not extract verified UV archive member {member}"))?;
+    if written > MAX_EXECUTABLE_BYTES {
+        bail!(
+            "verified UV archive member {member} exceeds the {} MiB safety limit",
+            MAX_EXECUTABLE_BYTES / 1024 / 1024
+        );
+    }
+    Ok(())
 }
 
 fn publish_executable(source: &Path, runtime_root: &Path, destination: &Path) -> Result<()> {
@@ -759,9 +753,28 @@ fn release_for_current_target() -> Result<Option<UvRelease>> {
 }
 
 pub fn current_target() -> Option<&'static str> {
-    match (env::consts::OS, env::consts::ARCH) {
-        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
-        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+    let target_environment = if cfg!(target_env = "musl") {
+        "musl"
+    } else if cfg!(target_env = "gnu") {
+        "gnu"
+    } else if cfg!(target_env = "msvc") {
+        "msvc"
+    } else {
+        ""
+    };
+    target_for(env::consts::OS, env::consts::ARCH, target_environment)
+}
+
+fn target_for(os: &str, architecture: &str, target_environment: &str) -> Option<&'static str> {
+    match (os, architecture, target_environment) {
+        ("macos", "aarch64", _) => Some("aarch64-apple-darwin"),
+        ("macos", "x86_64", _) => Some("x86_64-apple-darwin"),
+        ("linux", "aarch64", "musl") => Some("aarch64-unknown-linux-musl"),
+        ("linux", "x86_64", "musl") => Some("x86_64-unknown-linux-musl"),
+        ("linux", "aarch64", _) => Some("aarch64-unknown-linux-gnu"),
+        ("linux", "x86_64", _) => Some("x86_64-unknown-linux-gnu"),
+        ("windows", "aarch64", _) => Some("aarch64-pc-windows-msvc"),
+        ("windows", "x86_64", _) => Some("x86_64-pc-windows-msvc"),
         _ => None,
     }
 }
@@ -828,7 +841,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manifest_pins_both_macos_architectures() {
+    fn manifest_pins_supported_platforms() {
         let arm = release_for_target("aarch64-apple-darwin").expect("read arm release");
         assert_eq!(arm.version, "0.12.8");
         assert_eq!(
@@ -854,7 +867,49 @@ mod tests {
             intel.executable_sha256,
             "c7dd0293072831b718924b82f390bb2d179666cec739118eb781a755c5504334"
         );
+
+        for target in [
+            "aarch64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            "aarch64-unknown-linux-musl",
+            "x86_64-unknown-linux-musl",
+            "aarch64-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+        ] {
+            let release = release_for_target(target).expect("read portable release");
+            assert_eq!(release.version, "0.12.8");
+            assert_eq!(release.archive_sha256.len(), 64);
+            assert_eq!(release.executable_sha256.len(), 64);
+        }
+        let windows = release_for_target("x86_64-pc-windows-msvc").expect("read Windows release");
+        assert_eq!(windows.archive_kind(), ArchiveKind::Zip);
+        assert_eq!(windows.archive_member(), "uv.exe");
+        assert_eq!(
+            windows.download_url(),
+            "https://github.com/astral-sh/uv/releases/download/0.12.8/uv-x86_64-pc-windows-msvc.zip"
+        );
         assert!(release_for_target("powerpc-apple-darwin").is_err());
+    }
+
+    #[test]
+    fn selects_uv_asset_for_supported_compile_targets() {
+        assert_eq!(
+            target_for("macos", "aarch64", ""),
+            Some("aarch64-apple-darwin")
+        );
+        assert_eq!(
+            target_for("linux", "x86_64", "gnu"),
+            Some("x86_64-unknown-linux-gnu")
+        );
+        assert_eq!(
+            target_for("linux", "aarch64", "musl"),
+            Some("aarch64-unknown-linux-musl")
+        );
+        assert_eq!(
+            target_for("windows", "x86_64", "gnu"),
+            Some("x86_64-pc-windows-msvc")
+        );
+        assert_eq!(target_for("freebsd", "x86_64", ""), None);
     }
 
     #[test]
@@ -870,10 +925,53 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_final_nonzero_content_length_after_redirects() {
-        let headers = b"HTTP/2 302\r\ncontent-length: 0\r\n\r\nHTTP/2 200\r\nContent-Length: 16657135\r\n\r\n";
-        assert_eq!(parse_content_length(headers), Some(16_657_135));
-        assert_eq!(parse_content_length(b"HTTP/2 200\r\n\r\n"), None);
+    fn extracts_only_the_uv_executable_from_tar_gz() {
+        use flate2::{Compression, write::GzEncoder};
+
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let archive_path = directory.path().join("uv.tar.gz");
+        let file = fs::File::create(&archive_path).expect("create tar archive");
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let payload = b"portable tar uv";
+        let mut header = tar::Header::new_gnu();
+        header.set_path("uv-x86_64-unknown-linux-gnu/uv").unwrap();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive
+            .append(&header, &payload[..])
+            .expect("append uv member");
+        let encoder = archive.into_inner().expect("finish tar archive");
+        encoder.finish().expect("finish gzip archive");
+
+        let release = release_for_target("x86_64-unknown-linux-gnu").expect("read Linux release");
+        let extracted =
+            extract_uv(&release, &archive_path, directory.path()).expect("extract tar uv");
+        assert_eq!(fs::read(extracted.path()).unwrap(), payload);
+    }
+
+    #[test]
+    fn extracts_uv_executable_from_windows_zip() {
+        use zip::write::SimpleFileOptions;
+
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let archive_path = directory.path().join("uv.zip");
+        let file = fs::File::create(&archive_path).expect("create zip archive");
+        let mut archive = zip::ZipWriter::new(file);
+        archive
+            .start_file(
+                "uv.exe",
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
+            )
+            .expect("start uv member");
+        archive.write_all(b"portable windows uv").unwrap();
+        archive.finish().expect("finish zip archive");
+
+        let release = release_for_target("x86_64-pc-windows-msvc").expect("read Windows release");
+        let extracted =
+            extract_uv(&release, &archive_path, directory.path()).expect("extract zip uv");
+        assert_eq!(fs::read(extracted.path()).unwrap(), b"portable windows uv");
     }
 
     #[test]
