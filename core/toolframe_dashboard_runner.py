@@ -18,8 +18,7 @@ class DashboardExecutionError(RuntimeError):
 
 
 def main() -> None:
-    dashboard_dir = _dashboard_directory()
-    app_path = dashboard_dir / "app.py"
+    dashboard_dir, app_path = _dashboard_source()
     namespace: dict[str, Any] = {
         "__name__": "__main__",
         "__file__": str(app_path),
@@ -60,17 +59,29 @@ def main() -> None:
 
 
 def _dashboard_directory() -> Path:
-    value = os.environ.get("TOOLFRAME_DASHBOARD_DIR", "").strip()
-    if not value:
-        raise RuntimeError("TOOLFRAME_DASHBOARD_DIR is required")
-    path = Path(value)
+    app_value = os.environ.get("TOOLFRAME_APP_DIR", "").strip()
+    if app_value:
+        path = Path(app_value)
+        source_name = "TOOLFRAME_APP_DIR"
+    else:
+        dashboard_value = os.environ.get("TOOLFRAME_DASHBOARD_DIR", "").strip()
+        if not dashboard_value:
+            raise RuntimeError("TOOLFRAME_APP_DIR is required")
+        path = Path(dashboard_value)
+        source_name = "TOOLFRAME_DASHBOARD_DIR"
     if not path.is_absolute():
-        raise RuntimeError("TOOLFRAME_DASHBOARD_DIR must be an absolute path")
+        raise RuntimeError(f"{source_name} must be an absolute path")
     if not path.is_dir() or path.is_symlink():
-        raise RuntimeError(
-            "TOOLFRAME_DASHBOARD_DIR must name a directory, not a symlink"
-        )
+        raise RuntimeError(f"{source_name} must name a directory, not a symlink")
     return path
+
+
+def _dashboard_source() -> tuple[Path, Path]:
+    directory = _dashboard_directory()
+    filename = (
+        "dashboard.py" if os.environ.get("TOOLFRAME_APP_DIR", "").strip() else "app.py"
+    )
+    return directory, directory / filename
 
 
 def _is_streamlit_control_exception(error: BaseException) -> bool:

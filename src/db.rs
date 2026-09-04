@@ -14,6 +14,8 @@ use rusqlite::{
 };
 use sha2::{Digest, Sha256};
 
+use crate::domains;
+
 const BOOTSTRAP_FILENAME: &str = "0000_bootstrap.sql";
 const LEDGER_TABLE: &str = "_toolframe_migrations";
 const IDEMPOTENCY_TABLE: &str = "_toolframe_idempotency";
@@ -462,58 +464,15 @@ fn discover_migrations(directory: &Path) -> Result<Vec<Migration>> {
 }
 
 fn discover_domain_migrations(domains_dir: &Path) -> Result<Vec<Migration>> {
-    require_regular_directory(domains_dir, "domains")?;
-
-    let mut entries = fs::read_dir(domains_dir)
-        .with_context(|| {
-            format!(
-                "could not read domains directory {} (phase=migration-discovery, retryable=true)",
-                domains_dir.display()
-            )
-        })?
-        .collect::<std::io::Result<Vec<_>>>()
-        .with_context(|| {
-            format!(
-                "could not inspect entries in domains directory {} (phase=migration-discovery, retryable=true)",
-                domains_dir.display()
-            )
-        })?;
-    entries.sort_by_key(fs::DirEntry::file_name);
-
     let mut migrations = Vec::new();
-    for entry in entries {
-        let domain_name = entry.file_name().into_string().map_err(|_| {
-            anyhow!(
-                "domains directory {} contains a non-UTF-8 entry (phase=migration-discovery, retryable=false)",
-                domains_dir.display()
-            )
-        })?;
-        if domain_name.starts_with(['.', '_']) {
-            continue;
-        }
-        if let Err(error) = validate_domain_name(&domain_name) {
-            bail!(
-                "invalid domain {} (phase=migration-discovery, retryable=false): {error}",
-                entry.path().display()
-            );
-        }
-
-        let file_type = entry.file_type().with_context(|| {
-            format!(
-                "could not inspect domain {} (phase=migration-discovery, retryable=true)",
-                entry.path().display()
-            )
-        })?;
-        if file_type.is_symlink() || !file_type.is_dir() {
-            bail!(
-                "domain {} must be a direct regular directory, not a symlink or file (phase=migration-discovery, retryable=false)",
-                entry.path().display()
-            );
-        }
-
-        require_regular_file(&entry.path().join("__init__.py"), "domain public API")?;
-        let migration_dir = entry.path().join("migrations");
-        migrations.extend(discover_migrations_in(&migration_dir)?);
+    let domain_layouts = domains::discover(domains_dir).map_err(|error| {
+        anyhow!(
+            "domain layout validation failed (phase=migration-discovery, path={}, retryable=false): {error:#}",
+            domains_dir.display()
+        )
+    })?;
+    for domain in domain_layouts {
+        migrations.extend(discover_migrations_in(&domain.migrations)?);
     }
 
     validate_migration_sequence(&mut migrations, domains_dir)?;
@@ -653,74 +612,6 @@ fn require_regular_directory(path: &Path, label: &str) -> Result<()> {
             "{label} directory {} must be a regular directory, not a symlink (phase=migration-discovery, retryable=false)",
             path.display()
         );
-    }
-    Ok(())
-}
-
-fn require_regular_file(path: &Path, label: &str) -> Result<()> {
-    let metadata = fs::symlink_metadata(path).with_context(|| {
-        format!(
-            "could not inspect {label} file {} (phase=migration-discovery, retryable=true)",
-            path.display()
-        )
-    })?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        bail!(
-            "{label} file {} must be a regular file, not a symlink or directory (phase=migration-discovery, retryable=false)",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-fn validate_domain_name(name: &str) -> Result<()> {
-    let bytes = name.as_bytes();
-    if bytes.is_empty()
-        || !bytes[0].is_ascii_lowercase()
-        || !bytes
-            .iter()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
-        || name.ends_with('_')
-        || name.contains("__")
-    {
-        bail!("domain name must be lower_snake_case and begin with a letter");
-    }
-    if matches!(
-        name,
-        "and"
-            | "as"
-            | "assert"
-            | "async"
-            | "await"
-            | "break"
-            | "class"
-            | "continue"
-            | "def"
-            | "del"
-            | "elif"
-            | "else"
-            | "except"
-            | "finally"
-            | "for"
-            | "from"
-            | "global"
-            | "if"
-            | "import"
-            | "in"
-            | "is"
-            | "lambda"
-            | "nonlocal"
-            | "not"
-            | "or"
-            | "pass"
-            | "raise"
-            | "return"
-            | "try"
-            | "while"
-            | "with"
-            | "yield"
-    ) {
-        bail!("domain name must not be a Python keyword");
     }
     Ok(())
 }
@@ -1171,6 +1062,9 @@ mod tests {
         let domain = domains.join(name);
         fs::create_dir(&domain).expect("create domain");
         fs::write(domain.join("__init__.py"), "\n").expect("write domain public API");
+        for child in ["llms", "model", "tools", "ui"] {
+            fs::create_dir(domain.join(child)).expect("create required domain directory");
+        }
         let migrations = domain.join("migrations");
         fs::create_dir(&migrations).expect("create domain migrations");
         migrations

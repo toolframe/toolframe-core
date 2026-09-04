@@ -1239,7 +1239,8 @@ mod tests {
             manifest: crate::tools::ToolManifest {
                 version: 1,
                 python_version: "3.14.0",
-                tools_dir: directory.path().join("tools"),
+                tools_dir: Some(directory.path().join("tools")),
+                domains_dir: None,
                 tools: Vec::new(),
             },
             dependencies: Vec::new(),

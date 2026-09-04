@@ -719,6 +719,139 @@ def render(context):
         self.assertEqual([widget.widget_id for widget in widgets], ["valid"])
 
 
+class DomainWidgetDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name)
+        self.app = self.root / "app"
+        self.domains = self.root / "domains"
+        self.app.mkdir()
+        self.domains.mkdir()
+        (self.app / "dashboard.py").write_text(
+            "from toolframe_dashboard import render_widgets\nrender_widgets()\n",
+            encoding="utf-8",
+        )
+        self.database_path = self.root / "data.db"
+        sqlite3.connect(self.database_path).close()
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def create_domain(self, name: str, *, public_api: str = "\n") -> Path:
+        domain = self.domains / name
+        domain.mkdir()
+        (domain / "__init__.py").write_text(public_api, encoding="utf-8")
+        for child in ("llms", "model", "tools", "ui", "migrations"):
+            (domain / child).mkdir()
+        return domain
+
+    def configure(self) -> None:
+        dashboard._configure(
+            database_path=self.database_path,
+            app_dir=self.app,
+            domains_dir=self.domains,
+            workspace=self.root / "workspace",
+            logger=logging.getLogger("domain-widget-test"),
+            runtime={"startupOnly": True},
+        )
+
+    def test_preflight_loads_every_domain_widget_and_public_api(self):
+        first = self.create_domain(
+            "entry_register", public_api="PUBLIC_LABEL = 'Entries'\n"
+        )
+        second = self.create_domain("daily_reporting")
+        (first / "ui" / "entries.py").write_text(
+            "from domains.entry_register import PUBLIC_LABEL\n"
+            "TITLE = PUBLIC_LABEL\n"
+            "ORDER = 20\n"
+            "def render(context):\n    pass\n",
+            encoding="utf-8",
+        )
+        (second / "ui" / "summary.py").write_text(
+            "TITLE = 'Daily summary'\nORDER = 10\ndef render(context):\n    pass\n",
+            encoding="utf-8",
+        )
+        self.configure()
+
+        widgets = dashboard.preflight_app()
+
+        self.assertEqual(
+            [widget.widget_id for widget in widgets],
+            ["daily_reporting.summary", "entry_register.entries"],
+        )
+        self.assertEqual(
+            [widget.domain for widget in widgets],
+            [
+                "daily_reporting",
+                "entry_register",
+            ],
+        )
+        self.assertEqual(widgets[1].title, "Entries")
+
+    def test_broken_domain_or_public_widget_fails_preflight(self):
+        broken = self.create_domain(
+            "entry_register", public_api="raise RuntimeError('broken API')\n"
+        )
+        (broken / "ui" / "entries.py").write_text(
+            "def render(context):\n    pass\n", encoding="utf-8"
+        )
+        self.configure()
+        with self.assertRaisesRegex(RuntimeError, "broken API"):
+            dashboard.preflight_app()
+
+        (broken / "__init__.py").write_text("\n", encoding="utf-8")
+        target = self.root / "target.py"
+        target.write_text("def render(context):\n    pass\n", encoding="utf-8")
+        (broken / "ui" / "entries.py").unlink()
+        (broken / "ui" / "entries.py").symlink_to(target)
+        with self.assertRaisesRegex(RuntimeError, "domain widget.*symlink"):
+            dashboard.preflight_app()
+
+    def test_app_dashboard_and_global_order_are_fail_closed(self):
+        first = self.create_domain("entry_register")
+        second = self.create_domain("daily_reporting")
+        for domain, widget in ((first, "entries"), (second, "summary")):
+            (domain / "ui" / f"{widget}.py").write_text(
+                "ORDER = 1\ndef render(context):\n    pass\n", encoding="utf-8"
+            )
+        self.configure()
+
+        with self.assertRaisesRegex(RuntimeError, "globally unique"):
+            dashboard.preflight_app()
+
+        (self.app / "dashboard.py").write_text("if:\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "dashboard.py failed compile"):
+            dashboard.preflight_app()
+
+
+class StandardErrorCardTests(unittest.TestCase):
+    def test_expected_error_renders_one_copyable_master_agent_card(self):
+        messages = []
+        streamlit = SimpleNamespace(error=messages.append)
+        error = dashboard.DashboardInteractionError(
+            "entry_version_conflict",
+            "This entry changed in another session.",
+            recovery_hint="Refresh the card and try the action again.",
+        )
+
+        with patch.dict(sys.modules, {"streamlit": streamlit}):
+            dashboard.render_error_card(error)
+
+        self.assertEqual(len(messages), 1)
+        self.assertIn("master development agent", messages[0])
+        self.assertIn(error.trace_id, messages[0])
+
+    def test_programming_database_error_is_not_rendered_as_expected(self):
+        error = dashboard.DashboardDatabaseError(
+            "invalid_sql",
+            "The widget contains invalid SQL.",
+            recovery_hint="Fix the widget source.",
+        )
+
+        with self.assertRaises(dashboard.DashboardDatabaseError):
+            dashboard.render_error_card(error)
+
+
 class DefaultWidgetContractTests(unittest.TestCase):
     def test_example_widget_handles_expected_database_conditions(self):
         path = REPOSITORY_ROOT / "dashboard" / "widgets" / "example_card.py"

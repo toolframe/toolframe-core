@@ -74,6 +74,36 @@ class RuntimeTests(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         return manifest_path, tool_path
 
+    def write_domain_manifest(self, source=TOOL_SOURCE):
+        domains = self.root / "domains"
+        domain = domains / "entry_register"
+        tools = domain / "tools"
+        tools.mkdir(parents=True)
+        (domain / "__init__.py").write_text(
+            'PUBLIC_LABEL = "entry register"\n', encoding="utf-8"
+        )
+        tool_path = tools / "echo.py"
+        tool_path.write_text(source, encoding="utf-8")
+        manifest = {
+            "version": 2,
+            "pythonVersion": "3.14.0",
+            "domainsDir": str(domains),
+            "tools": [
+                {
+                    "name": "echo",
+                    "domain": "entry_register",
+                    "path": str(tool_path),
+                    "sourceFilename": "echo.py",
+                    "sourceSha256": hashlib.sha256(source.encode()).hexdigest(),
+                    "dependencies": [],
+                    "requiresPython": ">=3.14,<3.15",
+                }
+            ],
+        }
+        manifest_path = self.root / "domain-manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return manifest_path, tool_path
+
     def write_llms_source(self, *, index=None, documents=None):
         llms_dir = self.root / "llms"
         llms_dir.mkdir(exist_ok=True)
@@ -87,6 +117,71 @@ class RuntimeTests(unittest.TestCase):
             encoding="utf-8",
         )
         return index_path, llms_dir
+
+    def write_domain_llms_source(self, *, index=None):
+        domains = self.root / "domains"
+        docs = domains / "entry_register" / "llms"
+        docs.mkdir(parents=True)
+        (docs / "capabilities.md").write_text(
+            "# Entry register capabilities\n", encoding="utf-8"
+        )
+        index_path = self.root / "app-llms.txt"
+        index_path.write_text(
+            index
+            or (
+                "# Entry Register\n"
+                "> A Toolframe business app.\n\n"
+                "## Domain documents\n\n"
+                "- [Capabilities](/llms/entry_register/capabilities.md)\n"
+            ),
+            encoding="utf-8",
+        )
+        return index_path, domains, docs
+
+    def test_domain_llms_validates_only_explicitly_linked_documents(self):
+        index_path, domains, docs = self.write_domain_llms_source()
+        (docs / "private_notes.md").write_bytes(b"\xff")
+
+        self.assertEqual(
+            runtime.validate_domain_llms_source(index_path, domains),
+            ["entry_register/capabilities.md"],
+        )
+
+    def test_domain_llms_rejects_unsafe_or_missing_linked_documents(self):
+        index_path, domains, docs = self.write_domain_llms_source(
+            index=(
+                "# Entry Register\n"
+                "> A Toolframe business app.\n\n"
+                "## Domain documents\n\n"
+                "- [Unsafe](/llms/entry_register/../secret.md)\n"
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "must target"):
+            runtime.validate_domain_llms_source(index_path, domains)
+
+        index_path.write_text(
+            "# Entry Register\n"
+            "> A Toolframe business app.\n\n"
+            "## Domain documents\n\n"
+            "- [Missing](/llms/entry_register/missing.md)\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "missing.md.*does not exist"):
+            runtime.validate_domain_llms_source(index_path, domains)
+
+        index_path.write_text(
+            "# Entry Register\n"
+            "> A Toolframe business app.\n\n"
+            "## Domain documents\n\n"
+            "- [Capabilities](/llms/entry_register/capabilities.md)\n",
+            encoding="utf-8",
+        )
+        target = self.root / "outside.md"
+        target.write_text("# Outside\n", encoding="utf-8")
+        (docs / "capabilities.md").unlink()
+        (docs / "capabilities.md").symlink_to(target)
+        with self.assertRaisesRegex(ValueError, "capabilities.md.*symlink"):
+            runtime.validate_domain_llms_source(index_path, domains)
 
     def test_validate_llms_source_returns_safe_reachable_document_allowlist(self):
         index_path, llms_dir = self.write_llms_source(
@@ -180,6 +275,35 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(details[0]["sourceFile"], "echo.py")
         self.assertIn("supplied value", details[0]["description"])
         self.assertEqual(dependencies, [])
+
+    def test_loads_domain_tool_with_domain_package_imports(self):
+        source = '''from fastmcp.tools import tool
+from domains.entry_register import PUBLIC_LABEL
+
+@tool
+def echo(value: str) -> str:
+    """Return the supplied value from the entry register."""
+    return f"{PUBLIC_LABEL}: {value}"
+'''
+        manifest_path, _ = self.write_domain_manifest(source)
+
+        tools, details, dependencies = runtime.load_tools(manifest_path)
+
+        self.assertEqual([tool.name for tool in tools], ["echo"])
+        self.assertEqual(details[0]["domain"], "entry_register")
+        self.assertEqual(details[0]["sourceFile"], "entry_register/tools/echo.py")
+        self.assertEqual(dependencies, [])
+
+    def test_domain_tool_must_remain_under_its_declared_domain(self):
+        manifest_path, tool_path = self.write_domain_manifest()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["tools"][0]["domain"] = "other_domain"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with self.assertRaisesRegex(runtime.ToolLoadError, "other_domain"):
+            runtime.load_tools(manifest_path)
+
+        self.assertTrue(tool_path.is_file())
 
     def test_tools_can_import_configured_artifact_store_at_startup(self):
         workspace = self.root / "workspace"

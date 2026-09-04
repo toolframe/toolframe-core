@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import inspect
 import json
+import keyword
 import logging
 import math
 import os
@@ -37,13 +38,13 @@ from fastmcp.server.middleware import Middleware
 from fastmcp.tools import Tool, ToolResult
 from fastmcp.tools.function_tool import ToolMeta
 from fastmcp.utilities.lifespan import combine_lifespans
+from starlette.routing import Route
 from toolframe_artifacts import (
     DEFAULT_MAX_ARTIFACT_BYTES,
     ArtifactError,
     configure_artifact_store,
 )
 from toolframe_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
-from starlette.routing import Route
 
 LOGGER = logging.getLogger("toolframe.runtime")
 READY_SENTINEL = "TOOLFRAME_READY"
@@ -53,6 +54,11 @@ STREAMLIT_VERSION = "1.61.0"
 STREAMLIT_RESOURCE_LIMIT_MIB = 25
 LLMS_MAX_BYTES = 256 * 1024
 _LLMS_DOCUMENT_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*\.md\Z")
+_DOMAIN_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*\Z")
+_DOMAIN_LLMS_DOCUMENT = re.compile(
+    r"(?P<domain>[a-z][a-z0-9]*(?:_[a-z0-9]+)*)/"
+    r"(?P<document>[a-z0-9][a-z0-9_-]*\.md)\Z"
+)
 _LLMS_LOCAL_LINK = re.compile(
     r"(?:^|(?<=[(<\s\"']))/llms/([^\s<>'\"()\]]+)", re.MULTILINE
 )
@@ -87,6 +93,51 @@ def validate_llms_source(index_file: Path, docs_dir: Path) -> list[str]:
 
     documents, _ = _validated_llms_source(Path(index_file), Path(docs_dir))
     return documents
+
+
+def validate_domain_llms_source(index_file: Path, domains_dir: Path) -> list[str]:
+    """Validate only domain documents explicitly linked by ``app/llms.txt``."""
+
+    documents, _ = _validated_domain_llms_source(Path(index_file), Path(domains_dir))
+    return documents
+
+
+def _validated_domain_llms_source(
+    index_file: Path, domains_dir: Path
+) -> tuple[list[str], bytes]:
+    index_bytes = _read_llms_utf8(index_file, source_label="app llms index")
+    index_text = index_bytes.decode("utf-8")
+    _validate_llms_index_format(index_file, index_text)
+    _validate_llms_directory(domains_dir)
+
+    targets = _llms_raw_targets(index_text)
+    if not targets:
+        raise LlmsValidationError(
+            index_file,
+            "index must link at least one domain document below /llms/<domain>/<name>.md",
+        )
+    documents: list[str] = []
+    for target in sorted(targets):
+        match = _DOMAIN_LLMS_DOCUMENT.fullmatch(target)
+        if match is None or keyword.iskeyword(match.group("domain")):
+            raise LlmsValidationError(
+                index_file,
+                f"local link /llms/{target} must target /llms/<domain>/<safe-name>.md",
+            )
+        domain = match.group("domain")
+        document = match.group("document")
+        domain_dir = _llms_real_directory(
+            domains_dir / domain, source_label="linked domain"
+        )
+        docs_dir = _llms_real_directory(
+            domain_dir / "llms", source_label="linked domain llms directory"
+        )
+        _read_llms_utf8(
+            docs_dir / document,
+            source_label="linked domain llms document",
+        )
+        documents.append(target)
+    return documents, index_bytes
 
 
 def _validated_llms_source(index_file: Path, docs_dir: Path) -> tuple[list[str], bytes]:
@@ -185,6 +236,27 @@ def _llms_local_links(index_file: Path, index_text: str) -> set[str]:
             )
         links.add(target)
     return links
+
+
+def _llms_raw_targets(index_text: str) -> set[str]:
+    return {match.group(1) for match in _LLMS_LOCAL_LINK.finditer(index_text)}
+
+
+def _llms_real_directory(path: Path, *, source_label: str) -> Path:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError as error:
+        raise LlmsValidationError(path, f"{source_label} does not exist") from error
+    except OSError as error:
+        raise LlmsValidationError(
+            path,
+            f"could not inspect {source_label} ({_os_error_reason(error)})",
+        ) from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise LlmsValidationError(
+            path, f"{source_label} must be a real, non-symlink directory"
+        )
+    return path.resolve(strict=True)
 
 
 def _validate_llms_directory(docs_dir: Path) -> None:
@@ -893,11 +965,15 @@ class DashboardFatalReporter:
 
     def __init__(
         self,
-        dashboard_dir: Path,
+        app_dir: Path,
+        domains_dir: Path | None = None,
         audit_sink: StructuredLogs | None = None,
         fatal_reporter: FatalShutdownReporter | None = None,
     ) -> None:
-        self._dashboard_dir = dashboard_dir.resolve(strict=False)
+        self._app_dir = app_dir.resolve(strict=False)
+        self._domains_dir = (
+            domains_dir.resolve(strict=False) if domains_dir is not None else None
+        )
         self._audit_sink = audit_sink
         self._fatal_reporter = fatal_reporter
         self._lock = threading.Lock()
@@ -915,7 +991,9 @@ class DashboardFatalReporter:
             self._reported = True
 
         trace_id = uuid.uuid4().hex
-        phase, path, widget = _dashboard_error_location(error, self._dashboard_dir)
+        phase, path, widget = _dashboard_error_location(
+            error, self._app_dir, self._domains_dir
+        )
         LOGGER.critical(
             "fatal dashboard error traceId=%s phase=%s path=%s widget=%s\n%s",
             trace_id,
@@ -980,12 +1058,13 @@ _DASHBOARD_FATAL_REPORTER: DashboardFatalReporter | None = None
 
 
 def configure_dashboard_fatal_reporter(
-    dashboard_dir: Path,
+    app_dir: Path,
+    domains_dir: Path | None = None,
     audit_sink: StructuredLogs | None = None,
     fatal_reporter: FatalShutdownReporter | None = None,
 ) -> DashboardFatalReporter:
     global _DASHBOARD_FATAL_REPORTER
-    reporter = DashboardFatalReporter(dashboard_dir, audit_sink, fatal_reporter)
+    reporter = DashboardFatalReporter(app_dir, domains_dir, audit_sink, fatal_reporter)
     _DASHBOARD_FATAL_REPORTER = reporter
     return reporter
 
@@ -1029,17 +1108,32 @@ def load_tools(
     manifest_path: Path,
 ) -> tuple[list[Tool], list[dict[str, Any]], list[str]]:
     manifest = _read_manifest(manifest_path)
-    tools_dir = Path(manifest["toolsDir"]).resolve(strict=True)
-    if not tools_dir.is_dir():
-        raise ToolLoadError(tools_dir, "manifest", "toolsDir is not a directory")
-
-    if str(tools_dir) not in sys.path:
-        sys.path.insert(0, str(tools_dir))
+    manifest_version = manifest["version"]
+    tools_dir: Path | None = None
+    domains_dir: Path | None = None
+    if manifest_version == 1:
+        tools_dir = Path(manifest["toolsDir"]).resolve(strict=True)
+        if not tools_dir.is_dir():
+            raise ToolLoadError(tools_dir, "manifest", "toolsDir is not a directory")
+        if str(tools_dir) not in sys.path:
+            sys.path.insert(0, str(tools_dir))
+    else:
+        domains_dir = _require_real_directory(
+            Path(manifest["domainsDir"]), "manifest", "domainsDir"
+        )
+        app_root = domains_dir.parent
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
+        for module_name in tuple(sys.modules):
+            if module_name == "domains" or module_name.startswith("domains."):
+                sys.modules.pop(module_name, None)
+        importlib.invalidate_caches()
 
     loaded: list[Tool] = []
     runtime_details: list[dict[str, Any]] = []
     names: set[str] = set()
     dependencies: set[str] = set()
+    domain_tool_directories: dict[str, Path] = {}
     for entry in manifest["tools"]:
         path = Path(entry.get("path", ""))
         try:
@@ -1048,11 +1142,33 @@ def load_tools(
                     path, "path", "tool path became a symlink after discovery"
                 )
             path = path.resolve(strict=True)
-            if path.parent != tools_dir or not path.is_file():
+            domain: str | None = None
+            expected_parent = tools_dir
+            if manifest_version == 2:
+                domain = entry.get("domain")
+                if not isinstance(domain, str) or not _is_domain_name(domain):
+                    raise ToolLoadError(
+                        path,
+                        "manifest",
+                        "tool domain must be a lower_snake_case Python identifier",
+                    )
+                assert domains_dir is not None
+                if domain not in domain_tool_directories:
+                    domain_root = _require_real_directory(
+                        domains_dir / domain, "path", "domain"
+                    )
+                    _require_real_file(
+                        domain_root / "__init__.py", "path", "domain public API"
+                    )
+                    domain_tool_directories[domain] = _require_real_directory(
+                        domain_root / "tools", "path", "domain tools"
+                    )
+                expected_parent = domain_tool_directories[domain]
+            if path.parent != expected_parent or not path.is_file():
                 raise ToolLoadError(
                     path,
                     "path",
-                    "tool must be a direct, regular, non-symlink child of toolsDir",
+                    "tool must be a direct, regular, non-symlink child of its declared tools directory",
                 )
             if entry.get("sourceFilename") != path.name:
                 raise ToolLoadError(
@@ -1073,7 +1189,7 @@ def load_tools(
                 raise ToolLoadError(
                     path, "identity", f"duplicate tool name {expected_name!r}"
                 )
-            module = _import_tool(path, expected_name, actual_hash)
+            module = _import_tool(path, expected_name, actual_hash, domain=domain)
             function = _one_decorated_function(path, module)
             if function.__name__ != expected_name:
                 raise ToolLoadError(
@@ -1104,8 +1220,13 @@ def load_tools(
             runtime_details.append(
                 {
                     "name": expected_name,
+                    **({"domain": domain} if domain is not None else {}),
                     "description": tool_object.description,
-                    "sourceFile": path.name,
+                    "sourceFile": (
+                        path.name
+                        if domains_dir is None
+                        else path.relative_to(domains_dir).as_posix()
+                    ),
                     "dependencies": entry_dependencies,
                 }
             )
@@ -1171,10 +1292,19 @@ def _build_application(
     manifest_path = _required_path("TOOLFRAME_MANIFEST")
     database_path = _required_path("TOOLFRAME_DB")
     llms_file = _required_path("TOOLFRAME_LLMS_FILE")
-    llms_dir = _required_path("TOOLFRAME_LLMS_DIR")
-    llms_documents = tuple(validate_llms_source(llms_file, llms_dir))
-    dashboard_dir = _required_directory("TOOLFRAME_DASHBOARD_DIR")
-    dashboard_app_path = dashboard_dir / "app.py"
+    domain_layout = bool(os.environ.get("TOOLFRAME_APP_DIR", "").strip())
+    domains_dir: Path | None = None
+    llms_dir: Path | None = None
+    if domain_layout:
+        dashboard_dir = _required_directory("TOOLFRAME_APP_DIR")
+        domains_dir = _required_directory("TOOLFRAME_DOMAINS_DIR")
+        llms_documents = tuple(validate_domain_llms_source(llms_file, domains_dir))
+        dashboard_app_path = dashboard_dir / "dashboard.py"
+    else:
+        llms_dir = _required_path("TOOLFRAME_LLMS_DIR")
+        llms_documents = tuple(validate_llms_source(llms_file, llms_dir))
+        dashboard_dir = _required_directory("TOOLFRAME_DASHBOARD_DIR")
+        dashboard_app_path = dashboard_dir / "app.py"
     if not dashboard_app_path.is_file() or dashboard_app_path.is_symlink():
         raise RuntimeError(
             f"dashboard app must be a regular, non-symlink file: {dashboard_app_path}"
@@ -1206,12 +1336,15 @@ def _build_application(
         logger=logging.getLogger("toolframe.artifacts"),
     )
     tools, tool_details, tool_dependencies = load_tools(manifest_path)
-    dependency_summary = _json_string_list("TOOLFRAME_DEPENDENCIES_JSON", required=False)
+    dependency_summary = _json_string_list(
+        "TOOLFRAME_DEPENDENCIES_JSON", required=False
+    )
     if not dependency_summary:
         dependency_summary = tool_dependencies
 
     streamlit = _load_and_configure_streamlit(
         dashboard_dir=dashboard_dir,
+        additional_watch_dirs=(() if domains_dir is None else (domains_dir,)),
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
         port=port,
@@ -1231,18 +1364,26 @@ def _build_application(
 
     import toolframe_dashboard as dashboard_sdk
 
-    dashboard_sdk._configure(
-        database_path=database_path,
-        dashboard_dir=dashboard_dir,
-        workspace=workspace_path,
-        logger=logging.getLogger("toolframe.dashboard"),
-        runtime=runtime_summary,
-        audit_sink=audit_sink,
-        artifacts=artifact_store,
-    )
+    dashboard_configuration = {
+        "database_path": database_path,
+        "workspace": workspace_path,
+        "logger": logging.getLogger("toolframe.dashboard"),
+        "runtime": runtime_summary,
+        "audit_sink": audit_sink,
+        "artifacts": artifact_store,
+    }
+    if domains_dir is None:
+        dashboard_configuration["dashboard_dir"] = dashboard_dir
+    else:
+        dashboard_configuration["app_dir"] = dashboard_dir
+        dashboard_configuration["domains_dir"] = domains_dir
+    dashboard_sdk._configure(**dashboard_configuration)
     # Import-safe preflight intentionally does not render the app. Rendering is
     # session-scoped and may have database side effects.
-    dashboard_sdk.preflight_dashboard(dashboard_dir)
+    if domains_dir is None:
+        dashboard_sdk.preflight_dashboard(dashboard_dir)
+    else:
+        dashboard_sdk.preflight_app(dashboard_dir, domains_dir)
 
     mcp = FastMCP(
         "toolframe",
@@ -1265,7 +1406,10 @@ def _build_application(
         allowed_origins=allowed_origins,
     )
     fatal_reporter = configure_dashboard_fatal_reporter(
-        dashboard_dir, audit_sink, fatal_shutdown
+        dashboard_dir,
+        domains_dir=domains_dir,
+        audit_sink=audit_sink,
+        fatal_reporter=fatal_shutdown,
     )
     streamlit_app = streamlit.App(
         str(dashboard_runner_path),
@@ -1395,7 +1539,13 @@ def _build_application(
         return runtime_summary
 
     def _current_llms_source() -> tuple[list[str], bytes]:
-        current_documents, index_bytes = _validated_llms_source(llms_file, llms_dir)
+        if domains_dir is None:
+            assert llms_dir is not None
+            current_documents, index_bytes = _validated_llms_source(llms_file, llms_dir)
+        else:
+            current_documents, index_bytes = _validated_domain_llms_source(
+                llms_file, domains_dir
+            )
         if tuple(current_documents) != llms_documents:
             raise LlmsValidationError(
                 llms_file,
@@ -1449,6 +1599,10 @@ def _build_application(
 
     @app.api_route("/llms/{document_name}.md", methods=["GET", "HEAD"])
     async def llms_detail(document_name: str) -> Response:
+        if domains_dir is not None:
+            return PlainTextResponse(
+                "Not Found", status_code=404, headers=_llms_common_headers()
+            )
         filename = f"{document_name}.md"
         if filename not in llms_documents or not _LLMS_DOCUMENT_NAME.fullmatch(
             filename
@@ -1460,9 +1614,31 @@ def _build_application(
             )
         try:
             _current_llms_source()
+            assert llms_dir is not None
             detail_bytes = _read_llms_utf8(
                 llms_dir / filename,
                 source_label="llms detail",
+            )
+            return _llms_response(detail_bytes, detail=True)
+        except LlmsValidationError as error:
+            return _llms_unavailable(error)
+
+    @app.api_route("/llms/{domain_name}/{document_name}.md", methods=["GET", "HEAD"])
+    async def domain_llms_detail(domain_name: str, document_name: str) -> Response:
+        if domains_dir is None:
+            return PlainTextResponse(
+                "Not Found", status_code=404, headers=_llms_common_headers()
+            )
+        target = f"{domain_name}/{document_name}.md"
+        if target not in llms_documents or not _DOMAIN_LLMS_DOCUMENT.fullmatch(target):
+            return PlainTextResponse(
+                "Not Found", status_code=404, headers=_llms_common_headers()
+            )
+        try:
+            _current_llms_source()
+            detail_bytes = _read_llms_utf8(
+                domains_dir / domain_name / "llms" / f"{document_name}.md",
+                source_label="linked domain llms document",
             )
             return _llms_response(detail_bytes, detail=True)
         except LlmsValidationError as error:
@@ -1544,6 +1720,7 @@ def _build_application(
 def _load_and_configure_streamlit(
     *,
     dashboard_dir: Path,
+    additional_watch_dirs: tuple[Path, ...] = (),
     allowed_hosts: list[str],
     allowed_origins: list[str],
     port: int,
@@ -1558,6 +1735,7 @@ def _load_and_configure_streamlit(
         )
     for key, value in _streamlit_config_values(
         dashboard_dir=dashboard_dir,
+        additional_watch_dirs=additional_watch_dirs,
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
         port=port,
@@ -1569,14 +1747,19 @@ def _load_and_configure_streamlit(
 def _streamlit_config_values(
     *,
     dashboard_dir: Path,
+    additional_watch_dirs: tuple[Path, ...] = (),
     allowed_hosts: list[str],
     allowed_origins: list[str],
     port: int,
 ) -> dict[str, Any]:
     if not dashboard_dir.is_absolute():
         raise RuntimeError("the Streamlit dashboard watch directory must be absolute")
+    if any(not path.is_absolute() for path in additional_watch_dirs):
+        raise RuntimeError("every Streamlit source watch directory must be absolute")
     return {
-        "server.folderWatchList": [str(dashboard_dir)],
+        "server.folderWatchList": [
+            str(path) for path in (dashboard_dir, *additional_watch_dirs)
+        ],
         "server.runOnSave": False,
         "server.headless": True,
         "browser.gatherUsageStats": False,
@@ -1674,17 +1857,31 @@ def _read_manifest(path: Path) -> dict[str, Any]:
         raise ToolLoadError(
             path, "manifest", f"{type(error).__name__}: {error}"
         ) from error
-    if not isinstance(manifest, dict) or manifest.get("version") != 1:
+    if not isinstance(manifest, dict) or manifest.get("version") not in {1, 2}:
         raise ToolLoadError(path, "manifest", "unsupported or missing manifest version")
     if manifest.get("pythonVersion") != "3.14.0":
         raise ToolLoadError(path, "manifest", "runtime requires Python 3.14.0")
     if not isinstance(manifest.get("tools"), list):
         raise ToolLoadError(path, "manifest", "tools must be an array")
+    if manifest["version"] == 1 and not isinstance(manifest.get("toolsDir"), str):
+        raise ToolLoadError(path, "manifest", "toolsDir must be a path string")
+    if manifest["version"] == 2 and not isinstance(manifest.get("domainsDir"), str):
+        raise ToolLoadError(path, "manifest", "domainsDir must be a path string")
     return manifest
 
 
-def _import_tool(path: Path, name: str, source_hash: str) -> types.ModuleType:
-    module_name = f"toolframe_user_{name}_{source_hash[:16]}"
+def _import_tool(
+    path: Path,
+    name: str,
+    source_hash: str,
+    *,
+    domain: str | None = None,
+) -> types.ModuleType:
+    if domain is None:
+        module_name = f"toolframe_user_{name}_{source_hash[:16]}"
+    else:
+        importlib.import_module(f"domains.{domain}.tools")
+        module_name = f"domains.{domain}.tools.{name}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ToolLoadError(
@@ -1698,6 +1895,34 @@ def _import_tool(path: Path, name: str, source_hash: str) -> types.ModuleType:
         sys.modules.pop(module_name, None)
         raise
     return module
+
+
+def _is_domain_name(value: str) -> bool:
+    return bool(_DOMAIN_NAME.fullmatch(value)) and not keyword.iskeyword(value)
+
+
+def _require_real_directory(path: Path, phase: str, label: str) -> Path:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise ToolLoadError(
+            path, phase, f"could not inspect {label}: {_os_error_reason(error)}"
+        ) from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise ToolLoadError(path, phase, f"{label} must be a real directory")
+    return path.resolve(strict=True)
+
+
+def _require_real_file(path: Path, phase: str, label: str) -> Path:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise ToolLoadError(
+            path, phase, f"could not inspect {label}: {_os_error_reason(error)}"
+        ) from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise ToolLoadError(path, phase, f"{label} must be a regular file")
+    return path.resolve(strict=True)
 
 
 def _one_decorated_function(path: Path, module: types.ModuleType) -> Any:
@@ -2276,9 +2501,13 @@ def _is_streamlit_control_exception(error: BaseException) -> bool:
 
 def _dashboard_error_location(
     error: BaseException,
-    dashboard_dir: Path,
+    app_dir: Path,
+    domains_dir: Path | None = None,
 ) -> tuple[str, str | None, str | None]:
-    dashboard_root = dashboard_dir.resolve(strict=False)
+    app_root = app_dir.resolve(strict=False)
+    domains_root = (
+        domains_dir.resolve(strict=False) if domains_dir is not None else None
+    )
     phase_value = getattr(error, "phase", None)
     phase = str(phase_value) if phase_value else "script-execution"
     candidate: str | None = None
@@ -2292,22 +2521,37 @@ def _dashboard_error_location(
         frames = traceback.extract_tb(error.__traceback__)
         for frame in reversed(frames):
             frame_path = Path(frame.filename)
-            try:
-                frame_path.resolve(strict=False).relative_to(dashboard_root)
-            except ValueError:
-                continue
-            candidate = str(frame_path)
-            break
+            resolved = frame_path.resolve(strict=False)
+            roots = (app_root,) if domains_root is None else (domains_root, app_root)
+            if any(_is_relative_to(resolved, root) for root in roots):
+                candidate = str(frame_path)
+                break
 
     widget_value = getattr(error, "widget", None)
     widget = str(widget_value) if widget_value else None
     if candidate is not None:
         candidate_path = Path(candidate)
         try:
-            relative = candidate_path.resolve(strict=False).relative_to(dashboard_root)
+            relative = candidate_path.resolve(strict=False).relative_to(app_root)
         except ValueError:
             relative = None
+        domain_relative: Path | None = None
+        if domains_root is not None:
+            try:
+                domain_relative = candidate_path.resolve(strict=False).relative_to(
+                    domains_root
+                )
+            except ValueError:
+                pass
         if (
+            domain_relative is not None
+            and len(domain_relative.parts) == 3
+            and domain_relative.parts[1] == "ui"
+        ):
+            widget = f"{domain_relative.parts[0]}.{domain_relative.stem}"
+            if phase == "script-execution":
+                phase = "widget-execution"
+        elif (
             relative is not None
             and len(relative.parts) == 2
             and relative.parts[0] == "widgets"
@@ -2315,9 +2559,20 @@ def _dashboard_error_location(
             widget = relative.stem
             if phase == "script-execution":
                 phase = "widget-execution"
-        elif relative == Path("app.py") and phase == "script-execution":
+        elif (
+            relative in {Path("app.py"), Path("dashboard.py")}
+            and phase == "script-execution"
+        ):
             phase = "app-execution"
     return phase, candidate, widget
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _safe_single_line(value: str, *, limit: int = 1024) -> str:

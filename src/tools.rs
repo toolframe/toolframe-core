@@ -10,6 +10,8 @@ use pep440_rs::{Version, VersionSpecifiers};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::domains;
+
 const PYTHON_VERSION: &str = "3.14.0";
 const PYTHON_REQUIREMENT: &str = ">=3.14,<3.15";
 const CORE_DEPENDENCIES: &[&str] = &[
@@ -31,7 +33,10 @@ const DASHBOARD_PROJECT_VERSION: &str = "0.0.0";
 pub struct ToolManifest {
     pub version: u8,
     pub python_version: &'static str,
-    pub tools_dir: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domains_dir: Option<PathBuf>,
     pub tools: Vec<DiscoveredTool>,
 }
 
@@ -39,6 +44,8 @@ pub struct ToolManifest {
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveredTool {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
     pub path: PathBuf,
     pub source_filename: String,
     pub source_sha256: String,
@@ -107,12 +114,77 @@ struct UvConfig {
 }
 
 pub fn discover(tools_dir: &Path) -> Result<ToolCatalog> {
-    let mut paths = fs::read_dir(tools_dir)
-        .with_context(|| format!("could not scan tools directory {}", tools_dir.display()))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<std::io::Result<Vec<_>>>()?;
-    paths.sort();
+    let paths = discover_tool_paths(tools_dir, None)?;
+    let tools_dir = tools_dir
+        .canonicalize()
+        .unwrap_or_else(|_| tools_dir.to_path_buf());
+    build_catalog(1, Some(tools_dir), None, paths)
+}
 
+/// Discover every public direct tool across all complete business domains.
+pub fn discover_domains(domains_dir: &Path) -> Result<ToolCatalog> {
+    let domains = domains::discover(domains_dir)
+        .with_context(|| format!("could not discover tools below {}", domains_dir.display()))?;
+    let mut paths = Vec::new();
+    for domain in domains {
+        paths.extend(discover_tool_paths(&domain.tools, Some(&domain.name))?);
+    }
+    let domains_dir = domains_dir
+        .canonicalize()
+        .unwrap_or_else(|_| domains_dir.to_path_buf());
+    build_catalog(2, None, Some(domains_dir), paths)
+}
+
+fn discover_tool_paths(
+    tools_dir: &Path,
+    domain: Option<&str>,
+) -> Result<Vec<(Option<String>, PathBuf)>> {
+    let metadata = fs::symlink_metadata(tools_dir)
+        .with_context(|| format!("could not inspect tools directory {}", tools_dir.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        bail!(
+            "tools directory {} must be a real directory, not a symlink",
+            tools_dir.display()
+        );
+    }
+    let mut entries = fs::read_dir(tools_dir)
+        .with_context(|| format!("could not scan tools directory {}", tools_dir.display()))?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry.path();
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow!("{} [filename]: is not valid UTF-8", path.display()))?;
+        if filename.starts_with(['.', '_']) || path.extension().is_none_or(|ext| ext != "py") {
+            continue;
+        }
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("{} [metadata]", path.display()))?;
+        if file_type.is_symlink() || !file_type.is_file() {
+            if domain.is_some() {
+                bail!(
+                    "{} [path]: public tool must be a direct regular file, not a symlink or directory",
+                    path.display()
+                );
+            }
+            continue;
+        }
+        paths.push((domain.map(str::to_owned), path));
+    }
+    Ok(paths)
+}
+
+fn build_catalog(
+    version: u8,
+    tools_dir: Option<PathBuf>,
+    domains_dir: Option<PathBuf>,
+    paths: Vec<(Option<String>, PathBuf)>,
+) -> Result<ToolCatalog> {
     let python = Version::from_str(PYTHON_VERSION).expect("static Python version is valid");
     let mut failures = Vec::new();
     let mut tools = Vec::new();
@@ -122,33 +194,8 @@ pub fn discover(tools_dir: &Path) -> Result<ToolCatalog> {
         .map(|dependency| (*dependency).to_owned())
         .collect::<BTreeSet<_>>();
 
-    for path in paths {
-        let filename = match path.file_name().and_then(|name| name.to_str()) {
-            Some(filename) => filename,
-            None => {
-                failures.push(format!("{} [filename]: is not valid UTF-8", path.display()));
-                continue;
-            }
-        };
-        if filename.starts_with('.')
-            || filename.starts_with('_')
-            || path.extension().is_none_or(|ext| ext != "py")
-        {
-            continue;
-        }
-
-        let file_type = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata.file_type(),
-            Err(error) => {
-                failures.push(format!("{} [metadata]: {error}", path.display()));
-                continue;
-            }
-        };
-        if file_type.is_symlink() || !file_type.is_file() {
-            continue;
-        }
-
-        match inspect_tool(&path, &python) {
+    for (domain, path) in paths {
+        match inspect_tool(&path, domain.as_deref(), &python) {
             Ok(tool) => {
                 if !names.insert(tool.name.clone()) {
                     failures.push(format!(
@@ -169,14 +216,12 @@ pub fn discover(tools_dir: &Path) -> Result<ToolCatalog> {
         bail!("tool discovery failed:\n- {}", failures.join("\n- "));
     }
 
-    let tools_dir = tools_dir
-        .canonicalize()
-        .unwrap_or_else(|_| tools_dir.to_path_buf());
     Ok(ToolCatalog {
         manifest: ToolManifest {
-            version: 1,
+            version,
             python_version: PYTHON_VERSION,
             tools_dir,
+            domains_dir,
             tools,
         },
         dependencies: dependencies.into_iter().collect(),
@@ -274,7 +319,7 @@ pub fn content_hash(content: impl AsRef<[u8]>) -> String {
     format!("{:x}", Sha256::digest(content.as_ref()))
 }
 
-fn inspect_tool(path: &Path, python: &Version) -> Result<DiscoveredTool> {
+fn inspect_tool(path: &Path, domain: Option<&str>, python: &Version) -> Result<DiscoveredTool> {
     let source = fs::read_to_string(path).context("[read] could not read Python source")?;
     let metadata_toml = extract_script_metadata(&source).context("[metadata]")?;
     let metadata: ScriptMetadata = toml::from_str(&metadata_toml)
@@ -313,6 +358,7 @@ fn inspect_tool(path: &Path, python: &Version) -> Result<DiscoveredTool> {
 
     Ok(DiscoveredTool {
         name: name.to_owned(),
+        domain: domain.map(str::to_owned),
         source_filename: path
             .file_name()
             .and_then(|name| name.to_str())
@@ -388,6 +434,102 @@ mod tests {
         let path = directory.join("pyproject.toml");
         fs::write(&path, format!("[project]\n{project_fields}")).expect("write dashboard manifest");
         path
+    }
+
+    fn create_domain(root: &Path, name: &str) -> PathBuf {
+        let domain = root.join(name);
+        fs::create_dir(&domain).expect("create domain");
+        fs::write(domain.join("__init__.py"), "\n").expect("write public API");
+        for child in domains::REQUIRED_DIRECTORIES {
+            fs::create_dir(domain.join(child)).expect("create required directory");
+        }
+        domain
+    }
+
+    #[test]
+    fn discovers_domain_tools_with_global_identity_and_dependencies() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let first = create_domain(directory.path(), "entry_register");
+        let second = create_domain(directory.path(), "daily_reporting");
+        write_tool(
+            &first.join("tools"),
+            "entry_register_list_entries.py",
+            "# requires-python = \">=3.14,<3.15\"\n# dependencies = [\"polars==1.0.0\"]\n",
+        );
+        write_tool(
+            &second.join("tools"),
+            "daily_reporting_get_summary.py",
+            "# requires-python = \">=3.14,<3.15\"\n# dependencies = []\n",
+        );
+
+        let catalog = discover_domains(directory.path()).expect("discover domain tools");
+
+        assert_eq!(catalog.manifest.version, 2);
+        assert_eq!(catalog.manifest.tools_dir, None);
+        assert_eq!(
+            catalog.manifest.domains_dir.as_deref(),
+            Some(
+                directory
+                    .path()
+                    .canonicalize()
+                    .expect("canonicalize domains")
+                    .as_path()
+            )
+        );
+        assert_eq!(catalog.manifest.tools.len(), 2);
+        assert_eq!(
+            catalog.manifest.tools[0].domain.as_deref(),
+            Some("daily_reporting")
+        );
+        assert_eq!(
+            catalog.manifest.tools[1].domain.as_deref(),
+            Some("entry_register")
+        );
+        assert!(
+            catalog
+                .dependencies
+                .iter()
+                .any(|item| item == "polars==1.0.0")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_or_linked_public_tools_across_domains() {
+        let duplicate = tempfile::tempdir().expect("create duplicate root");
+        let first = create_domain(duplicate.path(), "entry_register");
+        let second = create_domain(duplicate.path(), "daily_reporting");
+        for domain in [&first, &second] {
+            write_tool(
+                &domain.join("tools"),
+                "list_entries.py",
+                "# requires-python = \">=3.14,<3.15\"\n# dependencies = []\n",
+            );
+        }
+        let error = discover_domains(duplicate.path())
+            .expect_err("duplicate tool name fails")
+            .to_string();
+        assert!(error.contains("duplicate tool name list_entries"));
+
+        #[cfg(unix)]
+        {
+            let linked = tempfile::tempdir().expect("create linked root");
+            let domain = create_domain(linked.path(), "entry_register");
+            let target = linked.path().join("_target.py");
+            write_tool(
+                linked.path(),
+                "_target.py",
+                "# requires-python = \">=3.14,<3.15\"\n# dependencies = []\n",
+            );
+            std::os::unix::fs::symlink(
+                target,
+                domain.join("tools").join("entry_register_list_entries.py"),
+            )
+            .expect("create public tool symlink");
+            let error = discover_domains(linked.path())
+                .expect_err("public tool symlink fails")
+                .to_string();
+            assert!(error.contains("public tool must be a direct regular file"));
+        }
     }
 
     #[test]
