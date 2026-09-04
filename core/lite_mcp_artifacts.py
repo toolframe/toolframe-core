@@ -1008,6 +1008,12 @@ def _parse_datetime(value: Any) -> datetime:
 
 
 def _sync_directory(path: Path) -> None:
+    if os.name == "nt":
+        # Python cannot open a Windows directory with the backup-semantics
+        # flag required by FlushFileBuffers. Content and metadata files are
+        # individually flushed before publication, so there is no additional
+        # portable directory flush available here.
+        return
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     descriptor = os.open(path, flags)
     try:

@@ -329,6 +329,14 @@ class ArtifactStoreTests(unittest.TestCase):
             artifacts._sync_directory(self.workspace)
         close.assert_called_once_with(99)
 
+    def test_directory_sync_is_skipped_on_windows(self):
+        with (
+            patch.object(artifacts.os, "name", "nt"),
+            patch("lite_mcp_artifacts.os.open") as open_directory,
+        ):
+            artifacts._sync_directory(self.workspace)
+        open_directory.assert_not_called()
+
     def test_custom_stream_failure_is_typed_and_closes_audit_operation(self):
         class BrokenStream:
             def read(self, _size):
