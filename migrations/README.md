@@ -1,6 +1,6 @@
 # Database migrations
 
-This directory is the source of truth for the `data.db` schema. The Rust
+This directory is the source of truth for the `data/data.db` schema. The Rust
 launcher validates and applies these files before it starts Python or opens the
 HTTP listener.
 
@@ -40,7 +40,7 @@ Migration SQL may contain multiple statements, but must not contain `BEGIN`,
 `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PRAGMA`, `ATTACH`, or `DETACH`.
 `CREATE TRIGGER` is also prohibited because a deferred trigger body could
 bypass internal table protection. The launcher owns transactions and SQLite
-configuration. Back up `data.db` before a destructive schema or data
+configuration. Back up `data/data.db` before a destructive schema or data
 migration.
 
 `tools/execute_sql.py` is a bounded fallback for app-data reads and DML. Its

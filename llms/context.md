@@ -42,7 +42,7 @@ Use this as the compact LAN-facing projection of the app's `APP_CONTEXT.md`. Rep
 - Built-in diagnostics: `/info` — use for runtime facts and safe diagnosis.
 - Readiness: `/healthz` — server readiness only, not business success.
 - MCP: same-origin `/mcp` — `[CUSTOMIZE: smallest Business RPC catalog; separate bounded business queries from guarded business commands and state each caller intent]`.
-- Database and artifacts: `[CUSTOMIZE: data.db, app-prefixed tables, and managed artifact references]`.
+- Database and artifacts: `[CUSTOMIZE: data/data.db, app-prefixed tables, and managed artifact references]`.
 - Scheduler boundary: external — `[CUSTOMIZE: trigger owner/cadence, or None]`.
 
 ## Boundaries

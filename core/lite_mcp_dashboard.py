@@ -1307,7 +1307,7 @@ def _classify_error(error: Exception, policy: _PolicyState | None) -> _SdkFailur
         return _SdkFailure(
             "database_unavailable",
             "The configured database is unavailable.",
-            recovery_hint="Inspect the server log and repair or restore data.db.",
+            recovery_hint="Inspect the server log and repair or restore data/data.db.",
         )
     if isinstance(error, sqlite3.Error):
         return _SdkFailure(

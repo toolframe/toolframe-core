@@ -200,7 +200,7 @@ def _render_update(context: DashboardContext, entries) -> None:
     save_requested = save_col.button("Save changes", key="example-entry-save")
     reload_requested = reload_col.button(
         "Reload editor",
-        help="Discard unsaved edits and load the latest rows from data.db.",
+        help="Discard unsaved edits and load the latest rows from data/data.db.",
         key="example-entry-reload",
     )
     if reload_requested:
@@ -291,7 +291,7 @@ def render(context: DashboardContext) -> None:
 
     st.header(TITLE)
     st.write(
-        "A small CRUD example backed by `data.db`. It uses parameterized SQL, "
+        "A small CRUD example backed by `data/data.db`. It uses parameterized SQL, "
         "explicit saves, and optimistic concurrency."
     )
 

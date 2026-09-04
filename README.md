@@ -8,16 +8,17 @@ Streamlit `st.App` is mounted at `/`; FastMCP serves modern Streamable HTTP at
 
 > [!WARNING]
 > The server listens on `0.0.0.0` and has no authentication by default. The
-> dashboard is trusted Python code: it can read and write `data.db`, share the
+> dashboard is trusted Python code: it can read and write `data/data.db`, share the
 > Python process with every MCP tool, inherit its environment and secrets, and
 > use the writable workspace. Dashboard results and submitted data are visible
 > to anyone who can reach the LAN address. Use it only on a trusted LAN.
 
 ## Build a release
 
-The distributable is one editable folder and one launch command—not literally
-one executable—because it includes a platform-matched `uv` binary, dashboard
-source, tools, workspace, and runtime directories.
+Each distributable is one self-bootstrapping executable. It embeds the default
+dashboard, migrations, tools, LAN guide, runtime support, and production
+coding-agent skill. UV is downloaded separately on first use to keep the
+launcher small.
 
 The MVP targets macOS first and currently uses Unix inherited file descriptors
 for race-free handoff to Uvicorn.
@@ -26,59 +27,91 @@ Install these prerequisites on the build machine:
 
 - Rust 1.88 or newer, including Cargo
 - GNU Make
-- `uv` 0.12.8 or newer
+- Apple command-line developer tools
 
-The build intentionally refuses to overwrite `dist/lite-mcp`, because that
-folder can contain user data. Move or archive an existing release first.
+Build both macOS 12+ release targets from the repository root:
 
-Then build the complete release folder from the repository root:
-
-```sh
+```console
 make release
-./dist/lite-mcp/lite-mcp
 ```
 
-The release target uses `UV_BIN` when it is set and otherwise finds `uv` on
-`PATH`. To package a specific executable, pass its path to Make:
+Each target directory contains exactly one executable:
 
-```sh
-make release UV_BIN=/path/to/uv
+```text
+dist/
+├── aarch64-apple-darwin/
+│   └── lite-mcp-v0.1.0-macos-12-arm64
+└── x86_64-apple-darwin/
+    └── lite-mcp-v0.1.0-macos-12-x86_64
 ```
 
-`make release` runs [`scripts/package.sh`](scripts/package.sh), which builds the
-optimized Rust binary and assembles the complete distribution at
-`dist/lite-mcp`. To compile only the optimized Rust binary at
-`target/release/lite-mcp`, run `make build` instead. Run `make help` to list
-the available targets.
+Build only one target with its Rust target triple:
 
-The package contains the complete editable dashboard scaffold and the
-`lite-mcp-business-app` coding-agent handbook shipped beside the binary. After
-the first normal server start, its production copy also exists under
-`.agents/skills/`:
+```console
+make release TARGET=x86_64-apple-darwin
+# aliases:
+make release-macos-intel
+make release-macos-arm
+```
 
-The packaging script copies the editable dashboard, migrations, LAN
-agent-discovery documents, and full skill source. Dashboard and skill
-`__pycache__`, `.pyc`, and `.pyo` files are excluded. It does not alter the
-source tree. At runtime, a missing entire
-`dashboard/`, `llms/`, or `migrations/` directory is created from the embedded
-scaffold, and a missing `llms.txt` is created with it. Existing directories and
-files are never overwritten, completed, repaired, or automatically upgraded.
+[`scripts/release.sh`](scripts/release.sh) drives the target matrix. It builds
+each Rust target with a macOS 12.0 deployment target and validates the finished
+launcher architecture and deployment target. At runtime, the launcher selects
+the exact official `uv` asset and checksums in
+[`uv-release-manifest.txt`](uv-release-manifest.txt). The managed environment
+pins the newest `cryptography` release that provides an Intel Mac wheel, so
+first launch on Monterey does not require a local Rust/OpenSSL build toolchain.
 
-The discovery source has a stricter all-or-nothing rule: the root `llms.txt`
-and its `llms/` directory must either both be absent (so the complete default
-scaffold can be created) or both be valid. A partial source tree, unsafe path,
-symlink, wrong file type, invalid UTF-8, missing linked document, or oversized
-document fails startup with the offending path and reason.
+Apple releases use Cargo's target support and the installed Apple SDK. The
+official `cross` project cannot distribute Apple/Darwin images or the macOS SDK
+for licensing reasons, so using `cross` here would require an owner-supplied
+custom image and SDK and would not be a reproducible zero-setup build. See the
+[`cross` target documentation](https://github.com/cross-rs/cross#supported-targets)
+and its [Apple toolchain notes](https://github.com/cross-rs/cross-toolchains#apple-targets).
+
+The release command requires macOS and Rust installed through `rustup`. It
+refuses to overwrite an existing target deployment directory. The command
+prints each executable's SHA-256 without adding a second checksum file.
+
+For local packaging only, `make package` runs
+[`scripts/package.sh`](scripts/package.sh) and assembles the host distribution
+as the single file `dist/lite-mcp`. To compile only the optimized host binary
+at `target/release/lite-mcp`, run `make build`. Neither build command requires
+UV. Run `make help` to list the available targets.
+
+Copy the target executable into a new deployment directory and run it. A file
+download may require restoring its executable bit with `chmod +x`. Before the
+first launch, that directory contains exactly one file:
+
+```text
+lite-mcp/
+└── lite-mcp-v0.1.0-macos-12-x86_64
+```
+
+A normal server launch then materializes the editable working state beside the
+executable. These are runtime and user files, not release payloads:
+
+At runtime, missing `dashboard/`, `tools/`, `llms/`, or `migrations/` source is
+created from the embedded scaffold. The complete `llms/` tree, including
+`llms/llms.txt`, is published together. Existing source directories and files
+are never overwritten, completed, repaired, or automatically upgraded.
+
+The discovery source has a stricter all-or-nothing rule: `llms/` must either be
+absent so the complete default tree can be created, or contain a valid
+`llms/llms.txt` index. A partial source tree, unsafe path, symlink, wrong file
+type, invalid UTF-8, missing linked document, or oversized document fails
+startup with the offending path and reason.
 Detail files are direct regular non-symlink UTF-8 Markdown files named
 `[a-z0-9][a-z0-9_-]*.md`, limited to 256 KiB each; every document linked by
-the root index must be present and reachable.
+the index must be present and reachable.
 
 ### Bundled coding-agent skill
 
+The source handbook at
 [`skills/lite-mcp-business-app`](skills/lite-mcp-business-app/SKILL.md) guides a
 coding agent with filesystem access to develop, doctor, or operate a
-nontechnical owner's app. It is a coding-agent handbook shipped beside the
-binary, not an MCP service. A normal `./lite-mcp` or `./lite-mcp serve` start
+nontechnical owner's app. It is embedded in the binary, not an MCP service or
+second release payload. A normal `lite-mcp` or `lite-mcp serve` start
 atomically installs its production files at
 `.agents/skills/lite-mcp-business-app` beside the executable. `check`,
 `invoke`, and `scaffold` do not install it. The installed copy deliberately
@@ -96,7 +129,7 @@ A nontechnical owner can hand the editable folder to a coding agent with a
 business request such as:
 
 ```text
-Use skills/lite-mcp-business-app/SKILL.md. Turn this folder into a visitor
+Use .agents/skills/lite-mcp-business-app/SKILL.md. Turn this folder into a visitor
 register for reception, leave the app context/domain handbook behind, and show
 me how a trusted peer agent and a person use it.
 ```
@@ -107,7 +140,7 @@ agent starts with the printed LAN `/llms.txt` URL, then connects same-origin
 
 ### LAN agent discovery
 
-The editable [`llms.txt`](llms.txt) is the URL-first handoff for another agent.
+The editable [`llms/llms.txt`](llms/llms.txt) is the URL-first handoff for another agent.
 Give a peer the server's LAN address plus `/llms.txt`, for example
 `http://192.168.1.20:8000/llms.txt`. It is a short progressive index; the
 linked documents under [`llms/`](llms/) describe the app's purpose, current
@@ -123,14 +156,13 @@ automatic installation, and it must not invent a client command. If the client
 does not support this transport, report the exact URL, transport, and blocker
 for the owner to copy.
 
-The root and existing detail files are read on each request, so editing their
+The index and existing detail files are read on each request, so editing their
 content becomes visible after a browser refresh or a peer's next fetch. The
 startup-validated document allowlist is not hot-reloaded: adding or renaming a
 detail file, or changing its safe filename, requires a full restart. `check`
 validates and reports `agentDocuments` without scaffolding; `invoke` does not
-validate or publish these documents. The package script copies the root and
-direct detail files, never follows symlinks, and does not include unrelated
-nested content.
+validate or publish these documents. The binary materializes the index and
+direct detail files together and never follows a pre-existing symlink.
 
 If a scheduled workflow cannot reach that URL, it should pause before changing
 business state, show a clear **[app name] MCP unavailable** warning, and return the
@@ -139,12 +171,23 @@ self-contained copyable issue from
 The issue preserves the attempted URL, exact error, workflow impact, unknowns,
 safe owner checks, and maintainer diagnostics.
 
-On first online launch, UV downloads Python 3.14 and the pinned core,
-dashboard, and tool dependencies into `runtime/`; no system Python is
-required. UV 0.12.8 or newer is required. Pass `--offline` only after those
-artifacts are cached.
+Every macOS release selects the exact target-matched UV version pinned in
+`uv-release-manifest.txt`. On every launch, the launcher verifies the managed
+copy's SHA-256, version, and target triple. If `.lite-mcp/uv` is absent, older,
+newer, broken, or for the wrong CPU, `lite-mcp` downloads the official archive
+over HTTPS, shows a progress bar with transfer rate, elapsed time, and ETA,
+verifies both the archive and executable SHA-256 digests, and atomically
+installs the executable before using it. Temporary download and extraction
+files stay inside `.lite-mcp/` and are removed automatically.
 
-At startup the launcher validates and applies migrations to `data.db`, then
+An explicit `--uv-path`/`LITE_MCP_UV` override must already match the pin and
+is never overwritten. Without an override, supported macOS builds do not use a
+system UV from `PATH`; the private verified copy is deterministic. `--offline`
+requires `.lite-mcp/uv`, Python 3.14, and dependencies to be present already.
+No system UV or system Python is required for a normal online first launch.
+The downloader uses the `/usr/bin/curl` and `/usr/bin/tar` included with macOS.
+
+At startup the launcher validates and applies migrations to `data/data.db`, then
 binds the preferred or next available port without a release/rebind race,
 validates the dashboard, loads every tool, and prints categorized diagnostics
 to stderr. A typical terminal shows:
@@ -208,15 +251,15 @@ stdout and emits JSON on failure, making it suitable for coding-agent gates.
 It also validates the URL-first `llms.txt` index and its direct detail files,
 and reports their paths and reachable document names under `agentDocuments`.
 
-Preflight does not bind a port, mutate the configured `data.db` or its SQLite
+Preflight does not bind a port, mutate the configured `data/data.db` or its SQLite
 sidecars, create logs, or scaffold missing source directories. If the database
-exists, `data.db` and any existing `-wal`/`-shm` files are copied before SQLite
+exists, the database and any existing `-wal`/`-shm` files are copied before SQLite
 opens the temporary snapshot; hashes and the source file set are checked before
 and after the copy. Stop the server and other database writers first: a change
 during copying fails preflight and asks the caller to retry. A missing database
 uses a new in-memory database. Tool imports receive the shared database adapter
 configured against a separate temporary database. Check may provision Python
-and dependencies and update managed content under `runtime/`; imported tools
+and dependencies and update managed content under `.lite-mcp/`; imported tools
 and widgets remain trusted
 Python code and can perform other import-time side effects. Their stdout is
 forwarded to stderr so stdout remains one JSON document. The report includes
@@ -265,7 +308,7 @@ repairs, or replaces a user-owned directory.
 
 ## Database migrations
 
-`migrations/` is the source of truth for the `data.db` schema and includes an
+`migrations/` is the source of truth for the `data/data.db` schema and includes an
 agent-facing [authoring reference](migrations/README.md). The default
 `0000_bootstrap.sql` creates the table used by the example dashboard widget.
 The launcher also creates and validates its private migration ledger and
@@ -302,7 +345,7 @@ Migration SQL may contain multiple schema or data statements. It must not
 contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PRAGMA`,
 `ATTACH`, `DETACH`, or `CREATE TRIGGER`; the launcher owns the transaction,
 SQLite configuration, and internal table protection. Migrations run only at
-process startup, so restart `lite-mcp` after adding one. Back up `data.db`
+process startup, so restart `lite-mcp` after adding one. Back up `data/data.db`
 before destructive migrations.
 
 If the entire migrations directory is absent, the launcher creates the
@@ -374,7 +417,7 @@ needed.
 
 ## Dashboard database helper
 
-Widgets use the shared `data.db` through `context.db` (or the equivalent
+Widgets use the shared `data/data.db` through `context.db` (or the equivalent
 `get_context()` result):
 
 ```python
@@ -689,11 +732,11 @@ be one transaction.
 
 ## Structured logging and audit
 
-The runtime writes two synchronous UTF-8 JSONL streams under `logs/`, one file
-per UTC date:
+The runtime writes two synchronous UTF-8 JSONL streams under
+`.lite-mcp/logs/`, one file per UTC date:
 
 ```text
-logs/
+.lite-mcp/logs/
 ├── audit-YYYY-MM-DD.jsonl
 └── mcp-YYYY-MM-DD.jsonl
 ```
@@ -704,7 +747,7 @@ arguments, and normalized results. `audit-*`
 contains dashboard/database and managed-artifact mutations, malformed or rejected
 MCP requests, Host/Origin rejections, retention and tail recovery, and Python
 runtime start/stop/fatal events. Rust migration, UV, and bootstrap diagnostics
-remain console-only. A process-exclusive `logs/.lite-mcp.lock` prevents two
+remain console-only. A process-exclusive `.lite-mcp/logs/.lite-mcp.lock` prevents two
 instances from writing the same directory.
 
 Every record uses schema version 1, a UTC RFC3339 timestamp, a process
@@ -720,7 +763,7 @@ represented by a head-and-tail preview with a truncation marker, original byte
 count, and SHA-256. Tracebacks have an independent 64 KiB limit with the same
 metadata. JSON-compatible values are preserved; binary or non-UTF-8 data is
 base64-encoded. There is no additional redaction, so SQL, parameters,
-payloads, results, and secrets may appear in these files. Treat `logs/` as
+payloads, results, and secrets may appear in these files. Treat `.lite-mcp/logs/` as
 sensitive and restrict access to trusted operators.
 
 Dashboard audit coverage is guaranteed for `context.db.execute()`,
@@ -905,21 +948,21 @@ reduces DNS-rebinding exposure but is not authentication or a code sandbox.
 | `--host` | `LITE_MCP_HOST` | `0.0.0.0` |
 | `--port` | `LITE_MCP_PORT` | `8000` |
 | `--port-search-span` | `LITE_MCP_PORT_SEARCH_SPAN` | `100` |
-| `--database` | `LITE_MCP_DB` | `<executable>/data.db` |
+| `--database` | `LITE_MCP_DB` | `<executable>/data/data.db` |
 | `--migrations-dir` | `LITE_MCP_MIGRATIONS_DIR` | `<executable>/migrations` |
 | `--tools-dir` | `LITE_MCP_TOOLS` | `<executable>/tools` |
 | `--dashboard-dir` | `LITE_MCP_DASHBOARD_DIR` | `<executable>/dashboard` |
-| `--llms-file` | `LITE_MCP_LLMS_FILE` | `<executable>/llms.txt` |
+| `--llms-file` | `LITE_MCP_LLMS_FILE` | `<executable>/llms/llms.txt` |
 | `--llms-dir` | `LITE_MCP_LLMS_DIR` | `<executable>/llms` |
 | `--workspace-dir` | `LITE_MCP_WORKSPACE` | `<executable>/workspace` |
-| `--runtime-dir` | `LITE_MCP_RUNTIME` | `<executable>/runtime` |
-| `--logs-dir` | `LITE_MCP_LOGS_DIR` | `<executable>/logs` |
+| `--runtime-dir` | `LITE_MCP_RUNTIME` | `<executable>/.lite-mcp` |
+| `--logs-dir` | `LITE_MCP_LOGS_DIR` | `<executable>/.lite-mcp/logs` |
 | `--log-retention-days` | `LITE_MCP_LOG_RETENTION_DAYS` | `14` UTC date buckets |
 | `--log-max-total-mib` | `LITE_MCP_LOG_MAX_TOTAL_MIB` | `256` MiB combined |
 | `--verbose` | `LITE_MCP_VERBOSE` | false |
 | `--no-color` | `LITE_MCP_NO_COLOR` | false; `NO_COLOR` also disables ANSI |
-| `--uv-path` | `LITE_MCP_UV` | sibling `uv`, then PATH |
-| `--offline` | `LITE_MCP_OFFLINE` | false |
+| `--uv-path` | `LITE_MCP_UV` | verified `<runtime-dir>/uv`, otherwise verified download |
+| `--offline` | `LITE_MCP_OFFLINE` | false; prevents a missing UV, Python, or dependency download |
 | `--max-concurrency` | `LITE_MCP_MAX_CONCURRENCY` | 60; `0` is unlimited |
 | `--tool-timeout` | `LITE_MCP_TOOL_TIMEOUT` | 60 seconds; `0` disables |
 | `--result-limit` | `LITE_MCP_RESULT_LIMIT` | 4 MiB |
@@ -944,15 +987,14 @@ relative to the compiled executable:
 
 ```sh
 cargo run --release -- \
-  --database ./data.db \
+  --database ./data/data.db \
   --migrations-dir ./migrations \
   --tools-dir ./tools \
   --dashboard-dir ./dashboard \
-  --llms-file ./llms.txt \
+  --llms-file ./llms/llms.txt \
   --llms-dir ./llms \
   --workspace-dir ./workspace \
-  --runtime-dir ./runtime \
-  --uv-path /path/to/uv
+  --runtime-dir ./.lite-mcp
 ```
 
 Streamlit is configured for headless operation, disabled telemetry, CORS/XSRF
@@ -971,6 +1013,7 @@ cargo build --release
 
 uv run --python 3.14 \
   --with 'anyio>=4.10,<5' \
+  --with cryptography==48.0.1 \
   --with fastapi==0.135.2 \
   --with fastmcp==4.0.0 \
   --with pandas \
