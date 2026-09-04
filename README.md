@@ -24,8 +24,11 @@ dashboard, migrations, tools, LAN guide, runtime support, and production
 coding-agent skill. UV is downloaded separately on first use to keep the
 launcher small.
 
-The MVP targets macOS first and currently uses Unix inherited file descriptors
-for race-free handoff to Uvicorn.
+The runtime supports macOS, Linux, and Windows. Unix builds hand an inherited
+listener to Uvicorn without a release/rebind race. Windows builds use a native
+process Job Object for tree cleanup and have Python bind the selected host and
+port. The checked-in release script still emits the two macOS artifacts; the
+cross-platform release matrix is intentionally a separate build-system change.
 
 Install these prerequisites on the build machine:
 
@@ -175,26 +178,30 @@ self-contained copyable issue from
 The issue preserves the attempted URL, exact error, workflow impact, unknowns,
 safe owner checks, and maintainer diagnostics.
 
-Every macOS release selects the exact target-matched UV version pinned in
-`uv-release-manifest.txt`. On every launch, the launcher verifies the managed
-copy's SHA-256, version, and target triple. If `.lite-mcp/uv` is absent, older,
-newer, broken, or for the wrong CPU, `lite-mcp` downloads the official archive
-over HTTPS, shows a progress bar with transfer rate, elapsed time, and ETA,
-verifies both the archive and executable SHA-256 digests, and atomically
-installs the executable before using it. Temporary download and extraction
-files stay inside `.lite-mcp/` and are removed automatically.
+Every supported runtime target selects the exact target-matched UV version
+pinned in `uv-release-manifest.txt`. On every launch, the launcher verifies the
+managed copy's SHA-256, version, and target triple. If `.lite-mcp/uv` is absent,
+older, newer, broken, or for the wrong CPU, `lite-mcp` downloads the official
+archive over HTTPS, shows a progress bar with transfer rate, elapsed time, and
+ETA, verifies both the archive and executable SHA-256 digests, and atomically
+installs the executable before using it. Temporary download and extraction files
+stay inside `.lite-mcp/` and are removed automatically.
 
-An explicit `--uv-path`/`LITE_MCP_UV` override must already match the pin and
-is never overwritten. Without an override, supported macOS builds do not use a
-system UV from `PATH`; the private verified copy is deterministic. `--offline`
-requires `.lite-mcp/uv`, Python 3.14, and dependencies to be present already.
-No system UV or system Python is required for a normal online first launch.
-The downloader uses the `/usr/bin/curl` and `/usr/bin/tar` included with macOS.
+On Windows the managed executable is `.lite-mcp/uv.exe`. An explicit
+`--uv-path`/`LITE_MCP_UV` override must already match the pin and is never
+overwritten. Without an override, supported builds do not use a system UV from
+`PATH`; the private verified copy is deterministic. `--offline` requires the
+managed UV executable, Python 3.14, and dependencies to be present already. No
+system UV, system Python, `curl`, or `tar` is required for a normal online first
+launch: HTTPS download and `.tar.gz`/`.zip` extraction are built into the Rust
+launcher.
 
 At startup the launcher validates and applies migrations to `data/data.db`, then
-binds the preferred or next available port without a release/rebind race,
-validates the dashboard, loads every tool, and prints categorized diagnostics
-to stderr. A typical terminal shows:
+selects the preferred or next available port, validates the dashboard, loads
+every tool, and prints categorized diagnostics to stderr. Unix keeps the
+selected listener open through child startup. On Windows, Python immediately
+rebinds the selection and startup fails clearly if another process claims the
+port during that short handoff. A typical terminal shows:
 
 ```text
 07:21:48.700 [SKILL] installed bundled business skill at /path/to/lite-mcp/.agents/skills/lite-mcp-business-app

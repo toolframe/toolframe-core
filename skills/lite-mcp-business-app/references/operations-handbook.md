@@ -39,12 +39,14 @@ Run from the packaged folder:
 ```
 
 `./lite-mcp serve` is the explicit equivalent. On the first online start, the
-launcher downloads its pinned, CPU-matched UV into `.lite-mcp/uv`, showing a
+launcher downloads its pinned, CPU-matched UV into `.lite-mcp/`, showing a
 progress bar, transfer rate, elapsed time, and ETA. It then downloads Python
-3.14 and shared dependencies into `.lite-mcp/`. An explicit `--uv-path` (or
-`LITE_MCP_UV`) must match the pin; otherwise a supported macOS build ignores
-system UV installations. Use the local README or `./lite-mcp --help` for
-current flags. `--offline` works only after UV, Python, and packages are cached.
+3.14 and shared dependencies into the same private runtime directory. An
+explicit `--uv-path` (or `LITE_MCP_UV`) must match the pin; otherwise a supported
+build ignores system UV installations. Linux and Windows use the same managed
+rule (`.lite-mcp/uv.exe` on Windows). Use the local README or
+`./lite-mcp --help` for current flags. `--offline` works only after UV, Python,
+and packages are cached.
 
 The terminal prints several useful addresses. The first local address is for
 the same computer:
