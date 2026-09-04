@@ -1,8 +1,8 @@
 # App context
 
-> Keep this file in the same folder as `toolframe`. Write for the next human or
-> coding agent. Replace every bracketed prompt with a concrete fact; delete
-> prompts that do not apply.
+> Keep this private file beside `toolframe`. It is development context for the
+> master agent, not a document served to peer agents. Replace every bracketed
+> prompt with a concrete fact; delete prompts that do not apply.
 
 ## App identity
 
@@ -88,12 +88,22 @@ has consciously accepted the local exposure.
 
 ## Source map
 
+Domain code may depend on another domain only through an explicit high-level
+business function exported by that domain's root `__init__.py`. Record each
+real dependency; leave the table empty rather than inventing a shared layer.
+
+| Consumer domain | Provider domain/public function | Business reason |
+| --- | --- | --- |
+| [domain or none] | [`from domains.<domain> import <function>`] | [why this coupling is required] |
+
 | Business capability | Source of truth | Notes for the next agent |
 | --- | --- | --- |
-| Schema | `migrations/` | [latest migration and immutable-history note] |
-| MCP tools | `tools/` | [Business RPC commands/queries, their intents, and private helper modules] |
-| Dashboard | `dashboard/app.py`, `dashboard/widgets/` | [entry point and widget list] |
-| LAN agent discovery | `llms/llms.txt`, `llms/*.md` | [linked capability/context/workflow pages and last reconciliation] |
+| App composition | `app/dashboard.py` | [registry use or custom composition and visible app identity] |
+| Shared dependencies | `app/pyproject.toml` | [why each app-wide package is required] |
+| Domain model/schema | `domains/<domain>/model/`, `domains/<domain>/migrations/` | [owning domain, latest global migration, and immutable-history note] |
+| MCP tools | `domains/<domain>/tools/` | [narrow commands/queries, intents, and private `_*.py` helpers] |
+| Domain UI | `domains/<domain>/ui/` | [auto-loaded direct widgets and manual composition choices] |
+| LAN agent discovery | `app/llms.txt`, `domains/<domain>/llms/*.md` | [explicitly linked peer documents and last reconciliation] |
 | Large results/files | `workspace/artifacts/` | [artifact naming and retrieval convention] |
 
 ## Decisions and open issues

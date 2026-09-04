@@ -1,9 +1,10 @@
 # Domain model: `<business name>`
 
-This document is the durable hand-off for the next human or coding agent. It
-uses the business’s own language and records the smallest model that makes the
-workflow unambiguous. Replace the placeholders; remove sections that truly do
-not apply. Do not leave two competing definitions in code and documentation.
+This private document is the durable hand-off for the master development agent.
+It uses the business’s own language and records the smallest model that makes
+the workflow unambiguous. It is not served to peers. Replace the placeholders;
+remove sections that truly do not apply. Do not leave two competing definitions
+in code and documentation.
 
 ## Purpose and boundary
 
@@ -13,6 +14,8 @@ not apply. Do not leave two competing definitions in code and documentation.
 - Human entrance: `<dashboard pages/widgets>`
 - Agent entrance: `<MCP tools and `/mcp` connection>`
 - Data source and database: `<data/data.db and any external read-only references>`
+- Owning source domain(s): `<domains/<business_domain>>`
+- Cross-domain public APIs: `<explicit high-level functions exported from domain __init__.py, or none>`
 
 ## Ubiquitous language
 
@@ -46,15 +49,16 @@ Rules that must remain true across every write:
 
 ## SQLite mapping
 
-User tables use the `app_` prefix. The migration directory is the schema source
-of truth. Applied migrations are immutable; add the next contiguous migration
-for a change. Keep launcher-owned `_toolframe_migrations` and
+User tables use the owning domain's prefix, such as `<business_domain>_`. Files
+under every domain's `migrations/` form one global schema history. Applied
+migrations are immutable; add the next global contiguous version under the
+owning domain. Keep launcher-owned `_toolframe_migrations` and
 `_toolframe_idempotency` tables out of user migrations.
 
 | Table | Columns and constraints | Indexes | Created/changed by |
 | --- | --- | --- | --- |
-| `app_<entity>` | `<columns, nullability, checks, foreign keys, version>` | `<business query indexes>` | `<migration number>` |
-| `app_<entity>_events` | `<append-only event columns>` | `<history indexes>` | `<migration number>` |
+| `<business_domain>_<entity>` | `<columns, nullability, checks, foreign keys, version>` | `<business query indexes>` | `<global migration number>` |
+| `<business_domain>_<entity>_events` | `<append-only event columns>` | `<history indexes>` | `<global migration number>` |
 
 Use UTC timestamps, bound parameters, and short transactions. Large outputs
 belong in managed artifact references rather than oversized JSON columns.
@@ -106,6 +110,10 @@ helpers. They must show validation, conflict, and retryable errors clearly; they
 must not accept arbitrary SQL from a browser. The app’s MCP endpoint is
 `/mcp`; confirm the printed LAN URL before handing it to a peer agent.
 
+For expected recoverable widget errors, use the one core-owned error card.
+Programming failures remain fatal. Do not model repair/schema tools as peer
+capabilities; route missing behavior to the master development agent.
+
 ## Tests and completion evidence
 
 Trace every published tool to a caller intent and observable business outcome.
@@ -124,8 +132,9 @@ an MCP/tool call. Record the date, command, and observed evidence here:
 ## Change and reconciliation record
 
 When the business changes, update this document, `APP_CONTEXT.md`, the next
-migration, affected tools, widgets, and tests together. Never edit an applied
-migration or hide a contradiction in one caller.
+global domain-owned migration, affected model, tools, widgets, linked peer
+documents, and tests together. Never edit an applied migration or hide a
+contradiction in one caller.
 
 | Date | Decision/change | Files or migration | Owner |
 | --- | --- | --- | --- |

@@ -598,7 +598,7 @@
         <div>
           <h2 id="notice-title">Open, trusted-code access</h2>
           <p>This LAN server has no authentication. Loaded Python tools and the Streamlit dashboard share the process, environment, secrets, workspace, and database. Run only code you trust.</p>
-          <p>Edit the main dashboard in <code>dashboard/</code>, then open <a href="/">/</a> to view it. This page remains available at <code>/info</code> for built-in system diagnostics.</p>
+          <p>Edit <code>app/dashboard.py</code> or a domain's <code>ui/</code> widgets, then open <a href="/">/</a> to view the app. This page remains available at <code>/info</code> for built-in system diagnostics.</p>
           <div class="endpoint">
             <span>MCP endpoint</span>
             <code>/mcp</code>
@@ -838,7 +838,7 @@
         : `${payload.dependencies.length} · ${payload.dependencies.join(", ")}`;
 
       if (payload.tools.length === 0) {
-        toolList.replaceChildren(setMessage("empty", "∅", "No tools loaded", "Add one direct lower_snake_case .py file to the tools folder, then restart toolframe."));
+        toolList.replaceChildren(setMessage("empty", "∅", "No tools loaded", "Add one direct lower_snake_case .py file under a domain's tools folder, then restart toolframe."));
         return;
       }
 

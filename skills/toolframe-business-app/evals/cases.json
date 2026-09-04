@@ -1,82 +1,85 @@
 {
-  "version": 1,
+  "version": 2,
   "skill": "toolframe-business-app",
   "routing": {
     "should_activate": [
       {
-        "id": "route-positive-01",
-        "prompt": "I have the toolframe folder but I am not technical. Build me a LAN dashboard where scheduled agents claim pending work, read my instructions, report progress, and leave results for review."
+        "id": "route-positive-domain-app",
+        "prompt": "Turn this editable Toolframe folder into a LAN inventory approval app with a human dashboard and peer-agent MCP workflow."
       },
       {
-        "id": "route-positive-02",
-        "prompt": "Turn this editable toolframe binary folder into a small inventory approval app. Add the SQLite migrations, MCP tools, dashboard widgets, and a handbook for the next agent."
+        "id": "route-positive-domain-change",
+        "prompt": "Add a returns domain, migration, narrow MCP command, and dashboard widget to my existing Toolframe business app."
       },
       {
-        "id": "route-positive-03",
-        "prompt": "Doctor this toolframe business app: check fails after I added 0003 and the dashboard no longer starts. Explain it without asking me to debug Python."
+        "id": "route-positive-doctor",
+        "prompt": "Doctor this Toolframe app: it stopped starting after I added a domain widget. Diagnose it without losing my data."
       },
       {
-        "id": "route-positive-04",
-        "prompt": "Is toolframe still the right fit for this local office workflow, or has it grown into something that needs a dedicated app?"
+        "id": "route-positive-peer",
+        "prompt": "Help a peer agent use this Toolframe app from its LAN /llms.txt URL and explain what it may do when a capability is missing."
       },
       {
-        "id": "route-positive-05",
-        "prompt": "Add another business state and review action to my existing toolframe app, update its domain docs, and prove peer agents can still use /mcp."
+        "id": "route-positive-docs",
+        "prompt": "Reconcile APP_CONTEXT.md, DOMAIN_MODEL.md, and the peer llms.txt after changing this Toolframe workflow."
       },
       {
-        "id": "route-positive-06",
-        "prompt": "Help a peer Codex on my LAN use the job tools from this toolframe app, and make the dashboard clear enough for a nontechnical reviewer."
+        "id": "route-positive-fit",
+        "prompt": "Is Toolframe still a safe fit now that this office workflow needs authenticated public users?"
       },
       {
-        "id": "route-positive-07",
-        "prompt": "My scheduled workflow cannot reach the LAN toolframe server. Warn me without marking the task failed and give me a complete issue I can copy to the maintainer."
-      },
-      {
-        "id": "route-positive-08",
-        "prompt": "Customize this toolframe app's /llms.txt discovery pages so another LAN agent can register /mcp and build my approval workflow from the published capabilities."
+        "id": "route-positive-outage",
+        "prompt": "The scheduled peer cannot reach this Toolframe app's /mcp route. Pause safely and give me a copyable maintainer report."
       }
     ],
     "should_not_activate": [
       {
-        "id": "route-negative-01",
-        "prompt": "Build a generic FastMCP server with OAuth and deploy it to Kubernetes.",
-        "reason": "Generic public-service development is outside the editable toolframe business-app boundary."
+        "id": "route-negative-fastmcp",
+        "prompt": "Build a generic FastMCP OAuth server and deploy it to Kubernetes.",
+        "reason": "This is not an editable Toolframe business app."
       },
       {
-        "id": "route-negative-02",
-        "prompt": "Make this standalone Streamlit chart look better and add Plotly.",
-        "reason": "Standalone frontend work does not involve a toolframe business app."
+        "id": "route-negative-streamlit",
+        "prompt": "Make this standalone Streamlit chart look better.",
+        "reason": "Standalone Streamlit UI work is outside Toolframe's app contract."
       },
       {
-        "id": "route-negative-03",
+        "id": "route-negative-postgres",
         "prompt": "Normalize this PostgreSQL schema for a multi-tenant SaaS product.",
-        "reason": "Database design alone and a different deployment model should not route here."
+        "reason": "The database and deployment model do not match Toolframe."
       },
       {
-        "id": "route-negative-04",
-        "prompt": "Why does uv download Python instead of using my system interpreter?",
-        "reason": "A runtime support question alone belongs to ordinary repository diagnostics."
-      },
-      {
-        "id": "route-negative-05",
+        "id": "route-negative-skill",
         "prompt": "Create an Agent Skill for our release process.",
-        "reason": "Skill authoring should route to the skill-creation capability."
+        "reason": "Generic skill authoring uses the skill-creation workflow."
       },
       {
-        "id": "route-negative-06",
-        "prompt": "Review the changes on this branch against the issue specification.",
-        "reason": "Branch review should route to code review."
+        "id": "route-negative-review",
+        "prompt": "Review this branch against its issue specification.",
+        "reason": "Branch review uses the code-review workflow."
       }
     ]
   },
   "progressive_reads": [
     {
-      "id": "read-build-job-desk",
-      "prompt": "Build the scheduled-agent job desk in my toolframe folder.",
+      "id": "read-develop-domain",
+      "prompt": "Build a small non-queue visitor register in this Toolframe app.",
+      "expected": [
+        "references/development-handbook.md",
+        "assets/APP_CONTEXT.template.md",
+        "assets/DOMAIN_MODEL.template.md"
+      ],
+      "forbidden": [
+        "references/job-domain-model.md",
+        "references/product-decisions.md"
+      ]
+    },
+    {
+      "id": "read-develop-job",
+      "prompt": "Build a scheduled-agent work desk with claims, leases, attempts, and human review.",
       "expected": [
         "references/development-handbook.md",
         "references/job-domain-model.md",
-        "references/operations-handbook.md",
         "assets/APP_CONTEXT.template.md",
         "assets/DOMAIN_MODEL.template.md"
       ],
@@ -86,7 +89,7 @@
     },
     {
       "id": "read-doctor",
-      "prompt": "Doctor why this toolframe dashboard fails startup after a widget edit.",
+      "prompt": "Diagnose why this Toolframe domain tool prevents startup.",
       "expected": [
         "references/operations-handbook.md"
       ],
@@ -96,202 +99,134 @@
       ]
     },
     {
-      "id": "read-fit-check",
-      "prompt": "Can toolframe safely be the public customer portal for this workflow?",
-      "expected": [
-        "references/operations-handbook.md"
-      ],
-      "forbidden": [
-        "references/job-domain-model.md"
-      ]
-    },
-    {
-      "id": "read-custom-business-app",
-      "prompt": "Create a local equipment checkout app in toolframe; it has no worker queue.",
-      "expected": [
-        "references/development-handbook.md",
-        "references/operations-handbook.md",
-        "assets/APP_CONTEXT.template.md",
-        "assets/DOMAIN_MODEL.template.md"
-      ],
-      "forbidden": [
-        "references/job-domain-model.md",
-        "references/product-decisions.md"
-      ]
-    },
-    {
-      "id": "read-maintain-skill",
-      "prompt": "Review why the toolframe-business-app handbook chose these Job states before changing the skill.",
-      "expected": [
-        "references/product-decisions.md",
-        "evals/cases.json"
-      ],
-      "forbidden": []
-    },
-    {
-      "id": "read-mcp-unavailable",
-      "prompt": "The scheduled agent gets connection refused from the saved LAN /mcp URL. Return the workflow warning and a copyable issue for me.",
+      "id": "read-outage",
+      "prompt": "A peer receives connection refused from /mcp; create the paused-workflow response.",
       "expected": [
         "references/operations-handbook.md",
         "assets/MCP_UNAVAILABLE_ISSUE.template.md"
       ],
       "forbidden": [
         "references/development-handbook.md",
-        "references/job-domain-model.md",
-        "references/product-decisions.md"
+        "references/job-domain-model.md"
       ]
     },
     {
-      "id": "read-llms-authoring",
-      "prompt": "Update the LAN agent discovery pages for this existing non-queue inventory app after adding a business tool.",
+      "id": "read-maintain-policy",
+      "prompt": "Change the Toolframe business-app skill's domain boundary policy.",
       "expected": [
-        "references/development-handbook.md",
-        "references/operations-handbook.md"
+        "references/product-decisions.md",
+        "evals/cases.json"
       ],
-      "forbidden": [
-        "references/job-domain-model.md",
-        "references/product-decisions.md"
-      ]
+      "forbidden": []
     }
   ],
   "end_to_end": [
     {
-      "id": "e2e-scheduled-job-desk",
-      "prompt": "In a fresh editable toolframe distribution, build a scheduled-agent work desk for a nontechnical owner. A peer agent claims due work, reads an immutable instruction context, records progress, submits a result, and waits for human review.",
+      "id": "e2e-domain-owned-app",
+      "prompt": "Build a tiny LAN purchase-request app in a fresh Toolframe distribution. Humans submit and review requests; a peer lists requests needing review.",
       "assertions": [
-        "The agent identifies scheduling as external and toolframe as the durable LAN handoff layer.",
-        "APP_CONTEXT.md and DOMAIN_MODEL.md are created or reconciled before implementation completes.",
-        "The Job FSM, transition guards, leases, attempts, context versions, results, reviews, and events are explicit.",
-        "Applied migration history is preserved and schema changes use the next contiguous migration.",
-        "The MCP catalog is a small Business RPC surface: queries answer bounded workflow questions, commands complete guarded business outcomes, retriable commands are idempotent, and stale leases are rejected.",
-        "Dashboard writes use parameterized supported helpers and expose actionable errors.",
-        "The full create-to-review loop is verified through check, invoke or MCP, and the dashboard.",
-        "LAN connection instructions use the tested printed LAN address and /mcp.",
-        "The completion report states limitations and any escalation trigger."
+        "The master agent uses root APP_CONTEXT.md and DOMAIN_MODEL.md, app/dashboard.py, app/llms.txt, app/pyproject.toml, and one domains/purchase_requests tree.",
+        "No legacy root dashboard, tools, migrations, llms, or generic shared source folder is created.",
+        "Business rules live in the domain model and are shared by its UI and tool rather than duplicated.",
+        "The migration file lives under the owning domain, uses the next global number, and creates domain-prefixed tables.",
+        "The public MCP surface contains only the bounded review query/command needed by the workflow, not CRUD or SQL.",
+        "A direct domain UI widget is auto-discovered and app/dashboard.py remains free to compose it differently.",
+        "APP_CONTEXT.md and DOMAIN_MODEL.md remain private while app/llms.txt links only needed peer documents.",
+        "Check, startup, dashboard, MCP tool-list, representative tool calls, and one completed business loop are verified."
       ]
     },
     {
-      "id": "e2e-non-queue-app",
-      "prompt": "Build a tiny LAN-only visitor log in toolframe for one receptionist. It needs data entry, a daily dashboard, and a peer agent tool for summaries, but no job queue.",
+      "id": "e2e-cross-domain",
+      "prompt": "Add fulfillment and billing domains. Billing needs to request one fulfillment promise, but should not depend on order storage or UI.",
       "assertions": [
-        "The agent notices the fresh Unnamed identity, proposes business-specific app names with one recommendation, and does not use Toolframe as the app name.",
-        "The agent uses the business-first workflow without forcing the canonical Job domain onto the app.",
-        "The schema, tools, widget, and local docs use visitor-log language.",
-        "The MCP surface exposes only intent-shaped business queries or commands required by the visitor workflow; it does not mirror visitor tables as generic CRUD tools.",
-        "The agent still applies migration, parameterization, validation, check, startup, LAN, and escalation rules.",
-        "The chosen or explicitly provisional app name replaces Unnamed consistently in the Dashboard, APP_CONTEXT.md, llms/llms.txt, and llms/context.md while Toolframe remains the framework name."
+        "The agent first tests whether two bounded domains are justified by language and invariants.",
+        "Fulfillment exports one high-level business function from domains/fulfillment/__init__.py.",
+        "Billing imports that function with from domains.fulfillment import <business_function> only where needed.",
+        "Billing never imports fulfillment.model, tools, ui, migrations, or llms and no shared dumping-ground package is introduced.",
+        "Architecture check and focused tests prove the public API and reject a deep-import regression."
       ]
     },
     {
-      "id": "e2e-doctor",
-      "prompt": "The app stopped starting after a new tool and migration. Diagnose and repair it without losing my data.",
+      "id": "e2e-global-migrations",
+      "prompt": "The existing customer domain owns migrations 0000 and 0001. Add the first invoice-domain schema safely.",
       "assertions": [
-        "The agent starts with non-mutating inspection and check --format json.",
-        "It preserves applied migrations and user data, backs up before a necessary data repair, and fixes the reported source instead of bypassing startup validation.",
-        "It classifies retryability and verifies startup, health, dashboard, and MCP after repair.",
-        "It keeps the repair scoped to the diagnosed failure and does not enter the Develop workflow or redesign the business domain."
+        "The invoice migration is globally numbered 0002 rather than restarting at 0000.",
+        "Existing applied migration bytes, filenames, locations, and checksums are preserved.",
+        "The new file lives under domains/invoicing/migrations and uses invoicing-prefixed table names.",
+        "Duplicate and gap handling is fail-closed and check is run without mutating configured data."
       ]
     },
     {
-      "id": "e2e-mcp-unavailable-handoff",
-      "prompt": "A scheduled peer agent cannot connect to http://192.168.1.20:8000/mcp and therefore cannot query pending work. Produce the workflow response for the user.",
+      "id": "e2e-peer-authority",
+      "prompt": "A peer reading /llms.txt needs an unsupported write and sees a widget error. Decide what it should do.",
       "assertions": [
-        "The response begins with a visible MCP-unavailable warning and says the workflow is paused before any business item was read or changed.",
-        "It treats loss of MCP access as an integration/infrastructure issue rather than changing a Job to failed, blocked, done, or any invented state.",
-        "It distinguishes observed facts from unknowns and does not claim the server is down when only peer reachability is known.",
-        "It includes one self-contained Markdown issue block the user can copy without reconstructing context from the surrounding response.",
-        "The issue contains observation time, attempted Dashboard/MCP URL, caller/source when known, exact symptom, workflow impact, last confirmed business state, retryability, safe owner checks, maintainer diagnostics, and evidence placeholders.",
-        "It asks for no authentication workaround, performs no arbitrary SQL repair, and gives the external scheduler or owner an explicit next action."
+        "The peer uses only explicitly documented MCP business tools and does not attempt raw SQL, schema, source, or repair operations.",
+        "The peer preserves the exact missing intent or error and trace ID and routes it to the master development agent.",
+        "The response does not expose APP_CONTEXT.md, DOMAIN_MODEL.md, an internal error catalog, or the private SQL reference.",
+        "A recoverable widget condition uses one core error card; a programming defect is treated as fatal."
       ]
     },
     {
-      "id": "e2e-llms-discovery",
-      "prompt": "You only have http://192.168.1.20:8000/llms.txt and my request to automate our approval workflow. Discover what this server is, connect it to your agent client, and propose the executable workflow.",
+      "id": "e2e-doctor-fail-closed",
+      "prompt": "One domain widget has a syntax error and another domain's tools are healthy. Keep the server useful while repairing it.",
       "assertions": [
-        "The agent identifies the same-origin /mcp endpoint as an unauthenticated trusted-LAN MCP server using Streamable HTTP, without inventing SSE, stdio, authentication, or a client-specific command.",
-        "It follows the linked context, capability, workflow, and operations documents progressively instead of expecting every detail in llms.txt.",
-        "It configures or asks the user to configure the current client's MCP registry, then proves the connection by listing actual tools before claiming installation success.",
-        "It maps the user's request only to published Business RPC commands/queries and documented state rules; it does not treat table CRUD, execute_sql, or a demo widget as a production workflow API.",
-        "It distinguishes a client-side workflow using existing capabilities from server-side app development that requires filesystem access, migrations, tools, dashboard code, and documentation changes.",
-        "It produces a bounded workflow with trigger, reads, guarded mutations, retry/error handling, human review, and completion evidence, or states the exact missing server capability instead of inventing one."
+        "The agent rejects the premise of serving the healthy subset because Toolframe startup is fail-closed.",
+        "It captures check JSON and stderr, names the broken public source, and preserves data/migration history.",
+        "It does not hide, rename, or skip the broken widget and does not weaken validation.",
+        "After authorized repair it reruns check, restarts, and verifies the full widget/tool catalog."
+      ]
+    },
+    {
+      "id": "e2e-llms-projection",
+      "prompt": "Update peer discovery after adding one inventory query without exposing internal development context.",
+      "assertions": [
+        "app/llms.txt stays authored and concise; Toolframe does not generate a tool catalog into it.",
+        "Only exact /llms/<domain>/<name>.md links are added and their targets live under that domain's llms folder.",
+        "The linked capability guide describes the actual narrow query and tells peers to escalate missing behavior to the master agent.",
+        "APP_CONTEXT.md, DOMAIN_MODEL.md, repair steps, schema controls, and unlinked documents remain private.",
+        "A successful tool list, not reading llms.txt, is the MCP connection proof."
       ]
     }
   ],
-  "runtime_installation": [
+  "runtime_contract": [
     {
-      "id": "install-production-skill-on-serve",
+      "id": "source-layout-and-scaffolding",
       "assertions": [
-        "A normal server start atomically creates <executable-root>/.agents/skills/toolframe-business-app when absent.",
-        "The installed copy contains SKILL.md, agents metadata, production assets, and references with exact source bytes.",
+        "Serve creates the complete app root only when app is absent and the complete example domains root only when domains is absent.",
+        "An existing partial or unsafe root is never repaired or overwritten and fails with the offending path.",
+        "Only --app-dir and --domains-dir configure editable source roots; retired per-feature source flags are rejected.",
+        "Domain, migration, tool, and widget scaffolds are create-once and domain-aware.",
+        "The default app includes one narrow entry_register_list_entries tool and a private _execute_sql_reference.py that is not published."
+      ]
+    },
+    {
+      "id": "fail-closed-loading",
+      "assertions": [
+        "Every public migration, dependency, domain API, model source, tool, and widget is validated before readiness.",
+        "Public tool names are globally unique and filename/function/tool identity matches.",
+        "Deep cross-domain imports fail while same-domain internals and explicit root public functions pass.",
+        "A broken public tool or widget aborts startup and is never omitted from a partial catalog.",
+        "app/dashboard.py is compiled but its composition strategy is not restricted."
+      ]
+    },
+    {
+      "id": "agent-document-separation",
+      "assertions": [
+        "APP_CONTEXT.md records private master-agent app/development context.",
+        "DOMAIN_MODEL.md records private user-language and invariant alignment.",
+        "app/llms.txt is served as authored at /llms.txt without generated additions.",
+        "Only explicitly linked domain Markdown files are validated/served; unlinked files and private root documents are unavailable.",
+        "Peer documents offer no repair, schema, raw SQL, or internal error-catalog capability."
+      ]
+    },
+    {
+      "id": "production-skill-installation",
+      "assertions": [
+        "Normal serve atomically creates .agents/skills/toolframe-business-app when absent.",
+        "The installed copy contains SKILL.md, agent metadata, production assets, and references with exact source bytes.",
         "No evals or evaluations directory is installed.",
-        "An existing real target directory is preserved byte for byte and is never completed or upgraded automatically.",
-        "A file or symlink in any managed installation path fails startup with the offending path and reason.",
-        "check, invoke, and scaffold do not install the skill."
-      ]
-    }
-  ],
-  "runtime_layout": [
-    {
-      "id": "explain-current-data-and-runtime-layout",
-      "prompt": "Show me where this toolframe app keeps its database, LAN guide, UV runtime, Python cache, and logs after the first start.",
-      "assertions": [
-        "The business database is <executable-root>/data/data.db.",
-        "The editable discovery index is <executable-root>/llms/llms.txt while its public route remains /llms.txt, and the other direct Markdown documents stay in the same llms directory.",
-        "Private UV, Python, bytecode cache, dependency cache, generated core, manifests, environments, and logs stay under <executable-root>/.toolframe/.",
-        "When --uv-path is omitted and the managed UV is absent or invalid, supported macOS builds download the pinned CPU-matched UV with visible progress and ETA, verify the archive and executable checksums, and install it atomically.",
-        "Offline mode requires the verified managed UV and other runtime dependencies to exist already."
-      ]
-    }
-  ],
-  "database_adapter": [
-    {
-      "id": "shared-data-adapter-and-schema-boundary",
-      "assertions": [
-        "The runtime configures one toolframe_db adapter before importing startup-loaded tools, and the same contract is available during check and invoke.",
-        "The shipped execute_sql reference obtains database access from toolframe_db instead of importing sqlite3 or opening TOOLFRAME_DB itself.",
-        "execute_sql is explicitly a fallback data tool: read mode accepts bounded row-returning SQL, write mode accepts parameterized DML, and both return structured retryable errors.",
-        "DDL, PRAGMA, ATTACH, SQLite maintenance operations, and mutations of runtime-owned _toolframe_* or sqlite_* tables are rejected without changing schema or internal state.",
-        "The handbook teaches coding agents to use the shared adapter behind Business RPC tools and reserves every durable schema change for the next contiguous migration written by the primary development agent.",
-        "Peer or scheduled agents prefer published Business RPC commands/queries and may use execute_sql only when the app explicitly documents that fallback; they never use it for schema administration."
-      ]
-    }
-  ],
-  "business_rpc": [
-    {
-      "id": "business-rpc-instead-of-storage-crud",
-      "prompt": "Design the MCP tool catalog for a local scheduled-work app. A peer agent must find eligible work, claim it, read the owner's context, report progress, submit a result, and leave it for human review.",
-      "assertions": [
-        "The proposed public surface is a small Business RPC catalog split into business queries and business commands, with names that express caller intent rather than database tables or HTTP resource operations.",
-        "Each command completes one guarded business outcome or state transition and may hide multiple reads, writes, events, and receipts in one transaction; it is not one tool per SQL statement or column update.",
-        "Each query answers one bounded workflow question or returns one task-oriented view; it does not expose arbitrary table, column, filter, sort, join, or pagination plumbing as a generic interface.",
-        "Inputs and results use the app's domain vocabulary and include the state, evidence, version or lease, next-action information, and structured retry meaning needed by the calling agent.",
-        "The catalog does not publish generic create_record, update_record, delete_record, set_status, patch_fields, list_table_rows, or get_row CRUD tools, and callers cannot compose low-level operations to bypass a domain invariant.",
-        "execute_sql remains an explicitly documented data fallback outside the normal business surface; a missing business command or query is escalated to the primary development agent instead of being synthesized from CRUD or raw SQL calls.",
-        "The capability register and tests trace every published tool to a user or agent intent, its authoritative rule, and an observable business outcome."
-      ]
-    }
-  ],
-  "default_app_identity": [
-    {
-      "id": "fresh-app-is-visibly-unnamed",
-      "assertions": [
-        "A freshly scaffolded dashboard uses Unnamed as its browser title and visible heading.",
-        "The fresh dashboard visibly explains that Unnamed must be replaced with the app's business name.",
-        "The default llms/llms.txt H1 identifies the application as Unnamed and describes Toolframe only as its framework.",
-        "Existing Dashboard and llms source remain user-owned and are never overwritten during startup."
-      ]
-    }
-  ],
-  "llms_discovery": [
-    {
-      "id": "serve-editable-llms-discovery",
-      "assertions": [
-        "A normal server start creates the complete editable <executable-root>/llms tree only when that directory is absent; an existing tree is never repaired or overwritten, and a missing index fails clearly.",
-        "The source <executable-root>/llms/llms.txt follows the llms.txt v2 H1, summary, and H2 link-list shape while keeping details in focused direct Markdown siblings.",
-        "GET /llms.txt and the allowlisted /llms/<name>.md routes serve current source bytes with bounded Markdown-safe responses before the Streamlit root mount.",
-        "Unknown names, traversal, directories, symlinks, non-UTF-8 content, and oversized documents never expose filesystem content and produce a clear startup or HTTP failure.",
-        "The index uses same-origin links so a peer can derive /mcp from any current LAN host and port without a baked-in address.",
-        "The packaged distribution contains the editable llms source, and check validates it without starting a listener or mutating the source."
+        "An existing real target directory is preserved and unsafe installation path types fail startup.",
+        "Check, invoke, and scaffold do not install the skill."
       ]
     }
   ]

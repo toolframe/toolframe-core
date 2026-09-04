@@ -6,6 +6,10 @@ not normal activation context. The primary agent answered these questions as
 product owner under the user's instruction to show every question,
 recommendation, answer, and rationale before implementation.
 
+Round 13 is the current source-layout and agent-authority policy. Where older
+rounds describe root feature folders, `app_` table prefixes, a public SQL
+fallback, or a generated/multi-document root LLMS set, Round 13 supersedes them.
+
 ## Round 1 — audience and operating agreement (Q1–Q4)
 
 ### Q1 — Who should this skill serve?
@@ -181,6 +185,8 @@ recommendation, answer, and rationale before implementation.
 
 ### Q15 — Who owns database objects?
 
+> Historical: Q41 supersedes the `app_` prefix with the owning domain prefix.
+
 - **Question:** May user code modify runtime bookkeeping tables, or must app
   data have a clear ownership boundary?
 - **Recommendation:** User business tables and migrations are app-owned,
@@ -191,6 +197,9 @@ recommendation, answer, and rationale before implementation.
   on undocumented runtime internals.
 
 ### Q16 — What is the write authority?
+
+> Historical: Q42 supersedes the public/fallback SQL tool. The reference is
+> private and peers receive only narrow business capabilities.
 
 - **Question:** Should agents write through arbitrary SQL, or use named
   business commands while retaining the shipped SQL reference?
@@ -300,6 +309,9 @@ recommendation, answer, and rationale before implementation.
 
 ### Q25 — What makes the app portable?
 
+> Historical: Q39 supersedes the listed feature-folder paths with `app/` and
+> `domains/<business_domain>/`.
+
 - **Question:** Should users assemble Python services and dependencies, or hand
   an agent one editable folder with a self-contained runtime contract?
 - **Recommendation:** Keep one Rust launcher, one UV-managed Python process,
@@ -403,6 +415,9 @@ recommendation, answer, and rationale before implementation.
 
 ### Q33 — How should a peer learn the app from one URL?
 
+> Historical: Q43 keeps the progressive URL but moves authored source to
+> `app/llms.txt` plus explicitly linked domain documents.
+
 - **Question:** Should every runtime and business detail live in one root
   document, or should the app expose a small `/llms.txt` index with linked
   detail pages that a peer reads only when relevant?
@@ -475,6 +490,9 @@ recommendation, answer, and rationale before implementation.
 
 ### Q37 — Who may change schema through MCP?
 
+> Historical: Q42 removes `execute_sql` from the public MCP catalog entirely.
+> Schema and new business capabilities go through the master agent.
+
 - **Question:** Is `execute_sql` a general SQLite administrator, or a backup
   data path for a peer workflow agent while a primary development agent owns
   schema evolution?
@@ -498,6 +516,9 @@ recommendation, answer, and rationale before implementation.
 
 ### Q38 — Should MCP tools expose resource CRUD or business intent?
 
+> Current Business RPC guidance remains active, but Q42 supersedes its public
+> SQL fallback sentence.
+
 - **Question:** Should a development agent publish REST-like database
   operations such as generic create/update/delete/list and field/status
   patching, or a smaller RPC-like surface centered on the work an agent must
@@ -516,3 +537,116 @@ recommendation, answer, and rationale before implementation.
   illegal state. It may require a primary development change when a new
   business intent appears, which is preferable to leaking schema and business
   invariants into every caller.
+
+## Round 13 — domain-owned source and agent authority (Q39–Q47)
+
+### Q39 — What is the only editable source layout?
+
+- **Question:** Should the runtime preserve root feature folders while adding
+  domains, or cut over to one new contract?
+- **Recommendation:** Use root `APP_CONTEXT.md` and `DOMAIN_MODEL.md`,
+  `app/{dashboard.py,llms.txt,pyproject.toml}`, and
+  `domains/<business_domain>/{__init__.py,llms,migrations,model,tools,ui}`.
+- **Product-owner answer:** Use only the new set; remove the legacy structure
+  and do not provide a default shared folder.
+- **Rationale/tradeoff:** Every business capability has one visible owner and
+  agents do not have to guess between old and new discovery paths. The cutover
+  is intentionally breaking for legacy source flags and folders.
+
+### Q40 — How should dashboard widgets load?
+
+- **Question:** Should every domain provide a dashboard entrypoint, or should
+  the app own composition while domain UI files register automatically?
+- **Recommendation:** Auto-discover direct public
+  `domains/*/ui/<widget>.py` modules and let `app/dashboard.py` call the
+  registry by default.
+- **Product-owner answer:** Approved, but do not restrict how the master agent
+  uses `app/dashboard.py`.
+- **Rationale/tradeoff:** Domains own reusable business UI while one app-level
+  composition root can group, filter, or replace the registry without a second
+  framework abstraction.
+
+### Q41 — How do domain-owned migrations coexist?
+
+- **Question:** Should each domain reset migration numbering, or should files
+  keep the existing application ledger?
+- **Recommendation:** Let domains own files while every file participates in
+  one immutable, gap-free global numeric history with the existing checksum
+  ledger.
+- **Product-owner answer:** One global history; preserve applied bytes and
+  checksum compatibility.
+- **Rationale/tradeoff:** Domain ownership no longer risks divergent migration
+  clocks. A new domain must discover and use the next application-wide number.
+
+### Q42 — What is public in the tool tree?
+
+- **Question:** Should Toolframe generate a catalog or expose generic SQL in
+  addition to domain tools?
+- **Recommendation:** Publish only direct public one-tool modules with globally
+  unique matching names. Keep the SQL adapter example private and ship one
+  narrow read-only example tool.
+- **Product-owner answer:** Approved. Toolframe must not generate an LLMS tool
+  catalog, and peers must not receive generic SQL/schema/repair capabilities.
+- **Rationale/tradeoff:** Peer agents get stable business intent instead of
+  storage authority. New intent requires an explicit master-agent change.
+
+### Q43 — What are the three agent-document roles?
+
+- **Question:** Should app context, domain language, and peer connection
+  instructions be combined and served together?
+- **Recommendation:** Keep `APP_CONTEXT.md` as private master-agent development
+  context, `DOMAIN_MODEL.md` as private ubiquitous-language/invariant
+  alignment, and `app/llms.txt` as the authored public peer connection/use
+  entry point.
+- **Product-owner answer:** Approved. Serve `app/llms.txt` as authored and only
+  the exact domain documents it links.
+- **Rationale/tradeoff:** A peer sees only what it needs to use MCP; private
+  design and repair context remains local and does not become a second public
+  API.
+
+### Q44 — Who repairs the app?
+
+- **Question:** Should peer agents receive error catalogs and tools for fixing
+  missing or broken behavior?
+- **Recommendation:** Peers preserve exact evidence and route defects or
+  missing capabilities to the master development agent.
+- **Product-owner answer:** Peer repair capabilities and internal error
+  catalogs must not be available.
+- **Rationale/tradeoff:** The operating agent cannot silently broaden its own
+  authority. Repair remains traceable to the source-owning workflow.
+
+### Q45 — How should dashboard errors appear?
+
+- **Question:** Should domains share or implement multiple reusable error card
+  components?
+- **Recommendation:** Provide one core-owned rendering helper only for expected
+  recoverable interaction errors; include a clear copyable message and master
+  agent escalation.
+- **Product-owner answer:** Exactly one error card behavior and no shared
+  folder. Programming defects remain fatal.
+- **Rationale/tradeoff:** The UI is consistent and opinionated without creating
+  cross-domain presentation coupling or hiding code defects as normal input
+  failures.
+
+### Q46 — What cross-domain imports are valid?
+
+- **Question:** May one domain import another domain's models, tools, or UI?
+- **Recommendation:** Permit only explicit high-level business functions from
+  the provider's root `__init__.py`, and only when necessary.
+- **Product-owner answer:** Approved; deep imports are forbidden.
+- **Rationale/tradeoff:** Domain internals can evolve independently. The small
+  public API makes real business coupling visible, though the master agent must
+  deliberately add an export for each valid collaboration.
+
+### Q47 — Can startup skip a broken domain?
+
+- **Question:** Should `serve` omit a broken migration, tool, or widget and
+  keep the rest available?
+- **Recommendation:** Fail the whole startup and write actionable diagnostics
+  to stderr; never serve a partial catalog.
+- **Product-owner answer:** Fatal on every broken public migration, dependency,
+  tool, widget, or required source. Fresh serve may create whole missing source
+  roots, but must never repair or overwrite existing roots.
+- **Rationale/tradeoff:** Operators never mistake an incomplete business app
+  for a healthy one. Recovery requires the master agent to fix source before
+  service resumes.

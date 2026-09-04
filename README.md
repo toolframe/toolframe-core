@@ -1,1037 +1,287 @@
 # Toolframe
 
-**The open-source runtime for agent-built internal apps.**
+Toolframe is a local-first runtime for small, agent-built business apps. One
+Rust launcher runs a Streamlit dashboard, a FastMCP Streamable HTTP endpoint,
+and one SQLite database on a trusted LAN.
 
-`toolframe` is a local-first, agent-extensible Streamlit dashboard and
-startup-only Python MCP tool hub. A Rust launcher applies SQLite migrations and prepares one shared UV environment, then
-supervises one Python 3.14 process, one Uvicorn server, and one port. The
-Streamlit `st.App` is mounted at `/`; FastMCP serves modern Streamable HTTP at
-`/mcp`.
+The editable source is organized by business domain. Toolframe owns discovery,
+validation, migrations, dependency setup, and process lifecycle; the master
+development agent owns the business model and source.
 
-> [!WARNING]
-> The server listens on `0.0.0.0` and has no authentication by default. The
-> dashboard is trusted Python code: it can read and write `data/data.db`, share the
-> Python process with every MCP tool, inherit its environment and secrets, and
-> use the writable workspace. Dashboard results and submitted data are visible
-> to anyone who can reach the LAN address. Use it only on a trusted LAN.
+> Toolframe has no authentication or Python sandbox. Anyone who can reach the
+> LAN service can use the dashboard and published MCP tools. Run only trusted
+> code and do not expose it to the public Internet.
 
-The dashboard warning has a **Don't show again** button. Its dismissal is kept
-in browser `localStorage` for that app origin; it does not add authentication or
-suppress the terminal security warning.
+## Editable source contract
 
-## Build a release
+There is no legacy root `dashboard/`, `tools/`, `migrations/`, or `llms/`
+source contract. The only source-root overrides are `--app-dir` and
+`--domains-dir`.
 
-Each distributable is one self-bootstrapping executable. It embeds the default
-dashboard, migrations, tools, LAN guide, runtime support, and production
-coding-agent skill. UV is downloaded separately on first use to keep the
-launcher small.
+## How loading works
 
-The runtime supports macOS, Linux, and Windows. Unix builds hand an inherited
-listener to Uvicorn without a release/rebind race. Windows builds use a native
-process Job Object for tree cleanup and have Python bind the selected host and
-port. The checked-in release script still emits the two macOS artifacts; the
-cross-platform release matrix is intentionally a separate build-system change.
+Startup is intentionally fail-closed:
 
-Install these prerequisites on the build machine:
+1. Resolve `app/`, `domains/`, the database, workspace, and private runtime.
+2. On `serve` only, create a complete source scaffold when an entire source
+   root is absent.
+3. Discover every direct public domain and require its root `__init__.py` plus
+   `llms`, `migrations`, `model`, `tools`, and `ui` directories.
+4. Validate the single global migration history across every domain, verify
+   applied checksums, and apply pending migrations transactionally.
+5. Discover every direct public `domains/*/tools/*.py` file, validate its PEP
+   723 metadata, merge dependencies, and build an immutable startup manifest.
+6. Prepare the pinned UV/Python 3.14 environment from `app/pyproject.toml` and
+   public tool dependencies.
+7. Validate `app/llms.txt`, only the domain documents it explicitly links,
+   `app/dashboard.py`, every public domain model file, public tool, and public
+   widget. Domain import boundaries are checked before tool import.
+8. Import every public tool, materialize every MCP schema, then import and
+   validate every public widget.
+9. Enter the server lifespans and report readiness only after the complete
+   catalog and dashboard preflight succeed.
 
-- Rust 1.88 or newer, including Cargo
-- GNU Make
-- Apple command-line developer tools
+Any broken public migration, dependency, tool, widget, domain API, or required
+app file stops startup. Toolframe never serves a partial tool catalog or skips a
+broken domain. The terminal error identifies the failing path and phase so the
+master development agent can fix the source.
 
-Build both macOS 12+ release targets from the repository root:
+`toolframe check --format json` follows the same discovery and Python loading
+path without binding a port or applying pending migrations to the configured
+database. Migration validation uses isolated state; trusted Python imports can
+still have import-time side effects.
 
-```console
-make release
-```
-
-Each target directory contains exactly one executable:
-
-```text
-dist/
-├── aarch64-apple-darwin/
-│   └── toolframe-v0.1.0-macos-12-arm64
-└── x86_64-apple-darwin/
-    └── toolframe-v0.1.0-macos-12-x86_64
-```
-
-Build only one target with its Rust target triple:
-
-```console
-make release TARGET=x86_64-apple-darwin
-# aliases:
-make release-macos-intel
-make release-macos-arm
-```
-
-[`scripts/release.sh`](scripts/release.sh) drives the target matrix. It builds
-each Rust target with a macOS 12.0 deployment target and validates the finished
-launcher architecture and deployment target. At runtime, the launcher selects
-the exact official `uv` asset and checksums in
-[`uv-release-manifest.txt`](uv-release-manifest.txt). The managed environment
-pins the newest `cryptography` release that provides an Intel Mac wheel, so
-first launch on Monterey does not require a local Rust/OpenSSL build toolchain.
-
-Apple releases use Cargo's target support and the installed Apple SDK. The
-official `cross` project cannot distribute Apple/Darwin images or the macOS SDK
-for licensing reasons, so using `cross` here would require an owner-supplied
-custom image and SDK and would not be a reproducible zero-setup build. See the
-[`cross` target documentation](https://github.com/cross-rs/cross#supported-targets)
-and its [Apple toolchain notes](https://github.com/cross-rs/cross-toolchains#apple-targets).
-
-The release command requires macOS and Rust installed through `rustup`. It
-refuses to overwrite an existing target deployment directory. The command
-prints each executable's SHA-256 without adding a second checksum file.
-
-For local packaging only, `make package` runs
-[`scripts/package.sh`](scripts/package.sh) and assembles the host distribution
-as the single file `dist/toolframe`. To compile only the optimized host binary
-at `target/release/toolframe`, run `make build`. Neither build command requires
-UV. Run `make help` to list the available targets.
-
-Copy the target executable into a new deployment directory and run it. A file
-download may require restoring its executable bit with `chmod +x`. Before the
-first launch, that directory contains exactly one file:
-
-```text
-toolframe/
-└── toolframe-v0.1.0-macos-12-x86_64
-```
-
-A normal server launch then materializes the editable working state beside the
-executable. These are runtime and user files, not release payloads:
-
-At runtime, missing `dashboard/`, `tools/`, `llms/`, or `migrations/` source is
-created from the embedded scaffold. The complete `llms/` tree, including
-`llms/llms.txt`, is published together. Existing source directories and files
-are never overwritten, completed, repaired, or automatically upgraded.
-
-The discovery source has a stricter all-or-nothing rule: `llms/` must either be
-absent so the complete default tree can be created, or contain a valid
-`llms/llms.txt` index. A partial source tree, unsafe path, symlink, wrong file
-type, invalid UTF-8, missing linked document, or oversized document fails
-startup with the offending path and reason.
-Detail files are direct regular non-symlink UTF-8 Markdown files named
-`[a-z0-9][a-z0-9_-]*.md`, limited to 256 KiB each; every document linked by
-the index must be present and reachable.
-
-### Bundled coding-agent skill
-
-The source handbook at
-[`skills/toolframe-business-app`](skills/toolframe-business-app/SKILL.md) guides a
-coding agent with filesystem access to develop, doctor, or operate a
-nontechnical owner's app. It is embedded in the binary, not an MCP service or
-second release payload. A normal `toolframe` or `toolframe serve` start
-atomically installs its production files at
-`.agents/skills/toolframe-business-app` beside the executable. `check`,
-`invoke`, and `scaffold` do not install it. The installed copy deliberately
-omits `evals/` and `evaluations/`; those remain only in the full source package
-for maintainers.
-
-Installation is create-once. A real existing skill directory is preserved
-without completion or upgrade. A file or symlink at `.agents`,
-`.agents/skills`, or the target skill path fails startup with the offending
-path and reason instead of writing elsewhere. Peer runtime agents connect to
-the tested LAN URL ending in `/mcp`, such as
-`http://192.168.1.20:8000/mcp`.
-
-A nontechnical owner can hand the editable folder to a coding agent with a
-business request such as:
-
-```text
-Use .agents/skills/toolframe-business-app/SKILL.md. Turn this folder into a visitor
-register for reception, leave the app context/domain handbook behind, and show
-me how a trusted peer agent and a person use it.
-```
-
-The coding agent needs filesystem access to develop the folder. A peer runtime
-agent starts with the printed LAN `/llms.txt` URL, then connects same-origin
-`/mcp` and uses only the business tools that the coding agent publishes.
-
-### LAN agent discovery
-
-The editable [`llms/llms.txt`](llms/llms.txt) is the URL-first handoff for another agent.
-Give a peer the server's LAN address plus `/llms.txt`, for example
-`http://192.168.1.20:8000/llms.txt`. It is a short progressive index; the
-linked documents under [`llms/`](llms/) describe the app's purpose, current
-capabilities, context, workflow, and operations. Keep this projection aligned
-with the tools, dashboard, migrations, and business request so a peer can plan
-against what the running app actually exposes.
-
-The peer should use its current MCP client registration flow for the same-origin
-`/mcp` URL, then list the actual tools and schemas before claiming that the
-connection works. The endpoint is unauthenticated trusted-LAN Streamable HTTP;
-there is no SSE or stdio endpoint. `llms.txt` cannot guarantee a client-specific
-automatic installation, and it must not invent a client command. If the client
-does not support this transport, report the exact URL, transport, and blocker
-for the owner to copy.
-
-The index and existing detail files are read on each request, so editing their
-content becomes visible after a browser refresh or a peer's next fetch. The
-startup-validated document allowlist is not hot-reloaded: adding or renaming a
-detail file, or changing its safe filename, requires a full restart. `check`
-validates and reports `agentDocuments` without scaffolding; `invoke` does not
-validate or publish these documents. The binary materializes the index and
-direct detail files together and never follows a pre-existing symlink.
-
-If a scheduled workflow cannot reach that URL, it should pause before changing
-business state, show a clear **[app name] MCP unavailable** warning, and return the
-self-contained copyable issue from
-`.agents/skills/toolframe-business-app/assets/MCP_UNAVAILABLE_ISSUE.template.md`.
-The issue preserves the attempted URL, exact error, workflow impact, unknowns,
-safe owner checks, and maintainer diagnostics.
-
-Every supported runtime target selects the exact target-matched UV version
-pinned in `uv-release-manifest.txt`. On every launch, the launcher verifies the
-managed copy's SHA-256, version, and target triple. If `.toolframe/uv` is absent,
-older, newer, broken, or for the wrong CPU, `toolframe` downloads the official
-archive over HTTPS, shows a progress bar with transfer rate, elapsed time, and
-ETA, verifies both the archive and executable SHA-256 digests, and atomically
-installs the executable before using it. Temporary download and extraction files
-stay inside `.toolframe/` and are removed automatically.
-
-On Windows the managed executable is `.toolframe/uv.exe`. An explicit
-`--uv-path`/`TOOLFRAME_UV` override must already match the pin and is never
-overwritten. Without an override, supported builds do not use a system UV from
-`PATH`; the private verified copy is deterministic. `--offline` requires the
-managed UV executable, Python 3.14, and dependencies to be present already. No
-system UV, system Python, `curl`, or `tar` is required for a normal online first
-launch: HTTPS download and `.tar.gz`/`.zip` extraction are built into the Rust
-launcher.
-
-At startup the launcher validates and applies migrations to `data/data.db`, then
-selects the preferred or next available port, validates the dashboard, loads
-every tool, and prints categorized diagnostics to stderr. Unix keeps the
-selected listener open through child startup. On Windows, Python immediately
-rebinds the selection and startup fails clearly if another process claims the
-port during that short handoff. A typical terminal shows:
-
-```text
-07:21:48.700 [SKILL] installed bundled business skill at /path/to/toolframe/.agents/skills/toolframe-business-app
-07:21:48.755 [BOOT] toolframe 0.1.0 is ready
-07:21:48.755 [DASHBOARD] Dashboard  http://127.0.0.1:8000/ (Streamlit)
-07:21:48.755 [MCP] Agent guide http://127.0.0.1:8000/llms.txt
-07:21:48.755 [MCP] MCP        http://127.0.0.1:8000/mcp
-07:21:48.755 [DB] Migrations /path/to/toolframe/migrations (current 0000; 1 applied this start; 1 total)
-07:21:48.755 [NETWORK] LAN        http://192.168.1.20:8000/
-07:21:48.755 [SECURITY] WARNING no authentication: LAN clients can read and mutate data and call trusted tools
-```
-
-Human diagnostics use local `HH:MM:SS.mmm` timestamps and are colorized only
-when stderr is a TTY. `--no-color`, `TOOLFRAME_NO_COLOR`, or the standard
-`NO_COLOR` environment variable disables ANSI colors. Routine UV and Python
-dependency output is summarized; use `--verbose` or `TOOLFRAME_VERBOSE` for the
-full child output and debug diagnostics. stdout is reserved for the two
-machine-readable assignments `TOOLFRAME_URL=...` and `TOOLFRAME_MCP_URL=...`.
-
-Connect Codex using the printed MCP URL:
+## Start and inspect
 
 ```sh
-codex mcp add toolframe --url http://127.0.0.1:8000/mcp
-```
-
-Or configure the same URL:
-
-```toml
-[mcp_servers.toolframe]
-url = "http://127.0.0.1:8000/mcp"
-```
-
-Only modern Streamable HTTP is served. There is no legacy SSE endpoint,
-client-facing stdio transport, hot reload service, reload API, or reload UI.
-
-## Coding-agent development CLI
-
-Running `toolframe` without a subcommand still starts the server. `toolframe
-serve` is the explicit equivalent. The same binary also provides bounded local
-commands for coding agents; path and runtime options may appear before or after
-the subcommand.
-
-### Preflight validation
-
-Use `check` before starting the server or after editing migrations, tools,
-dashboard dependencies, or widgets:
-
-```sh
-./toolframe check
 ./toolframe check --format json
+./toolframe
 ```
 
-`check` exercises the production migration engine against an isolated SQLite
-snapshot, resolves the real shared UV project, strictly imports every startup
-tool, materializes its FastMCP schema, compiles `dashboard/app.py`, and imports
-and validates every public widget. The JSON form writes a versioned object to
-stdout and emits JSON on failure, making it suitable for coding-agent gates.
-It also validates the URL-first `llms.txt` index and its direct detail files,
-and reports their paths and reachable document names under `agentDocuments`.
+`./toolframe serve` is the explicit form of the second command. The launcher
+prints loopback URLs for this computer and one preferred LAN URL for another
+computer. Give a peer agent the LAN URL ending in `/llms.txt`; give an MCP
+client the same origin ending in `/mcp`.
 
-Preflight does not bind a port, mutate the configured `data/data.db` or its SQLite
-sidecars, create logs, or scaffold missing source directories. If the database
-exists, the database and any existing `-wal`/`-shm` files are copied before SQLite
-opens the temporary snapshot; hashes and the source file set are checked before
-and after the copy. Stop the server and other database writers first: a change
-during copying fails preflight and asks the caller to retry. A missing database
-uses a new in-memory database. Tool imports receive the shared database adapter
-configured against a separate temporary database. Check may provision Python
-and dependencies and update managed content under `.toolframe/`; imported tools
-and widgets remain trusted
-Python code and can perform other import-time side effects. Their stdout is
-forwarded to stderr so stdout remains one JSON document. The report includes
-the exact paths, Python and UV versions, migration range and pending count,
-tools, widgets, and merged dependencies.
-
-### Local tool invocation
-
-`invoke` loads the complete startup catalog into one bounded Python 3.14
-process in the same shared UV environment, calls one tool through FastMCP, and
-prints one JSON result:
+Useful development commands:
 
 ```sh
-./toolframe invoke fetch_title --json '{"url":"https://example.com"}'
-./toolframe invoke execute_sql --json \
-  '{"sql":"SELECT label FROM dashboard_example_entries WHERE id = ?","params":[1],"mode":"read"}'
+./toolframe scaffold domain order_fulfillment
+./toolframe scaffold migration order_fulfillment add_delivery_window
+./toolframe scaffold tool order_fulfillment order_fulfillment_list_due_orders
+./toolframe scaffold widget order_fulfillment due_orders
+./toolframe invoke entry_register_list_entries --json '{"limit": 20}'
 ```
 
-Arguments must be one JSON object. A successful call exits `0`; an MCP
-`isError` result or runner failure exits nonzero while preserving a
-machine-readable JSON response when one is available. Invocation starts no
-HTTP server and performs no hot reload. It strictly loads all tools once, does
-not apply migrations automatically, and does not write the server audit logs.
-The invoked tool retains its normal trusted capabilities. `execute_sql` can
-intentionally mutate app data in `write` mode, but its adapter rejects schema,
-PRAGMA, maintenance, and runtime-owned table changes. Tool import and
-invocation prints are forwarded to stderr; stdout remains the single JSON
-result.
+Names must be lower snake case and cannot be Python keywords. Scaffolding
+refuses to overwrite an existing path. A tool, widget, or migration scaffold
+requires an existing complete domain.
 
-### Safe scaffolding
+## Domain boundaries
 
-Each scaffold command creates exactly one direct source file and refuses to
-overwrite an existing path:
-
-```sh
-./toolframe scaffold migration add_status
-./toolframe scaffold tool fetch_status
-./toolframe scaffold widget status_card
-```
-
-Migration scaffolding validates the existing contiguous history and chooses
-the next four-digit version. Tool and widget names use lowercase snake case
-and must not be Python keywords. The target `migrations/`, `tools/`, or
-`dashboard/widgets/` directory must already exist; scaffolding never creates,
-repairs, or replaces a user-owned directory.
-
-## Database migrations
-
-`migrations/` is the source of truth for the `data/data.db` schema and includes an
-agent-facing [authoring reference](migrations/README.md). The default
-`0000_bootstrap.sql` creates the table used by the example dashboard widget.
-The launcher also creates and validates its private migration ledger and
-idempotency receipt table as runtime-owned internal schema. These startup
-steps happen before it binds the HTTP listener or starts Python, so a migration
-or incompatible internal schema fails the whole application.
-
-To change the schema, add the next direct migration file and update the widget
-or tool that uses it in the same code change:
-
-```sql
--- migrations/0001_add_status.sql
-ALTER TABLE dashboard_example_entries
-ADD COLUMN status TEXT NOT NULL DEFAULT 'open';
-
-CREATE INDEX dashboard_example_entries_status_idx
-ON dashboard_example_entries(status);
-```
-
-Files must form one contiguous sequence starting with the exact
-`0000_bootstrap.sql`, using names such as `0001_add_status.sql`. Descriptions
-may contain lowercase ASCII letters, digits, `_`, and `-`. Only direct,
-regular, non-symlink UTF-8 `.sql` files are migrations, and each file is
-limited to 4 MiB. Hidden/private files, non-SQL files, and nested files are
-ignored.
-
-All pending files run in numeric order inside one `BEGIN IMMEDIATE`
-transaction. A failure rolls back the complete pending batch. The internal
-`_toolframe_migrations` table records each filename and exact-byte SHA-256
-checksum. Never edit, rename, or delete an applied migration: restore the
-original file and add the next migration instead.
-
-Migration SQL may contain multiple schema or data statements. It must not
-contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PRAGMA`,
-`ATTACH`, `DETACH`, or `CREATE TRIGGER`; the launcher owns the transaction,
-SQLite configuration, and internal table protection. Migrations run only at
-process startup, so restart `toolframe` after adding one. Back up `data/data.db`
-before destructive migrations.
-
-If the entire migrations directory is absent, the launcher creates the
-bootstrap and reference without overwriting anything. An existing empty or
-incomplete directory is user-owned and fails validation rather than being
-silently repaired. Runtime-owned internal tables do not consume user migration
-numbers and are created or validated for both new and existing databases.
-
-## Dashboard
-
-The root page is the user dashboard. `dashboard/app.py` is its Python loader
-and can be edited or completely replaced by a Coding Agent. The default loader
-uses `APP_NAME = "Unnamed"` for both the browser title and visible heading and
-shows a naming notice until that value is replaced. Toolframe remains the
-framework attribution. The loader discovers direct public Python files in
-`dashboard/widgets/` and renders them.
-Each discovered module must export a synchronous `render(context)` function.
-The filename stem is the stable widget ID. A widget may optionally export a
-string `TITLE` and integer `ORDER`; widgets are rendered by `ORDER`, then by
-filename. Duplicate or invalid metadata is a startup error.
-
-`dashboard/components/` is a normal Python package for reusable components and
-is not automatically executed. Files whose names begin with `_`, symlinks,
-nested widget directories, and non-Python files are not widget entries. Every
-public widget is compiled, imported, and contract-checked at startup, even if
-the custom `app.py` does not render it. Use a private name such as `_draft.py`
-for an unfinished widget.
-
-The supported agent-facing APIs are the public `toolframe_dashboard`,
-`toolframe_idempotency`, and `toolframe_artifacts` modules. They provide
-`DashboardContext`, database, idempotency, and artifact errors/results,
-`get_context()`, `run_once()`, `get_artifact_store()`, and the widget
-discovery/render helpers. `DashboardContext` exposes only the stable `db`,
-`artifacts`, `workspace`, `logger`, `widget_id`, and read-only runtime summary;
-widget code should not depend on FastAPI, FastMCP, or Streamlit internals.
-
-Dashboard Python is trusted application code, not a security sandbox. A
-database helper makes correct, parameterized access easy, but it cannot stop a
-widget from importing `sqlite3`, reading inherited environment variables, or
-affecting the shared process. Only the dashboard server-side code can access
-SQLite; there is no browser API that accepts arbitrary SQL.
-
-### Editing and reruns
-
-Dashboard source changes are picked up by a browser refresh, Streamlit rerun,
-or an interaction that triggers a rerun. Streamlit source watching remains
-enabled while `runOnSave=false`, so saving a file does not silently execute it.
-MCP tool source changes, dashboard dependency changes, and dependency lockfile
-changes require a full process restart. The MVP has no tool or dashboard reload
-function.
-
-### Dashboard dependencies
-
-`dashboard/pyproject.toml` is a minimal dependency manifest. It may contain
-`[project]` `requires-python` and `dependencies` only; Python constraints must
-accept 3.14. Build systems, UV workspaces, custom package sources, and
-`[tool.uv]` configuration are not supported in this MVP.
-
-Dashboard dependencies are merged with the core and all MCP tool dependencies
-into the same UV environment. A resolution conflict is a fatal startup error
-and identifies the dependency and its source. After changing dependencies,
-restart the application so UV can resolve and provision the shared
-environment.
-
-The MVP pins `streamlit==1.61.0` and uses Streamlit's built-in metric, table,
-and chart/data components. It does not bundle D3 or ECharts. A future widget
-may use Streamlit custom components when a freer frontend presentation is
-needed.
-
-## Dashboard database helper
-
-Widgets use the shared `data/data.db` through `context.db` (or the equivalent
-`get_context()` result):
+Keep one business capability cohesive inside one domain. Domain-owned code may
+import its own internals directly or relatively. Code in one domain may reach
+another domain only through an explicit high-level function exported by the
+other domain's root `__init__.py`:
 
 ```python
-from toolframe_dashboard import get_context
-
-context = get_context()
-rows = context.db.query(
-    "SELECT category, amount FROM expenses WHERE category = ?",
-    (category,),
-)
-result = context.db.execute(
-    "INSERT INTO expenses(category, amount) VALUES (?, ?)",
-    (category, amount),
-)
+from domains.order_fulfillment import promise_delivery
 ```
 
-`query(sql, params)` uses a read-only SQLite connection and returns a
-`pandas.DataFrame`. `execute(sql, params)` permits one parameterized DML or
-DDL statement and commits it when successful. It returns a typed result with
-`affected_rows`, `last_insert_rowid`, and, for SQLite `RETURNING`, an optional
-DataFrame. Multi-statement SQL, `ATTACH`, `DETACH`, extension loading, and
-writable security/journal PRAGMAs are rejected. Values must be bound through
-parameters; interpolating user input into SQL is not supported.
-Use `execute` for runtime interaction; durable schema changes belong in the
-versioned migration directory.
+Deep cross-domain imports such as
+`from domains.order_fulfillment.model.orders import ...`, package imports,
+wildcards, private names, and imports of another domain's `model`, `tools`,
+`ui`, `llms`, or `migrations` package fail validation. Export a high-level
+business function only when the dependency is genuinely needed; do not turn
+`__init__.py` into a convenience barrel.
 
-Use a transaction for several changes that must commit atomically:
+`app/dashboard.py` is the exception: it is the application composition root
+and Toolframe does not restrict how it composes domain UI. The default file
+uses the registry, but the master development agent may replace that behavior.
 
-```python
-with context.db.transaction() as transaction:
-    transaction.execute(
-        "UPDATE accounts SET balance = balance - ? WHERE id = ?",
-        (amount, source_id),
-    )
-    transaction.execute(
-        "UPDATE accounts SET balance = balance + ? WHERE id = ?",
-        (amount, destination_id),
-    )
-```
+## Migrations
 
-Individual writes use short transactions. The transaction context commits all
-statements together or rolls them back together; nested transactions and
-automatic write retries are not supported. The helper configures WAL,
-foreign-key enforcement, and a bounded busy timeout for concurrent LAN
-sessions.
-
-### MCP tool database adapter
-
-FastAPI provides application lifecycle and dependency injection, not a
-database-access implementation. FastMCP tool calls are not FastAPI route
-parameters, so Toolframe configures one process-level adapter before importing
-any tool. Tool code obtains it with `get_database()` instead of opening
-`sqlite3` or reading `TOOLFRAME_DB`:
-
-```python
-from fastmcp.tools import tool
-from toolframe_db import get_database
-from toolframe_runtime import ToolframeError
-
-_DB = get_database()
-
-
-@tool
-def rename_example_entry(
-    entry_id: int, expected_version: int, label: str
-) -> dict[str, object]:
-    """Rename one existing entry with an optimistic-concurrency guard."""
-
-    current = _DB.query(
-        "SELECT id, version FROM dashboard_example_entries WHERE id = ?",
-        (entry_id,),
-        max_rows=1,
-    )
-    if current.empty:
-        raise ToolframeError(
-            "entry_not_found",
-            "The entry does not exist.",
-            details={"recoveryHint": "Refresh the authoritative entry list."},
-        )
-
-    result = _DB.execute(
-        """
-        UPDATE dashboard_example_entries
-        SET label = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND version = ?
-        """,
-        (label, entry_id, expected_version),
-    )
-    if result.affected_rows != 1:
-        raise ToolframeError(
-            "entry_conflict",
-            "The entry changed after it was read.",
-            details={"recoveryHint": "Read the entry again before retrying."},
-        )
-    return {"id": entry_id, "updated": True}
-```
-
-The adapter's `query(sql, params)` returns a bounded `pandas.DataFrame`.
-`execute(sql, params)` atomically commits one `INSERT`, `UPDATE`, `DELETE`, or
-`REPLACE` and returns `affected_rows`, `last_insert_rowid`, and optional
-`RETURNING` rows. Values must be bound; default results are limited to 100 rows
-and 1 MiB, and a tool may request only smaller per-query limits.
-
-The adapter rejects DDL, PRAGMA, `ATTACH`/`DETACH`, maintenance operations, and
-writes to `_toolframe_*` or `sqlite_*` tables. `DatabaseError` carries `code`,
-`message`, `retryable`, `trace_id`, details, and a recovery hint; runtime
-middleware preserves that contract when a narrow tool lets it propagate.
-Durable schema changes are never a tool call: the primary coding agent authors
-the next contiguous migration, runs `check`, and restarts the app.
-
-### Explicit durable idempotency
-
-Use `context.db.run_once(namespace, key, input, mutation)` when a dashboard
-action may be repeated after a browser, MCP, or network retry. The caller owns
-the business key; the callback receives the only transaction in which its
-business writes may run:
-
-```python
-def create_expense(transaction):
-    cursor = transaction.execute(
-        "INSERT INTO expenses(category, amount) VALUES (?, ?)",
-        (category, amount),
-    )
-    return {"expense_id": cursor.lastrowid, "category": category, "amount": amount}
-
-outcome = context.db.run_once(
-    "expenses.create",
-    request_id,
-    {"category": category, "amount": amount},
-    create_expense,
-)
-expense = outcome.value
-```
-
-MCP tools use the same contract via
-`from toolframe_idempotency import run_once`; see the complete
-[`examples/idempotent_create_entry.py`](examples/idempotent_create_entry.py)
-reference. `run_once` returns `IdempotencyResult(value, replayed,
-operation_id, original_operation_id)`. Both the first caller and replays get
-the value decoded from the durable JSON bytes, so their value shape is the
-same.
-
-Namespaces are 1–128 bytes of lowercase ASCII letters, digits, `.`, `_`, `:`,
-or `-`; keys are caller-chosen, trimmed UTF-8 strings up to 512 bytes. Input is
-canonical JSON and its SHA-256 fingerprint is stored with the key. Reusing the
-same namespace/key with different input raises nonretryable
-`idempotency_key_mismatch`; it never runs the new callback. Input and result
-JSON are each capped at 1 MiB, must use string object keys and finite numbers,
-and cannot contain custom Python objects or binary values.
-
-The helper first checks for an existing result, then uses `BEGIN IMMEDIATE`
-and checks again before running a new callback. Concurrent first calls for the
-same key therefore produce one mutation and one replay. SQLite still has one
-writer, so unrelated new mutations may wait up to the five-second busy
-timeout. The helper does not retry arbitrary SQL.
-
-The business writes and successful result receipt commit in the same SQLite
-transaction. Callback exceptions, invalid/oversized results, and commit
-failures roll back both and leave the key unclaimed. A crash before commit
-does the same; a retry after a commit replays the stored result. Do not call
-`run_once` inside `context.db.transaction()` or nest it in another `run_once`;
-put the complete business mutation in its callback instead.
-
-The launcher owns `_toolframe_idempotency` and validates its exact schema at
-every startup. User migrations and `run_once` callback SQL cannot read, alter,
-or write that table; only the helper inserts receipts after the business
-callback succeeds. Configure result limits at or below the table's fixed
-1 MiB durable ceiling.
-
-`IdempotencyError` has `code`, `message`, `retryable`, `trace_id`, `details`,
-and a recovery hint. MCP middleware converts it to the normal structured tool
-error contract. Busy and transient storage failures are retryable; key/input
-mismatches, validation failures, result limits, constraints, and corrupt
-stored receipts are not. Audit records include start/completion, replay
-status, the idempotency transaction ID, and the current MCP operation or
-dashboard request correlation fields.
-
-Query results are limited to 10,000 rows and 10 MiB. A result over either limit
-raises `ResultTooLarge`; it is never silently truncated. There is no automatic
-query cache, so a successful write followed by rerun sees shared data. A
-widget may opt into `st.cache_data` for an expensive read, but it owns cache
-invalidation.
-
-Helper failures use typed `DashboardDatabaseError` values with `code`,
-`message`, `retryable`, `trace_id`, and a recovery hint. Widgets should catch
-errors they expect (for example validation, constraint, conflict, or temporary
-lock errors) and show a useful `st.error`. A lock or transient I/O error is
-retryable; syntax, constraint, invalid input, oversized result, and policy
-errors are not. Full SQL and tracebacks stay server-side in stderr and the
-structured logs; they are never sent to a LAN browser. Dashboard mutation
-records are written to the audit log described below; direct `sqlite3` access
-remains an unlogged trusted-code escape hatch.
-
-The generated `widgets/example_card.py` is a complete small CRUD reference. It
-uses the `dashboard_example_entries` table owned by `0000_bootstrap.sql`,
-displays a metric, table, and built-in chart, accepts new rows with `st.form`,
-edits rows with `st.data_editor`, and deletes a selected row only after explicit
-confirmation. It binds all values, refreshes after a successful commit, and
-displays caught widget errors. Its updates use an `id` plus version or
-`updated_at` check; a stale update reports a conflict and asks the user to
-refresh instead of silently overwriting another LAN session.
-
-## Managed artifacts
-
-`workspace/artifacts/` is the supported local exchange layer for dashboard
-uploads/downloads and agent-authored MCP tools. It is an in-process Python API,
-not a browser file server: there is deliberately no `/api/artifacts` route and
-no unauthenticated URL that serves arbitrary workspace files.
-
-Dashboard widgets use the store supplied in their context. This upload and
-download pattern keeps browser bytes inside Streamlit while the managed store
-owns the local path and integrity metadata:
-
-```python
-import streamlit as st
-
-from toolframe_dashboard import get_context
-
-context = get_context()
-uploaded = st.file_uploader("Upload a CSV", type=["csv"])
-if uploaded is not None and st.button("Save upload"):
-    artifact = context.artifacts.write(
-        f"uploads/{uploaded.name}",
-        uploaded,
-        mime_type=uploaded.type or "text/csv",
-    )
-    st.success(f"Saved {artifact.path}")
-
-report = context.artifacts.get("reports/latest.csv")
-st.download_button(
-    "Download report",
-    data=context.artifacts.read(report.path),
-    file_name="latest.csv",
-    mime=report.mime_type,
-)
-```
-
-Paths are normalized POSIX-style paths relative to `workspace/artifacts/`.
-Empty, absolute, backslash, dot, parent-traversal, overlong, reserved, and
-symlinked paths are rejected. Artifact writes are create-once: an existing
-managed path or unmanaged filesystem entry raises `ArtifactExistsError` and is
-never replaced. Choose a unique path (for example a timestamp or domain ID)
-instead of retrying the same collision.
-
-`write(path, bytes_or_binary_stream, mime_type=...)` streams up to 25 MiB into
-a same-directory temporary, syncs it, and publishes the content without
-replacement so readers never observe partial bytes. Metadata is then published
-through a separate no-replace link. Both directories are synced; an open or
-sync failure is a typed, audited storage failure rather than a best-effort
-success. `write_text(...)` is the UTF-8-oriented convenience method.
-
-`read(path)` and `read_by_id(id)` verify byte size and SHA-256 before returning
-bytes. `get`, `get_by_id`, and `list(prefix=..., limit=...)` also stream and
-verify the complete SHA-256 before returning immutable `Artifact` metadata.
-List results are sorted by path. List limits must be between 1 and 10,000 and
-default to 1,000; a result over its limit raises `ArtifactLimitError` rather
-than truncating. The private metadata directory has a hard 10,000-entry scan
-cap, including ignored private entries, so listing and path lookup cannot turn
-into an unbounded directory scan. Narrow prefixes and limits bound content
-verification work but do not bypass that index-wide safety cap.
-
-Each artifact reference contains `artifactId`, `path`, `mimeType`, `byteSize`,
-`sha256`, and a UTC `createdAt`. Versioned JSON metadata is stored under the
-reserved `workspace/artifacts/.toolframe/` directory. Content remains at its
-reported relative path. Direct edits are unsupported: missing, altered,
-duplicated, malformed, or symlinked content/metadata fails closed with
-`ArtifactIntegrityError` instead of being silently trusted.
-
-Content and JSON metadata cannot be published as one filesystem transaction.
-If the process or metadata publication fails after content becomes visible,
-toolframe deliberately leaves that exact path as unmanaged content. It does not
-unlink the name because another local process may already have replaced it.
-The typed error includes a recovery hint: inspect or move the orphan aside
-manually, then retry with a new path. A later create reports an unmanaged
-collision, and listing does not expose the orphan as a valid artifact. If both
-files were published but directory durability could not be confirmed, the
-write still fails closed; use `get()` or `read()` to verify what survived
-before deciding on recovery.
-
-Startup-loaded tools use the standalone support module, which is configured
-before tool imports:
-
-```python
-from toolframe_artifacts import get_artifact_store
-
-store = get_artifact_store()
-artifact = store.write_text(
-    "reports/sales-20260902.csv",
-    csv_text,
-    mime_type="text/csv",
-)
-return {"artifact": artifact.to_reference()}
-```
-
-Returning the small reference avoids the MCP result-size cap; a later local
-tool or dashboard operation can use the path or stable ID to retrieve the
-verified bytes. `tools/_artifact_example.py` is a complete copyable example.
-Its leading underscore keeps it out of the startup catalog; copy it to
-`tools/export_report.py` to publish it. The launcher creates this reference
-only with a brand-new tools directory and never repairs or overwrites an
-existing one.
-
-Failures are typed subclasses of `ArtifactError` with `code`, `message`,
-`retryable`, and read-only `details`. Path, caller metadata, not-found,
-collision, limit, integrity, and storage errors have distinct codes. Uncaught
-artifact failures from MCP tools automatically use the normal structured MCP
-error result.
-Managed write starts, rejections, and completions are synchronous audit events;
-an audit-start failure prevents the filesystem mutation. As with database
-commits, local filesystem publication and the completion JSONL record cannot
-be one transaction.
-
-## Structured logging and audit
-
-The runtime writes two synchronous UTF-8 JSONL streams under
-`.toolframe/logs/`, one file per UTC date:
+Migration files live under the domain that owns the schema, but all domains
+share one immutable, contiguous numeric history:
 
 ```text
-.toolframe/logs/
-├── audit-YYYY-MM-DD.jsonl
-└── mcp-YYYY-MM-DD.jsonl
+domains/entry_register/migrations/0000_bootstrap.sql
+domains/entry_register/migrations/0001_adopt_domain_table_name.sql
+domains/order_fulfillment/migrations/0002_add_orders.sql
 ```
 
-`mcp-*` contains valid MCP transport and protocol messages in both directions,
-including server-to-client wire responses, tool calls, notifications,
-arguments, and normalized results. `audit-*`
-contains dashboard/database and managed-artifact mutations, malformed or rejected
-MCP requests, Host/Origin rejections, retention and tail recovery, and Python
-runtime start/stop/fatal events. Rust migration, UV, and bootstrap diagnostics
-remain console-only. A process-exclusive `.toolframe/logs/.toolframe.lock` prevents two
-instances from writing the same directory.
+The four-digit version is global, not per domain. Duplicate versions, gaps,
+invalid names, symlinks, non-UTF-8 files, changed applied bytes, and missing
+applied history are fatal. Never edit, rename, move, or delete an applied
+migration. Add the next global migration instead.
 
-Every record uses schema version 1, a UTC RFC3339 timestamp, a process
-`instanceId`, and a process-wide increasing `sequence` shared by both writers.
-Correlation fields include `operationId`, the protocol request ID,
-`transactionId`, `dashboardSessionId`, `requestId`, and error/trace IDs where
-available. MCP records include the socket peer IP/port, self-declared client
-name/version, wire session ID, method, protocol headers, and user agent; the
-client metadata is not authenticated and forwarded headers are ignored.
+Business table names use their owning domain prefix, such as
+`entry_register_entries` or `order_fulfillment_orders`. `_toolframe_*` tables
+belong to the runtime and are outside business migrations and repair code.
 
-Arguments, parameters, request bodies, and results larger than 16 KiB are
-represented by a head-and-tail preview with a truncation marker, original byte
-count, and SHA-256. Tracebacks have an independent 64 KiB limit with the same
-metadata. JSON-compatible values are preserved; binary or non-UTF-8 data is
-base64-encoded. There is no additional redaction, so SQL, parameters,
-payloads, results, and secrets may appear in these files. Treat `.toolframe/logs/` as
-sensitive and restrict access to trusted operators.
-
-Dashboard audit coverage is guaranteed for `context.db.execute()`,
-`context.db.transaction()`, and `context.db.run_once()`: mutation
-starts/completions, rejected mutations, idempotent creation/replay/failure,
-transaction begin/commit/rollback, and regular transaction statements are
-recorded. Managed artifact writes likewise record starts, rejections, and
-completions. Standalone database and artifact reads are not audited. A widget
-that opens `sqlite3` or writes workspace files directly bypasses this audit
-contract. JSONL and SQLite/filesystem mutations cannot be committed atomically;
-a successful mutation can therefore be followed by a missing completion record
-if the writer fails.
-
-The runtime keeps the configured number of UTC date buckets including today
-(14 by default), deletes old `audit`/`mcp` files as date pairs, and enforces a
-combined 256 MiB cap by default. Unknown files are preserved. A partial final
-line is trimmed to the last complete newline at startup and recorded as a
-recovery event. There is no log viewer or web log API.
-
-Logging is fail-closed: setup, serialization, append, flush, rollover,
-retention, or close failures stop the Python runtime and the launcher exits
-non-zero. If a current operation cannot be recorded, it is not reported as a
-successful operation; the terminal receives the failure detail, including the
-writer path and OS error when applicable.
-
-## Failure behavior
-
-Migration discovery, integrity, metadata, or SQL failures are fatal before the
-listener is bound or Python starts. Diagnostics identify the migration phase,
-path, version and checksum when available, SQLite code, retryability, and a
-recovery hint. A busy/locked or transient I/O failure may be retryable; an
-invalid name, history drift, incompatible ledger, syntax error, or constraint
-failure is not.
-
-The dashboard is part of the application contract. Missing dashboard files,
-invalid dependency metadata, dependency resolution failures, syntax errors,
-imports, loader errors, invalid widget contracts, and uncaught render/callback
-exceptions fail the whole application. Startup does not execute side-effecting
-widget renders, so readiness cannot prove every interactive path.
-
-Structured-log setup and runtime writer failures are also fatal. The launcher
-reports the underlying error and any applicable writer path, terminates the
-Python process, and exits non-zero. The best-effort MCP error response may be
-unavailable if a response has already started; the reliable contract is
-connection termination and process failure.
-
-If an uncaught dashboard error occurs during a later Streamlit rerun, the
-runtime logs the widget, phase, exception, trace ID, and full traceback to
-stderr, emits its fatal shutdown signal, and exits the Python process
-gracefully. Rust reports a non-zero failure and does not auto-restart it. Fix
-the dashboard and start `toolframe` again.
-
-Expected user and database errors are not fatal when the widget catches them
-and renders an error state. Readiness means that dependencies, dashboard
-source, widget contracts, FastAPI, FastMCP, and Streamlit lifespans have
-started; it does not mean that every widget has rendered successfully.
+Migrations must not contain transaction control, connection PRAGMAs,
+`ATTACH`/`DETACH`, or trigger creation. The launcher owns the transaction and
+migration ledger. Back up `data/data.db` and its `-wal`/`-shm` sidecars before a
+destructive data change.
 
 ## MCP tools
 
-Create a direct `tools/<lower_snake_case>.py` child with standard PEP 723
-metadata and exactly one standalone FastMCP `@tool`. The filename and function
-name must match.
+Every direct public `domains/<domain>/tools/<name>.py` file publishes exactly
+one synchronous FastMCP `@tool` function. The filename, Python function name,
+and MCP tool name must be identical lower snake case, and names are globally
+unique across domains. Dot-prefixed files, `_*.py`, and nested directories are
+not published.
 
-For a business app, the published files collectively form a small Business RPC
-surface, not a REST-like resource or database CRUD layer. A business query
-answers one bounded workflow question; a business command completes one named,
-guarded outcome or legal state transition. One command may hide several reads,
-writes, invariant checks, events, and receipts in its private implementation.
-Inputs and results use domain terms rather than table, column, generic patch,
-status, filter, sort, or SQL controls. When an intent is missing, add a verified
-business tool instead of asking a peer to compose storage primitives. The
-[Business RPC design rubric](skills/toolframe-business-app/references/development-handbook.md#c-publish-a-small-business-rpc-surface)
-contains the complete acceptance check.
-
-This minimal example demonstrates source and dependency mechanics only:
+Each public file begins with PEP 723 metadata:
 
 ```python
 # /// script
 # requires-python = ">=3.14,<3.15"
-# dependencies = ["httpx==0.28.1"]
+# dependencies = []
 # ///
 
 from fastmcp.tools import tool
 
 
 @tool
-def fetch_title(url: str) -> str:
-    """Return the HTML title for one URL."""
-    import httpx
-
-    response = httpx.get(url, timeout=10)
-    response.raise_for_status()
-    return response.text.split("<title>", 1)[1].split("</title>", 1)[0]
+def order_fulfillment_list_due_orders(limit: int = 50) -> dict:
+    """List the bounded set of due orders needed for the next decision."""
+    ...
 ```
 
-Restart `toolframe` to load added or edited files. Discovery is startup-only:
+Publish business commands and queries, not table CRUD, arbitrary filters, or
+generic SQL. One tool should complete one guarded intent or answer one bounded
+business question. Useful runtime helpers are:
 
-- Only direct `tools/*.py` regular files are published.
-- Hidden files, `_helper.py`, symlinks, and nested directories are ignored.
-  Ignored private helper modules can still be imported by tools.
-- Every published file must declare `requires-python` accepting Python 3.14
-  and a `dependencies` array.
-- `[tool.uv]` is rejected in this shared-environment MVP.
-- All dependencies resolve into one content-addressed UV project, `.venv`, and
-  `uv.lock`. A conflict aborts startup.
-- Import, decorator, identity, schema, integrity, or dependency failures abort
-  before HTTP readiness. The launcher exits nonzero with the tool path, load
-  phase, cause, traceback, and recent UV/Python diagnostics.
+- `toolframe_db.get_database()` for bounded parameterized queries and guarded
+  data DML;
+- `toolframe_idempotency.run_once()` for replay-safe mutations;
+- `toolframe_artifacts.get_artifact_store()` for create-once large outputs; and
+- `toolframe_runtime.ToolframeError` for structured, actionable MCP errors.
 
-Tool authors can raise `ToolframeError` from the runtime support module:
+Do not open SQLite directly from public tools and never expose schema-changing
+or repair capabilities to peer agents. The bundled
+`domains/entry_register/tools/_execute_sql_reference.py` is private reference
+code only; Toolframe does not publish it. A missing business operation is a
+request for the master development agent to implement a narrow tool.
 
-```python
-from toolframe_runtime import ToolframeError
+Tool files and dependencies are startup-loaded. Stop and restart Toolframe
+after changing them.
 
-raise ToolframeError(
-    "upstream_busy",
-    "The upstream service is temporarily unavailable.",
-    retryable=True,
-    details={"recoveryHint": "Retry after a short delay."},
-)
-```
+## Dashboard and widgets
 
-Invocation failures do not stop the app. They produce MCP `isError: true`
-results with `{code, message, retryable, details, traceId}`. Unexpected
-exceptions include sanitized stack locations for the agent and a full
-traceback in server logs without locals or environment dumps.
+Every direct public `domains/<domain>/ui/<widget>.py` file is automatically
+loaded. A widget exports synchronous `render(context)` and may define `TITLE`
+and globally unique integer `ORDER` values. Dot-prefixed files, `_*.py`, and
+nested directories are not widgets.
 
-For business mutations, prefer the explicit `toolframe_idempotency.run_once`
-helper documented above. It protects a caller-chosen operation from MCP
-transport retries without applying an automatic retry policy to arbitrary
-tool SQL.
+The default `app/dashboard.py` calls `render_widgets()`. It remains ordinary,
+trusted Streamlit code: the master agent may select, group, reorder, or render
+widgets manually, or replace the registry entirely.
 
-### SQL reference tool
+Domain model code belongs in `domains/<domain>/model/` so the UI and tools can
+share validation and business behavior without importing each other. Use
+parameterized database helpers from the widget context; do not accept arbitrary
+SQL from the browser.
 
-`tools/execute_sql.py` is the default coding reference and is scaffolded only
-when the launcher creates a brand-new tools directory. Existing directories
-and files are never overwritten.
+Expected, recoverable interaction errors may be rendered through the one
+core-owned `render_error_card()` helper. It produces one clear card containing
+the message, recovery action, trace ID, and instruction to copy the error to the
+master development agent. Do not create competing shared or domain-specific
+error-card components. Syntax, import, contract, and other programming defects
+must propagate and make the app unhealthy.
 
-The tool demonstrates the shared `toolframe_db` adapter and accepts `sql`,
-optional positional-list or named-object `params`, and `mode` (`read` by
-default or `write`). Read mode permits one bounded row-returning statement.
-Write mode permits one `INSERT`, `UPDATE`, `DELETE`, or `REPLACE`, including
-bounded `RETURNING` rows. It never opens a connection or reads the database
-path itself.
+Streamlit may rerun dashboard code during browser interaction. Tool and
+migration changes still require a full process restart.
 
-Schema/DDL, PRAGMA, `ATTACH`/`DETACH`, maintenance SQL, multiple statements,
-and runtime-owned table mutations are rejected. Busy/locked and temporary
-storage errors are marked retryable; validation, syntax, constraint, policy,
-and result-limit errors are not. A result over 100 rows or 1 MiB fails instead
-of being silently truncated.
+## Agent documents
 
-This is a fallback data read/write tool and implementation reference, not a
-business workflow API. A peer agent should prefer the app's Business RPC tools
-and use `execute_sql` only when the app-specific capability guide explicitly
-allows that fallback. The primary coding agent owns schema changes through a
-new `migrations/NNNN_description.sql`, followed by check and restart.
+The three document roles are deliberately different:
 
-## HTTP routes
+Toolframe serves `app/llms.txt` at `/llms.txt` as authored; it does not generate
+or append a tool catalog. The file may link focused documents using exact
+root-relative paths of the form `/llms/<domain>/<name>.md`. Only those linked
+regular Markdown files under `domains/<domain>/llms/` are validated and served.
+Unlinked files are private and unavailable over HTTP. Changing the linked set
+requires a restart; editing the bytes of an already approved index or document
+is visible on the next request if the allowlist stays unchanged.
+
+## HTTP surface
 
 | Route | Purpose |
 | --- | --- |
-| `GET /` | Streamlit Dashboard |
-| `GET, HEAD /llms.txt` | Progressive LAN agent-discovery index |
-| `GET, HEAD /llms/{name}.md` | Direct linked LAN agent-discovery document |
-| `GET /info` | Built-in datastore and runtime diagnostics page |
-| `GET /api/database` | Up to 25 preview rows per SQLite table |
-| `GET /api/runtime` | Python version, loaded tools, dependencies, and runtime limits |
-| `GET /healthz` | Health check |
-| `/mcp` | Unauthenticated FastMCP Streamable HTTP endpoint |
+| `/` | Streamlit business dashboard |
+| `/info` | Built-in database and startup-catalog diagnostics |
+| `/healthz` | Process readiness only |
+| `/api/database` | Bounded built-in table preview |
+| `/api/runtime` | Immutable startup summary |
+| `/llms.txt` | Authored peer-agent entry point |
+| `/llms/<domain>/<document>.md` | Explicitly linked domain document |
+| `/mcp` | FastMCP Streamable HTTP endpoint |
 
-The `/api/database` and `/api/runtime` routes remain available for diagnostics
-and compatibility. Managed artifacts have no HTTP route and are available only
-to trusted dashboard/tool Python through `toolframe_artifacts`. Host and browser
-Origin headers are restricted to
-localhost, the selected bind address, and detected local interfaces. This
-reduces DNS-rebinding exposure but is not authentication or a code sandbox.
+There is no SSE, stdio, reload, repair, or schema-management endpoint.
+
+## Data, artifacts, and audit
+
+The default database is `data/data.db`. Dashboard and tool adapters reject
+runtime-owned table writes and enforce bounded results. Large durable outputs
+belong under `workspace/artifacts/`; use the managed artifact API so writes are
+create-once and integrity-addressed.
+
+Structured logs are written to `.toolframe/logs/` by default:
+
+- `audit-YYYY-MM-DD.jsonl` records application lifecycle and mutations;
+- `mcp-YYYY-MM-DD.jsonl` records MCP traffic and tool results.
+
+Logs can contain business input, output, and secrets. Default retention is 14
+UTC date buckets with a combined 256 MiB cap. Logging failures are fail-closed.
 
 ## Configuration
 
-| Option | Environment | Default |
+Relative CLI path overrides resolve from the current working directory except
+the logs path, which resolves from the executable root.
+
+| CLI flag | Environment | Default beside executable |
 | --- | --- | --- |
-| `--host` | `TOOLFRAME_HOST` | `0.0.0.0` |
-| `--port` | `TOOLFRAME_PORT` | `8000` |
-| `--port-search-span` | `TOOLFRAME_PORT_SEARCH_SPAN` | `100` |
-| `--database` | `TOOLFRAME_DB` | `<executable>/data/data.db` |
-| `--migrations-dir` | `TOOLFRAME_MIGRATIONS_DIR` | `<executable>/migrations` |
-| `--tools-dir` | `TOOLFRAME_TOOLS` | `<executable>/tools` |
-| `--dashboard-dir` | `TOOLFRAME_DASHBOARD_DIR` | `<executable>/dashboard` |
-| `--llms-file` | `TOOLFRAME_LLMS_FILE` | `<executable>/llms/llms.txt` |
-| `--llms-dir` | `TOOLFRAME_LLMS_DIR` | `<executable>/llms` |
-| `--workspace-dir` | `TOOLFRAME_WORKSPACE` | `<executable>/workspace` |
-| `--runtime-dir` | `TOOLFRAME_RUNTIME` | `<executable>/.toolframe` |
-| `--logs-dir` | `TOOLFRAME_LOGS_DIR` | `<executable>/.toolframe/logs` |
-| `--log-retention-days` | `TOOLFRAME_LOG_RETENTION_DAYS` | `14` UTC date buckets |
-| `--log-max-total-mib` | `TOOLFRAME_LOG_MAX_TOTAL_MIB` | `256` MiB combined |
-| `--verbose` | `TOOLFRAME_VERBOSE` | false |
-| `--no-color` | `TOOLFRAME_NO_COLOR` | false; `NO_COLOR` also disables ANSI |
-| `--uv-path` | `TOOLFRAME_UV` | verified `<runtime-dir>/uv`, otherwise verified download |
-| `--offline` | `TOOLFRAME_OFFLINE` | false; prevents a missing UV, Python, or dependency download |
-| `--max-concurrency` | `TOOLFRAME_MAX_CONCURRENCY` | 60; `0` is unlimited |
-| `--tool-timeout` | `TOOLFRAME_TOOL_TIMEOUT` | 60 seconds; `0` disables |
-| `--result-limit` | `TOOLFRAME_RESULT_LIMIT` | 4 MiB |
-| `--startup-timeout` | `TOOLFRAME_STARTUP_TIMEOUT` | 600 seconds |
+| `--database` | `TOOLFRAME_DB` | `data/data.db` |
+| `--app-dir` | `TOOLFRAME_APP_DIR` | `app` |
+| `--domains-dir` | `TOOLFRAME_DOMAINS_DIR` | `domains` |
+| `--workspace-dir` | `TOOLFRAME_WORKSPACE` | `workspace` |
+| `--runtime-dir` | `TOOLFRAME_RUNTIME` | `.toolframe` |
+| `--logs-dir` | `TOOLFRAME_LOGS_DIR` | `.toolframe/logs` |
 
-Migration, dashboard, and other explicit path overrides are resolved relative
-to the current working directory when they are relative. The exception is
-`--logs-dir`: a relative logs path is resolved from the executable root so
-structured logs remain with the toolframe instance.
+Run `./toolframe --help` for networking, UV/offline, concurrency, timeout,
+result-size, and logging options. The retired per-feature source flags are not
+accepted.
 
-Timeouts are best effort. A blocking thread or native extension cannot always
-be safely killed inside the shared Python process.
+## Diagnose safely
 
-For local-only access:
+Start with:
 
 ```sh
-./toolframe --host 127.0.0.1
+./toolframe check --format json
+./toolframe --help
 ```
 
-For source development, override paths because defaults are intentionally
-relative to the compiled executable:
+Preserve the complete terminal error and relevant JSONL logs. Do not delete the
+database, runtime, domains, or migration history as a first response. Fix the
+named source through the master development agent, rerun `check`, then restart
+and prove the dashboard and MCP path.
 
-```sh
-cargo run --release -- \
-  --database ./data/data.db \
-  --migrations-dir ./migrations \
-  --tools-dir ./tools \
-  --dashboard-dir ./dashboard \
-  --llms-file ./llms/llms.txt \
-  --llms-dir ./llms \
-  --workspace-dir ./workspace \
-  --runtime-dir ./.toolframe
-```
+Retry only errors explicitly marked retryable. Syntax, dependency, migration,
+checksum, import-boundary, schema, widget, and business-rule errors require a
+source or input correction.
 
-Streamlit is configured for headless operation, disabled telemetry, CORS/XSRF
-protection, `runOnSave=false`, and the launcher's Host/Origin allowlist. File
-uploads and WebSocket messages are limited to 25 MiB. These settings reduce
-accidental LAN exposure and resource abuse; they do not replace
-authentication.
-
-## Development checks
+## Build and verify this repository
 
 ```sh
 cargo fmt --all -- --check
-cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
 cargo build --release
-
-uv run --python 3.14 \
-  --with 'anyio>=4.10,<5' \
-  --with cryptography==48.0.1 \
-  --with fastapi==0.135.2 \
-  --with fastmcp==4.0.0 \
-  --with pandas \
-  --with streamlit==1.61.0 \
-  --with pydantic==2.12.5 \
-  --with uvicorn==0.42.0 \
-  python -m unittest discover -s core/tests -v
 ```
+
+Create distributable binaries with `make package` for the current host or
+`make release` for the supported macOS targets. The launcher embeds the default
+app/domain scaffold, managed Python runtime modules, information page, and
+production business-app skill.

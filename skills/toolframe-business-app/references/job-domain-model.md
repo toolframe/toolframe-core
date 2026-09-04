@@ -14,18 +14,17 @@ dashboard. It does not run a scheduler, worker queue, or recurring timer.
 
 The current product contract is:
 
-- User Python files in `tools/` are discovered and loaded once at startup. A
-  tool-load error, or a dashboard-load error, fails the whole app with its
-  reason. MVP has no hot-reload or reload API; restart after editing.
+- Direct public files in `domains/<job_domain>/tools/` and `ui/` are discovered
+  at startup. A tool, widget, or domain-load error fails the whole app with its
+  reason. MVP has no MCP hot-reload or reload API; restart after editing.
 - One uv-managed Python runtime and process serves FastAPI, Streamlit, and
   FastMCP. MCP is Streamable HTTP at `/mcp`; SSE and stdio are not supported.
 - The app binds for LAN use without authentication. Treat every tool and
   dashboard mutation as trusted-code access. `data/data.db` is the only supported
   database in this MVP.
-- `tools/execute_sql.py` is a trusted-LAN, data-only fallback and shared-adapter
-  reference. It rejects schema/runtime-internal changes. Business agents use
-  narrow, parameterized tools that enforce this model unless the app-specific
-  capability guide explicitly permits a bounded fallback data operation.
+- Peer agents receive only narrow, parameterized business tools that enforce
+  this model. The private `_execute_sql_reference.py` may guide master-agent
+  implementation but is not published and never becomes a peer repair path.
 - Tool and mutation failures expose a stable reason, a trace identifier, and
   whether retrying is safe. Detailed diagnostics remain in the local logs.
 
@@ -51,20 +50,21 @@ to be the actor making an MCP request.
 
 ## Recommended SQLite mapping
 
-User-owned tables use the `app_` prefix and are created by the versioned
-migrations. The names and optional columns can be adapted to the business, but
+User-owned tables use their owning domain prefix and are created by that
+domain's files in the one global migration history. The examples below assume
+the domain is named `job_desk`; names and optional columns can be adapted, but
 the relationships and constraints below should remain recognizable. The
 launcher-owned `_toolframe_migrations` and `_toolframe_idempotency` tables are
 internal and must not be edited by a user migration.
 
 | Table | Required meaning and representative columns |
 | --- | --- |
-| `app_jobs` | `id` (stable text or integer key), `title`, `objective`, `status`, `priority`, `available_at`, `context_version_id`, `current_attempt_id`, `lease_token_hash`, `fencing_value`, `lease_expires_at`, `max_attempts` (default `3`), `version`, `created_by_actor`, `created_at`, `updated_at`, and optional terminal reason/timestamp. `version` is the optimistic-concurrency value. |
-| `app_job_context_versions` | `id`, `job_id`, monotonically increasing `context_number`, `instructions`, structured input/reference data, `created_by_actor`, and `created_at`. Enforce uniqueness of `(job_id, context_number)` and never update content in place. |
-| `app_job_attempts` | `id`, `job_id`, `context_version_id`, `attempt_number`, `claim_source_status` (`ready` or `changes_requested`), `actor_label`, `lease_token_hash`, `fencing_value`, `lease_expires_at`, `started_at`, `last_heartbeat_at`, `finished_at`, technical outcome, error code/message summary, and `retryable`. An Attempt is closed before a result is submitted or when a lease is abandoned. |
-| `app_job_results` | `id`, `job_id`, `attempt_id`, `summary`, optional structured payload, optional managed `artifact_ref`, `created_by_actor`, and `created_at`. Results are append-only; do not overwrite a previous result. |
-| `app_job_reviews` | `id`, `job_id`, `result_id`, `reviewer_actor`, `decision` (`accepted`, `changes_requested`, or explicit business `rejected`), review note, and `created_at`. |
-| `app_job_events` | Append-only `id`/sequence, `job_id`, event name, `from_status`, `to_status`, actor label, attempt/context/result identifiers when relevant, reason/payload, idempotency operation id, and `occurred_at`. No update or delete path should exist in business tools. |
+| `job_desk_jobs` | `id` (stable text or integer key), `title`, `objective`, `status`, `priority`, `available_at`, `context_version_id`, `current_attempt_id`, `lease_token_hash`, `fencing_value`, `lease_expires_at`, `max_attempts` (default `3`), `version`, `created_by_actor`, `created_at`, `updated_at`, and optional terminal reason/timestamp. `version` is the optimistic-concurrency value. |
+| `job_desk_job_context_versions` | `id`, `job_id`, monotonically increasing `context_number`, `instructions`, structured input/reference data, `created_by_actor`, and `created_at`. Enforce uniqueness of `(job_id, context_number)` and never update content in place. |
+| `job_desk_job_attempts` | `id`, `job_id`, `context_version_id`, `attempt_number`, `claim_source_status` (`ready` or `changes_requested`), `actor_label`, `lease_token_hash`, `fencing_value`, `lease_expires_at`, `started_at`, `last_heartbeat_at`, `finished_at`, technical outcome, error code/message summary, and `retryable`. An Attempt is closed before a result is submitted or when a lease is abandoned. |
+| `job_desk_job_results` | `id`, `job_id`, `attempt_id`, `summary`, optional structured payload, optional managed `artifact_ref`, `created_by_actor`, and `created_at`. Results are append-only; do not overwrite a previous result. |
+| `job_desk_job_reviews` | `id`, `job_id`, `result_id`, `reviewer_actor`, `decision` (`accepted`, `changes_requested`, or explicit business `rejected`), review note, and `created_at`. |
+| `job_desk_job_events` | Append-only `id`/sequence, `job_id`, event name, `from_status`, `to_status`, actor label, attempt/context/result identifiers when relevant, reason/payload, idempotency operation id, and `occurred_at`. No update or delete path should exist in business tools. |
 
 Use foreign keys where the chosen schema permits them, indexes for pending
 selection (`status`, `available_at`, `priority`), and an index for each
@@ -227,9 +227,8 @@ structured business data:
 All command tools validate business input, use bound parameters, atomically
 enforce the transition, and return the new state/version, Event/operation
 identifiers, evidence, and next allowed action. Query tools return only the
-bounded business view needed by their named purpose. `execute_sql` remains an
-explicitly documented data fallback outside the normal Business RPC surface;
-it is not the workflow interface.
+bounded business view needed by their named purpose. No generic SQL, schema,
+repair, or raw CRUD capability belongs in the peer-facing catalog.
 
 ## Dashboard responsibilities
 
@@ -268,9 +267,9 @@ Keep the scheduler out of these tests: use a test actor to simulate its poll.
 
 Maintain `APP_CONTEXT.md` for the app’s purpose, actors, operating loop, and
 limits, and `DOMAIN_MODEL.md` for the app-specific adaptation of this model.
-The migration directory is the schema source of truth; never edit an applied
-migration—add the next contiguous migration. Tool signatures are the callable
-contract, dashboard widgets are the human projection, and `./toolframe check
+Domain-owned migration directories form the schema source of truth and one
+global history; never edit an applied migration—add the next global version.
+Tool signatures are the callable contract, dashboard widgets are the human projection, and `./toolframe check
 --format json`, `/info`, and local JSONL logs are runtime evidence.
 
 When these sources disagree, stop and reconcile the docs, schema, tools,

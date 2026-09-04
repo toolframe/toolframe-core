@@ -1,209 +1,239 @@
 ---
 name: toolframe-business-app
-description: Load when a user wants a coding agent to create, extend, operate, connect, diagnose, or judge the fit of a business-specific LAN app inside an editable toolframe distribution, including its SQLite migrations, MCP tools, Streamlit dashboard, llms.txt LAN-agent guide, peer-agent workflow, and nontechnical operating handbook.
+description: Load when a user wants a coding agent to create, extend, operate, connect, diagnose, or judge the fit of a business-specific LAN app inside an editable Toolframe distribution, including domain-owned SQLite migrations, MCP tools, Streamlit widgets, the authored llms.txt peer guide, and master-agent handoff documents.
 ---
 
 # Toolframe business app
 
-Turn a business outcome into one small, named, inspectable application built on
-toolframe that a nontechnical owner can operate and another agent can inherit.
+Turn a business outcome into one small, named, inspectable Toolframe app that a
+nontechnical owner can operate and a peer agent can use through narrow MCP
+business capabilities.
 
-## Non-negotiables
+## Establish the agent role
 
-- Lead with the business loop: who submits what, who acts, what the owner sees,
-  and what proves completion. Translate technical choices into their business
-  consequence.
-- Treat Toolframe as the framework name. Give every business app its own short,
-  recognizable name; keep the authoritative identity in `APP_CONTEXT.md` and
-  project it consistently into the Dashboard and LAN agent documents.
-- Perform repository and runtime legwork directly. Ask the owner only for a
-  business decision that materially changes behavior, risk, or data meaning;
-  choose and record safe technical defaults.
-- Treat the executable folder's `README.md`, `./toolframe --help`, migrations,
-  actual tool signatures, and public helper APIs as the current runtime
-  contract. Reconcile contradictions instead of relying on this skill's memory.
-- Keep one app centered on one bounded business workflow. Closely related item
-  types may share it only when lifecycle, actors, and data rules remain coherent.
-- Preserve user data and applied migration bytes. Express every durable schema
-  change as the next contiguous migration owned by the primary development
-  agent; never delegate schema administration to a peer workflow agent or MCP
-  SQL call. Back up state before destructive data work.
-- Treat actor names as attribution, not identity. This product is trusted-LAN,
-  unauthenticated application code; a need for security boundaries triggers the
-  dedicated-app escalation path.
-- Keep `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, `llms/llms.txt`, and the linked `llms/`
-  documents aligned with migrations, tools, dashboard behavior, and tests in
-  the same change. The `llms` files are a curated LAN-facing projection, not a
-  second source of business truth.
-- Prefix user-owned business tables with `app_`; treat `_toolframe_*` tables as
-  runtime-owned and outside user migrations or repair SQL.
+- The **master development agent** works in the app folder. It may edit source,
+  create migrations, add capabilities, diagnose failures, and reconcile the
+  private handoff documents.
+- A **peer agent** starts from `/llms.txt` and uses only the published MCP
+  business tools needed for its assigned workflow. It must not administer the
+  schema, expose raw SQL, repair source, infer private implementation details,
+  or treat a missing capability as permission to alter the app.
+- When acting as a peer, preserve the exact URL, tool name, error, and trace ID,
+  then route missing capabilities or defects to the master development agent.
+
+Do not blur these roles. `APP_CONTEXT.md` and `DOMAIN_MODEL.md` are private
+master-agent sources; `app/llms.txt` and its explicitly linked domain documents
+are the public peer-agent contract.
+
+## Non-negotiable source contract
+
+Work only in this layout:
+
+```text
+APP_CONTEXT.md
+DOMAIN_MODEL.md
+app/{dashboard.py,llms.txt,pyproject.toml}
+domains/<business_domain>/
+  __init__.py
+  llms/
+  migrations/
+  model/
+  tools/
+  ui/
+```
+
+- Do not recreate legacy root `dashboard/`, `tools/`, `migrations/`, or `llms/`
+  trees and do not create a default `shared/` package.
+- Keep one cohesive business capability in one domain. Use lower snake case for
+  domain, tool, widget, and migration-description names.
+- Domain code may import its own internals. Cross-domain code may import only
+  explicit high-level business functions from the other domain's root
+  `__init__.py`, using `from domains.<domain> import <business_function>`, and
+  only when the dependency is genuinely needed. Deep cross-domain imports are
+  invalid.
+- `app/dashboard.py` is the unrestricted application composition root. The
+  default registry is convenient, not mandatory.
+- Preserve user data and the exact bytes of applied migrations. Domain-owned
+  migration files form one globally numbered, gap-free history.
+- Prefix business tables with the owning domain name. `_toolframe_*` is
+  runtime-owned.
+- Public tools and widgets are direct `*.py` files. `_*.py`, dot files, and
+  nested directories are private/not discovered.
+- One public tool file contains one synchronous decorated function. Filename,
+  function name, and globally unique MCP name must match.
+- Never publish generic SQL, schema, repair, or raw CRUD capabilities. The
+  private `_execute_sql_reference.py` is implementation reference code only.
+- Use one core `render_error_card()` for expected recoverable widget errors.
+  Do not add shared/domain error-card variants. Programming defects propagate
+  and make startup or the running app fail.
+- Treat every public migration, dependency, domain API, tool, and widget as
+  required. A partial catalog is never an acceptable start.
 
 ## 1. Establish intent and fit
 
-Locate the editable application root and inspect its local README, CLI help,
-current migrations, tools, dashboard, database state, and git status when the
-folder is version-controlled. Classify the request as one of:
+Identify the person or agent who submits work, who acts, what the owner sees,
+what durable evidence proves completion, and the one screen or query needed
+next. Translate implementation choices into business consequences; ask the
+owner only when a choice changes behavior, risk, or data meaning.
 
-- **Develop:** create or change business behavior.
-- **Doctor:** diagnose or repair an existing app without broadening its scope.
-- **Operate:** run it, connect a peer agent, back it up, or explain daily use.
-- **Fit:** decide whether toolframe remains the right product shape.
+Use Toolframe for one trusted LAN, one bounded workflow, one SQLite database,
+short-lived interactions, and trusted Python. Read
+[operations-handbook.md](references/operations-handbook.md) and recommend a
+dedicated app when the request needs public access, authentication,
+authorization, tenants, untrusted code, high availability, durable workers,
+heavy concurrent writes, multiple databases, or formal compliance controls.
 
-Read [operations and limits](references/operations-handbook.md) for Doctor,
-Operate, or Fit. Continue only after the application root, intended business
-outcome, current app identity, data at risk, and any hard escalation trigger
-are explicit. On the Develop path, follow the development handbook's naming
-step whenever the app is still `Unnamed` or uses Toolframe as its product name;
-propose the name without waiting for the owner to ask. For a Fit request,
-report the decision without implementing unless the user also requested a
-change.
+Toolframe is the framework name. Give the business app its own short name.
+When the scaffold still says `Unnamed`, propose two or three names with one
+recommendation and apply the chosen or clearly provisional name consistently.
 
-Sections 2–5 are the Develop path. For Doctor, Operate, or Fit, stay in the
-requested operations workflow: do not create handoff documents, redesign the
-domain, or change source merely because those later sections exist. A Doctor
-repair may edit only the diagnosed source and affected documentation when the
-user asked for repair; diagnosis alone is read-only.
+## 2. Inspect before editing
 
-## 2. Model the business before code
+From the executable root, inspect git status, `README.md`, `./toolframe --help`,
+`APP_CONTEXT.md`, `DOMAIN_MODEL.md`, `app/`, every relevant domain, and the
+current check report:
 
-For Develop, read the [development handbook](references/development-handbook.md).
-When work is claimed by scheduled or peer agents, also read the canonical
-[Job domain model](references/job-domain-model.md). Do not load that model for
-an unrelated register, reporting, or lookup app.
+```sh
+./toolframe check --format json
+```
 
-For Develop, create or reconcile `APP_CONTEXT.md` from
-[the app-context template](assets/APP_CONTEXT.template.md) and
-`DOMAIN_MODEL.md` from
-[the domain-model template](assets/DOMAIN_MODEL.template.md). Use the owner's
-domain words in the UI while recording any canonical internal term. Make
-states, transitions, invariants, actor intentions, source ownership, error
-meaning, and large-result handling explicit.
+Reconcile contradictions against the executable's actual CLI, migrations,
+tool signatures, widget contracts, and helper APIs. Do not assume this skill's
+copy is newer than the app.
 
-Advance only when every user or agent action maps to an allowed state change or
-read operation, every business invariant has one authoritative definition, and
-unresolved business choices are visible rather than buried in implementation.
+Classify the request as Develop, Doctor, Operate, Connect, or Fit. Diagnosis is
+read-only unless repair was requested. Operation does not authorize source
+redesign. A peer connection request does not authorize adding tools.
 
-## 3. Implement one vertical business loop
+## 3. Model before code
 
-Build in dependency order: migration, private domain/storage helpers, a small
-Business RPC surface, Streamlit widgets, then the progressive `llms/llms.txt` agent
-guide. Use the binary's scaffold commands where they apply; inspect their
-generated file before filling it. Keep one published tool per public tool file
-and place shared support behind private underscore-prefixed modules.
+For Develop, read
+[development-handbook.md](references/development-handbook.md). Reconcile
+`APP_CONTEXT.md` with the app-context asset and `DOMAIN_MODEL.md` with the
+domain-model asset. Keep the owner's terms, entities, invariants, states,
+actors, source ownership, and error meaning explicit.
 
-Split the Business RPC surface into commands and queries. A business command
-completes one named intent or state transition; a business query answers one
-bounded workflow question. Let one tool hide every read, write, invariant
-check, event, and receipt needed for that outcome. Use domain inputs and return
-business state, evidence, and next-action details. Keep table/resource CRUD,
-generic field/status patching, and arbitrary storage filters out of the public
-tool interface.
+Read [job-domain-model.md](references/job-domain-model.md) only when the app
+owns queued, claimed, leased, retried, or human-reviewed agent work. Do not
+force the Job vocabulary onto an ordinary register, lookup, or report.
 
-Make business commands parameterized, transactional where invariants span
-rows, idempotent where retries or reruns can duplicate intent, and guarded by
-versions or leases where stale writers matter. Return structured, actionable
-errors with retryability and correlation details. Store large durable output as
-managed artifacts and keep bounded summaries/references in SQLite.
+Choose the domain that owns the behavior. Create a new domain only when its
+language, invariants, and lifecycle form a real bounded business capability:
 
-In MCP tools, obtain database access from `toolframe_db.get_database()`; do not
-open `sqlite3` connections or read `TOOLFRAME_DB` in tool source. Prefer narrow
-business tools. Keep the shipped `execute_sql` as a bounded data-only fallback
-and adapter example, and allow a peer to use it only when the app-specific
-capability guide explicitly documents that fallback.
+```sh
+./toolframe scaffold domain <business_domain>
+```
 
-Advance only when every public tool traces to a caller intent and observable
-business outcome, and the migration, tool surface, dashboard actions, domain
-docs, and tests describe the same loop with no orphaned action or state.
+## 4. Implement one vertical loop
 
-## 4. Prove the application
+Build in this order:
 
-Run the strongest checks available for the change. The minimum development gate
-is:
+1. Add the next global migration under the owning domain, if durable state must
+   change.
+2. Put business rules and persistence operations in that domain's `model/`.
+3. Add the smallest intent-shaped MCP command or bounded query in `tools/`.
+4. Add or update the human decision surface in `ui/` and compose it from
+   `app/dashboard.py` as needed.
+5. Update `app/llms.txt` only when its public reading path changes; update the
+   relevant linked domain document when the peer contract changes.
+6. Reconcile both private master-agent documents and tests in the same change.
 
-1. `./toolframe check --format json` succeeds.
-2. Domain tests cover legal and illegal transitions plus concurrency,
-   idempotency, and lease behavior when those concepts exist.
-3. A real server start succeeds and applies pending migrations before tools are
-   exercised against the configured database.
-4. Local tool invocation against migrated state, or the equivalent MCP calls,
-   proves representative reads, writes, replay, stale input, and error
-   classification.
-5. The Dashboard completes the human path.
-6. A peer-LAN client starts from the tested advertised `/llms.txt` address,
-   follows its relevant linked documents, registers the same-origin `/mcp`
-   Streamable HTTP server through its own client, and proves the connection by
-   listing the actual tools before calling them.
-7. One end-to-end business item reaches its intended review or terminal state
-   with history and result visible.
+Use the domain-aware scaffolds:
 
-A passing preflight is evidence, not the entire acceptance test. On failure,
-follow the
-[Doctor workflow](references/operations-handbook.md#doctor-report-first-then-repair),
-fix the reported source of truth, restart when required, and rerun every
-affected gate.
+```sh
+./toolframe scaffold migration <domain> <description>
+./toolframe scaffold tool <domain> <name>
+./toolframe scaffold widget <domain> <name>
+```
 
-## 5. Hand off in business language
+Business commands complete one guarded intent or legal state transition.
+Business queries answer one bounded workflow question. Hide SQL, invariants,
+events, version/lease checks, idempotency, and transaction details behind that
+small interface.
 
-Lead the final report with what the owner can now accomplish. Include app-local
-doc paths, changed business behavior, data migration/backups, tool names,
-Dashboard actions, the tested Dashboard, Agent guide, and MCP addresses, verification
-evidence, restart rules, known limits, and the next human action. Leave technical
-detail behind links unless it changes how the owner operates the app.
+Use `toolframe_db.get_database()` instead of opening SQLite in public tools,
+`toolframe_idempotency.run_once()` for replay-safe mutations,
+`toolframe_artifacts.get_artifact_store()` for large durable outputs, and
+`toolframe_runtime.ToolframeError` for structured tool failures.
 
-For Develop, finish only when every agreed human and peer-agent path works and a
-future coding agent can continue safely from `APP_CONTEXT.md` and
-`DOMAIN_MODEL.md`, while a peer LAN agent can discover the supported workflow
-from `/llms.txt`. A developed app must no longer present `Unnamed` or Toolframe
-as its owner-facing app name. For Doctor, finish with an evidence-backed cause
-and, only when repair was requested, a verified repair. For Operate, finish
-when the requested run, connection, backup, or explanation outcome is proven.
-For Fit, finish with a clear keep/escalate decision and the business reason;
-do not invent implementation work.
+## 5. Keep document audiences separate
+
+- `APP_CONTEXT.md`: master-agent purpose, actors, boundaries, decisions,
+  operating state, source map, and handoff evidence.
+- `DOMAIN_MODEL.md`: master-agent ubiquitous language, entities, invariants,
+  transitions, concurrency, and storage mapping.
+- `app/llms.txt`: concise authored peer entry point with the app identity,
+  same-origin `/mcp`, connection proof, and links to only the relevant domain
+  documents.
+- `domains/<domain>/llms/*.md`: focused peer instructions for supported
+  capabilities and workflows. They are served only when explicitly linked as
+  `/llms/<domain>/<name>.md` from `app/llms.txt`.
+
+Toolframe must not generate a catalog into `app/llms.txt`. Do not publish the
+private master documents, source repair steps, internal error catalogs, raw
+database operations, or unavailable tools to peers. State that missing app
+behavior must go through the master development agent.
+
+## 6. Prove the complete app
+
+At minimum:
+
+1. Run focused domain, migration, tool, UI, and error-path tests.
+2. Run `./toolframe check --format json` and require `ok: true`.
+3. Start the real server and confirm it reaches readiness with every domain,
+   migration, tool, widget, dependency, and linked LLMS document intact.
+4. Invoke representative tools against migrated state, including replay,
+   stale-input, and error behavior when applicable.
+5. Complete the human path in the dashboard.
+6. Give a peer the tested LAN `/llms.txt`, have it register same-origin `/mcp`
+   through its client, and prove the connection by listing actual tools.
+7. Complete one end-to-end business outcome with its durable evidence visible.
+
+On failure, do not skip the broken domain or weaken validation. Preserve the
+full stderr/check error, fix the source of truth through the master agent,
+restart when required, and rerun affected gates.
+
+## 7. Hand off in business language
+
+Lead with what the owner can now accomplish. Include the app name, changed
+business behavior, migration/data effect, published tool names, dashboard
+actions, peer guide URL, verification evidence, restart requirements, known
+limits, and the next human action.
+
+Finish Develop work only when `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, migrations,
+models, tools, UI, linked peer docs, and tests tell one coherent story. Finish a
+Doctor repair only after the cause and requested fix are verified. Finish a
+Connect task only after actual tool listing proves MCP registration.
 
 ## Conditional references
 
 - Read [development-handbook.md](references/development-handbook.md) for any
-  schema, tool, widget, `llms/llms.txt`, or app-document change.
-- Read [job-domain-model.md](references/job-domain-model.md) only for queued,
-  scheduled, claimed, leased, retried, or human-reviewed agent work.
+  source or document change.
 - Read [operations-handbook.md](references/operations-handbook.md) for startup,
-  peer LAN connection, backup, Doctor, limitations, escalation, or FAQ.
+  LAN connection, backup, Doctor, failure, limits, or FAQ.
+- Read [job-domain-model.md](references/job-domain-model.md) only for owned Job
+  queue/claim/lease/review behavior.
 - Read [product-decisions.md](references/product-decisions.md) only when
-  reviewing or changing this skill's product policy. In a source checkout,
-  also read the source-only `evals/cases.json` and update evaluation evidence
-  when present; production auto-installation intentionally omits evaluation
-  directories.
-- Use the app-context and domain-model assets whenever creating or reconciling
-  the required app-local handoff documents; adapt their placeholders to the
-  user's domain.
-- Use the
-  [MCP-unavailable response asset](assets/MCP_UNAVAILABLE_ISSUE.template.md)
-  whenever a scheduled workflow or peer agent cannot reach `/mcp` before its
-  intended business action completes.
+  reviewing or changing this skill's policy. In a source checkout, also update
+  evaluation cases/evidence; production installation omits `evals/`.
+- Use `assets/APP_CONTEXT.template.md` and
+  `assets/DOMAIN_MODEL.template.md` when creating private handoff documents.
+- Use `assets/ARTIFACT_TOOL.template.py` only as a private implementation
+  reference for a narrow artifact-producing business tool.
+- Use `assets/MCP_UNAVAILABLE_ISSUE.template.md` when a peer cannot reach MCP
+  before its intended business action completes.
 
 ## Recognition-critical gotchas
 
-- toolframe stores and exposes work; an external scheduler or human starts the
-  peer agent. Model schedule definitions only when the business app truly owns
-  recurrence.
-- MCP tools, migrations, and dependency changes take effect on process startup.
-  Dashboard source may rerun on browser interaction; this is not tool hot reload.
-- Keep the shipped `execute_sql` as a trusted, data-only fallback and adapter
-  reference. It must reject schema, PRAGMA, maintenance, and runtime-owned table
-  changes. Give operational agents Business RPC commands and queries; permit
-  the fallback only when the app-specific capability guide says so.
-- The first tested private LAN address is for peers; `127.0.0.1` is only for the
-  host machine. Use that same LAN host and port for `/llms.txt` and `/mcp`.
-- Give a new peer agent the tested LAN `/llms.txt` URL first. That guide can
-  tell the agent to register same-origin `/mcp`, but it cannot install an MCP
-  server into every possible client or bypass client approval. A successful
-  tool-list response, not reading the guide, proves the connection.
-- An unreachable MCP endpoint pauses the integration before business state is
-  known. Return a visible warning and one self-contained, copyable issue from
-  the response asset; do not invent a Job transition or claim that the server
-  is down when only peer reachability failed.
-- Invalid migrations, tools, dependencies, widgets, logging, or Dashboard code
-  make the application unhealthy. Surface and repair the cause; a partially
-  loaded catalog is not a successful start.
-- One Python process, one shared dependency environment, and SQLite's writer
-  model are deliberate simplicity limits, not a distributed worker platform.
+- Migrations, MCP tools, dependencies, and the linked LLMS allowlist are
+  startup contracts. Dashboard code may rerun in Streamlit; this is not MCP hot
+  reload.
+- The global migration number does not reset inside a new domain.
+- A domain root `__init__.py` is a deliberate business boundary, not a dumping
+  ground for models or storage helpers.
+- Reading `/llms.txt` does not install MCP. A successful tool-list response is
+  the connection proof.
+- `127.0.0.1` works only on the host. Peers use the printed LAN host and the
+  same port for `/llms.txt` and `/mcp`.
+- One process, one dependency environment, and SQLite's writer model are
+  deliberate simplicity limits.

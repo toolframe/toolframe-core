@@ -1,8 +1,13 @@
 # /// script
 # requires-python = ">=3.14,<3.15"
-# dependencies = ["fastmcp==4.0.0"]
+# dependencies = []
 # ///
-"""Copy this private example to ``export_report.py`` to enable the tool."""
+"""Private reference for a narrow domain-owned artifact tool.
+
+Copy only when the business needs this outcome. Put the result in
+``domains/<domain>/tools/``, then rename both file and function to one globally
+unique, intent-shaped business name before publishing it.
+"""
 
 from datetime import UTC, datetime
 
