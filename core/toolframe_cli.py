@@ -14,6 +14,7 @@ from typing import Any
 
 import anyio
 from fastmcp import FastMCP
+from toolframe_architecture import validate_source_architecture
 from toolframe_artifacts import (
     DEFAULT_MAX_ARTIFACT_BYTES,
     configure_artifact_store,
@@ -78,6 +79,7 @@ def _check(arguments: argparse.Namespace) -> int:
     _require_python()
     app_dir = arguments.app.resolve(strict=True)
     domains_dir = arguments.domains.resolve(strict=True)
+    validate_source_architecture(app_dir, domains_dir)
     agent_documents = validate_domain_llms_source(app_dir / "llms.txt", domains_dir)
     with tempfile.TemporaryDirectory(prefix="toolframe-check-") as temporary:
         temporary_root = Path(temporary)

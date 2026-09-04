@@ -805,7 +805,7 @@ class DomainWidgetDiscoveryTests(unittest.TestCase):
         target.write_text("def render(context):\n    pass\n", encoding="utf-8")
         (broken / "ui" / "entries.py").unlink()
         (broken / "ui" / "entries.py").symlink_to(target)
-        with self.assertRaisesRegex(RuntimeError, "domain widget.*symlink"):
+        with self.assertRaisesRegex(RuntimeError, "public Python source.*symlink"):
             dashboard.preflight_app()
 
     def test_app_dashboard_and_global_order_are_fail_closed(self):
@@ -821,7 +821,7 @@ class DomainWidgetDiscoveryTests(unittest.TestCase):
             dashboard.preflight_app()
 
         (self.app / "dashboard.py").write_text("if:\n", encoding="utf-8")
-        with self.assertRaisesRegex(RuntimeError, "dashboard.py failed compile"):
+        with self.assertRaisesRegex(RuntimeError, "failed compile.*dashboard.py"):
             dashboard.preflight_app()
 
 

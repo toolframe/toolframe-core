@@ -220,6 +220,20 @@ class CliRunnerTests(unittest.TestCase):
         self.assertFalse((self.workspace / "artifacts").exists())
         self.assertFalse((self.root / "data.db").exists())
 
+    def test_check_rejects_broken_public_source_before_loading_tools(self):
+        (self.domains / "entry_register" / "model" / "broken.py").write_text(
+            "if:\n", encoding="utf-8"
+        )
+        noise = io.StringIO()
+
+        with (
+            redirect_stderr(noise),
+            self.assertRaisesRegex(RuntimeError, "failed compile.*broken.py"),
+        ):
+            cli._check(self.arguments("check"))
+
+        self.assertNotIn("tool import noise", noise.getvalue())
+
     def test_invoke_returns_the_actual_fastmcp_result_encoding(self):
         output = io.StringIO()
         noise = io.StringIO()

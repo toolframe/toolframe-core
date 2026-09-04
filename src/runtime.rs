@@ -17,6 +17,7 @@ use crate::tools::{
 
 const CORE_SERVER: &str = include_str!("../core/server.py");
 const CORE_SUPPORT: &str = include_str!("../core/toolframe_runtime.py");
+const CORE_ARCHITECTURE: &str = include_str!("../core/toolframe_architecture.py");
 const CORE_DASHBOARD: &str = include_str!("../core/toolframe_dashboard.py");
 const CORE_DATABASE: &str = include_str!("../core/toolframe_db.py");
 const CORE_IDEMPOTENCY: &str = include_str!("../core/toolframe_idempotency.py");
@@ -424,6 +425,7 @@ pub fn prepare_runtime(
         [
             CORE_SERVER.as_bytes(),
             CORE_SUPPORT.as_bytes(),
+            CORE_ARCHITECTURE.as_bytes(),
             CORE_DASHBOARD.as_bytes(),
             CORE_DATABASE.as_bytes(),
             CORE_IDEMPOTENCY.as_bytes(),
@@ -445,6 +447,7 @@ pub fn prepare_runtime(
 
     let core_server = core_dir.join("server.py");
     let core_support = core_dir.join("toolframe_runtime.py");
+    let core_architecture = core_dir.join("toolframe_architecture.py");
     let dashboard_sdk = core_dir.join("toolframe_dashboard.py");
     let database_sdk = core_dir.join("toolframe_db.py");
     let idempotency = core_dir.join("toolframe_idempotency.py");
@@ -455,6 +458,7 @@ pub fn prepare_runtime(
     let info_page = core_dir.join("info.html");
     write_managed(&core_server, CORE_SERVER)?;
     write_managed(&core_support, CORE_SUPPORT)?;
+    write_managed(&core_architecture, CORE_ARCHITECTURE)?;
     write_managed(&dashboard_sdk, CORE_DASHBOARD)?;
     write_managed(&database_sdk, CORE_DATABASE)?;
     write_managed(&idempotency, CORE_IDEMPOTENCY)?;
@@ -1118,6 +1122,11 @@ mod tests {
         assert_eq!(
             fs::read_to_string(core.join("toolframe_db.py")).expect("read database support"),
             CORE_DATABASE
+        );
+        assert_eq!(
+            fs::read_to_string(core.join("toolframe_architecture.py"))
+                .expect("read architecture support"),
+            CORE_ARCHITECTURE
         );
         assert_eq!(
             fs::read_to_string(core.join("toolframe_artifacts.py")).expect("read artifact support"),

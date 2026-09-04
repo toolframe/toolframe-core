@@ -39,6 +39,7 @@ from fastmcp.tools import Tool, ToolResult
 from fastmcp.tools.function_tool import ToolMeta
 from fastmcp.utilities.lifespan import combine_lifespans
 from starlette.routing import Route
+from toolframe_architecture import validate_source_architecture
 from toolframe_artifacts import (
     DEFAULT_MAX_ARTIFACT_BYTES,
     ArtifactError,
@@ -1177,6 +1178,7 @@ def _build_application(
     database_path = _required_path("TOOLFRAME_DB")
     app_dir = _required_directory("TOOLFRAME_APP_DIR")
     domains_dir = _required_directory("TOOLFRAME_DOMAINS_DIR")
+    validate_source_architecture(app_dir, domains_dir)
     llms_file = app_dir / "llms.txt"
     llms_documents = tuple(validate_domain_llms_source(llms_file, domains_dir))
     dashboard_app_path = app_dir / "dashboard.py"

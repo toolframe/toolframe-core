@@ -1991,6 +1991,19 @@ mod tests {
         let paths = resolve_cli_paths(&default_cli, root).expect("resolve default paths");
         assert_eq!(paths.app, root.join("app"));
         assert_eq!(paths.domains, root.join("domains"));
+
+        for legacy_flag in [
+            "--dashboard-dir",
+            "--tools-dir",
+            "--migrations-dir",
+            "--llms-file",
+            "--llms-dir",
+        ] {
+            assert!(
+                Cli::try_parse_from(["toolframe", legacy_flag, "legacy-source"]).is_err(),
+                "legacy source flag must be rejected: {legacy_flag}"
+            );
+        }
     }
 
     #[test]

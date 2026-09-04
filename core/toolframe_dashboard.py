@@ -31,6 +31,7 @@ from typing import Any, Self
 from urllib.parse import quote
 
 import pandas as pd
+from toolframe_architecture import validate_source_architecture
 from toolframe_artifacts import ArtifactStore
 from toolframe_idempotency import (
     IdempotencyError,
@@ -1558,18 +1559,10 @@ def preflight_app(
     app_dir: Path | None = None,
     domains_dir: Path | None = None,
 ) -> tuple[DashboardWidget, ...]:
-    """Compile ``app/dashboard.py`` and import every public domain widget."""
+    """Validate all public Python sources and import every domain widget."""
 
     app_root, domains_root = _resolve_app_layout(app_dir, domains_dir)
-    dashboard_path = app_root / "dashboard.py"
-    _real_file(dashboard_path, "app dashboard")
-    try:
-        compile(dashboard_path.read_bytes(), os.fspath(dashboard_path), "exec")
-    except Exception as error:
-        raise RuntimeError(
-            "app dashboard.py failed compile validation: "
-            f"{type(error).__name__}: {error}"
-        ) from error
+    validate_source_architecture(app_root, domains_root)
     return discover_domain_widgets(domains_root)
 
 
