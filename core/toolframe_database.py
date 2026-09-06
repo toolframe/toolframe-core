@@ -607,9 +607,6 @@ class SQLiteProvider(DatabaseOperations):
                 sqlite3, "SQLITE_DBCONFIG_DEFENSIVE"
             ):
                 connection.setconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE, True)
-            if hasattr(connection, "setlimit"):
-                connection.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, _MAX_SQL_BYTES)
-                connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, self.max_bytes)
             if read_only:
                 connection.execute("PRAGMA query_only = ON")
             else:
@@ -629,6 +626,7 @@ class SQLiteProvider(DatabaseOperations):
         max_bytes: int | None,
         private: bool = False,
     ) -> pd.DataFrame:
+        length_limit = connection.getlimit(sqlite3.SQLITE_LIMIT_LENGTH)
         policy = _PolicyState(
             "query",
             allow_schema_changes=self.allow_schema_changes,
@@ -660,6 +658,7 @@ class SQLiteProvider(DatabaseOperations):
         finally:
             connection.set_authorizer(None)
             connection.set_progress_handler(None, 0)
+            connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, length_limit)
 
     def _execute_on_connection(
         self,
@@ -669,6 +668,7 @@ class SQLiteProvider(DatabaseOperations):
         *,
         private: bool = False,
     ) -> tuple[ExecuteResult, _PolicyState]:
+        length_limit = connection.getlimit(sqlite3.SQLITE_LIMIT_LENGTH)
         policy = _PolicyState(
             "execute",
             allow_schema_changes=self.allow_schema_changes and not private,
@@ -757,9 +757,11 @@ class SQLiteProvider(DatabaseOperations):
         finally:
             connection.set_authorizer(None)
             connection.set_progress_handler(None, 0)
+            connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, length_limit)
 
     def _start_statement_timeout(self, connection):
         deadline = time.monotonic() + self.settings.timeout_seconds
+        connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, self.max_bytes)
         connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
 
     def _raise_public(
