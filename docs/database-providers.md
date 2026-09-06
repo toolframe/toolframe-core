@@ -6,7 +6,8 @@ name is `toolframe.database`. A plugin's concrete name may change without
 changing consumers. The generic `fastapi-cordis` package does not depend on a
 database driver or Toolframe.
 
-The SQLite and PostgreSQL providers implement the same operations:
+The SQLite and PostgreSQL providers implement the same operations. Perform this
+work inside a tool, render function or plugin setup after schema readiness:
 
 ```python
 from toolframe_db import get_database
@@ -80,5 +81,8 @@ SQLite/PostgreSQL implementation without modifying Rust. New SQL dialects need
 an explicit migration contract extension rather than pretending to be either.
 
 Configuration and restart behavior are documented in
-[database-configuration.md](database-configuration.md). Migration coordination and
-startup integration are still being completed on this development branch.
+[database-configuration.md](database-configuration.md). The low-level database
+service is shared by trusted business code; it is not a per-plugin SQL sandbox.
+Schema ownership and cross-owner read declarations are enforced by the migration
+coordinator. Prefer a plugin's public business service for cross-plugin operations.
+See the [owned business-service example](../examples/plugins/README.md).

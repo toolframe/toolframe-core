@@ -2,7 +2,8 @@
 
 Toolframe is a local-first runtime for small, agent-built business apps. One
 Rust launcher runs a Streamlit dashboard, a FastMCP Streamable HTTP endpoint,
-and one SQLite database on a trusted LAN.
+and one configured database on a trusted LAN. SQLite is the default;
+PostgreSQL uses the same business data interface.
 
 The editable source is organized by business domain. Toolframe owns discovery,
 validation, migrations, dependency setup, and process lifecycle; the master
@@ -27,8 +28,7 @@ Startup is intentionally fail-closed:
    root is absent.
 3. Discover every direct public domain and require its root `__init__.py` plus
    `llms`, `migrations`, `model`, `tools`, and `ui` directories.
-4. Validate the single global migration history across every domain, verify
-   applied checksums, and apply pending migrations transactionally.
+4. Resolve the selected provider and its typed database settings in Python.
 5. Discover every direct public `domains/*/tools/*.py` file, validate its PEP
    723 metadata, merge dependencies, and build an immutable startup manifest.
 6. Prepare the pinned UV/Python 3.14 environment from `app/pyproject.toml` and
@@ -38,8 +38,9 @@ Startup is intentionally fail-closed:
    widget. Domain import boundaries are checked before tool import.
 8. Import every public tool, materialize every MCP schema, then import and
    validate every public widget.
-9. Start the validated plugin dependency graph, enter the server lifespans and
-   report readiness only after plugins, catalog and dashboard preflight succeed.
+9. Start the database plugin: validate history and ownership, archive migration
+   artifacts, and apply the installed schema targets. Start dependent plugins,
+   enter the server lifespans and report readiness after all setup succeeds.
 
 Any broken public migration, dependency, tool, widget, domain API, or required
 app file stops startup. Toolframe never serves a partial tool catalog or skips a
@@ -48,8 +49,11 @@ master development agent can fix the source.
 
 `toolframe check --format json` follows the same discovery and Python loading
 path without binding a port or applying pending migrations to the configured
-database. Migration validation uses isolated state; trusted Python imports can
-still have import-time side effects.
+database. SQLite migrations run on a temporary filesystem copy. PostgreSQL checks
+history, artifacts and the plan through read-only connections; it does not
+trial-execute PostgreSQL DDL. The report states the validation level. Trusted
+Python imports must remain free of side effects; supported database helpers
+reject application writes during check.
 
 Toolframe embeds `fastapi-cordis` for dynamic service lifecycles and domain
 availability. Open `/info` to enable/stop plugins, or use `/api/plugins` for
@@ -108,28 +112,36 @@ uses the registry, but the master development agent may replace that behavior.
 
 ## Migrations
 
-Migration files live under the domain that owns the schema, but all domains
-share one immutable, contiguous numeric history:
+New migrations use an owner namespace, an explicit target, and revision
+dependencies. Each owner keeps its own SQL files:
 
 ```text
 domains/entry_register/migrations/0000_bootstrap.sql
 domains/entry_register/migrations/0001_adopt_domain_table_name.sql
-domains/order_fulfillment/migrations/0002_add_orders.sql
+domains/order_fulfillment/migrations/schema.json
+domains/order_fulfillment/migrations/sqlite/0001_add_orders.sql
+domains/order_fulfillment/migrations/postgresql/0001_add_orders.sql
 ```
 
-The four-digit version is global, not per domain. Duplicate versions, gaps,
-invalid names, symlinks, non-UTF-8 files, changed applied bytes, and missing
-applied history are fatal. Never edit, rename, move, or delete an applied
-migration. Add the next global migration instead.
+The original `0000`/`0001` files and ledger remain the immutable legacy global
+history. New references such as `order_fulfillment@0001_add_orders` identify a
+revision in its owner's namespace. `scaffold migration` creates both SQL drafts
+and updates `schema.json`; complete its SQL and owned `tables` before checking.
+Add revisions instead of editing applied bytes.
 
 Business table names use their owning domain prefix, such as
 `entry_register_entries` or `order_fulfillment_orders`. `_toolframe_*` tables
 belong to the runtime and are outside business migrations and repair code.
 
-Migrations must not contain transaction control, connection PRAGMAs,
-`ATTACH`/`DETACH`, or trigger creation. The launcher owns the transaction and
-migration ledger. Back up `data/data.db` and its `-wal`/`-shm` sidecars before a
-destructive data change.
+Python coordinates migration locks, transactions and durable history. Original
+SQL bytes, metadata and checksums are archived in the selected database before
+execution. Removing a plugin preserves its tables, data and verifiable history;
+archived pending revisions do not run without the installed plugin. Reinstalling
+older code fails unless it explicitly declares compatibility. Service `requires`
+does not grant schema ownership or cross-table access.
+
+See [Migration authoring and guarantees](docs/plugin-migrations.md) for declarations,
+cross-owner read contracts, supported SQL, legacy adoption and recovery behavior.
 
 ## MCP tools
 
@@ -230,8 +242,8 @@ There is no SSE, stdio, reload, repair, or schema-management endpoint.
 
 ## Data, artifacts, and audit
 
-The default database is `data/data.db`. Dashboard and tool adapters reject
-runtime-owned table writes and enforce bounded results. Large durable outputs
+The default database is `data/data.db`. Dashboard and tool adapters protect
+runtime-owned tables and enforce bounded results. Large durable outputs
 belong under `workspace/artifacts/`; use the managed artifact API so writes are
 create-once and integrity-addressed.
 
@@ -250,7 +262,7 @@ the logs path, which resolves from the executable root.
 
 | CLI flag | Environment | Default beside executable |
 | --- | --- | --- |
-| `--database` | `TOOLFRAME_DB` | `data/data.db` |
+| `--database` | `TOOLFRAME_SQLITE_PATH`, then `TOOLFRAME_DB` | `data/data.db` |
 | `--app-dir` | `TOOLFRAME_APP_DIR` | `app` |
 | `--domains-dir` | `TOOLFRAME_DOMAINS_DIR` | `domains` |
 | `--workspace-dir` | `TOOLFRAME_WORKSPACE` | `workspace` |
@@ -260,6 +272,14 @@ the logs path, which resolves from the executable root.
 Run `./toolframe --help` for networking, UV/offline, concurrency, timeout,
 result-size, and logging options. The retired per-feature source flags are not
 accepted.
+
+Set `TOOLFRAME_DB_PROVIDER=postgresql` and `TOOLFRAME_POSTGRES_DSN` to select
+PostgreSQL. Provider and target changes take effect after restart and never
+transfer or delete existing data. Tools continue using `get_database()` or the
+typed `DATABASE` service. Use `insert()` for portable returned identifiers.
+See [Configuration and secret-safe diagnostics](docs/database-configuration.md),
+[Provider contract](docs/database-providers.md), and the
+[executable custom provider example](examples/providers/README.md).
 
 ## Diagnose safely
 
@@ -297,3 +317,15 @@ After changing the sibling `../fastapi-cordis` package, run
 `python3 scripts/sync-fastapi-cordis.py` before building. The checked-in embedded
 copy makes normal builds and deployed binaries independent of the sibling path.
 Use `--check` to verify that copy against its source.
+
+With the managed Python dependencies plus pytest/HTTPX installed, run
+`PYTHONPATH=core python -m pytest core/tests`. Database tests use temporary SQLite
+files. Set `TOOLFRAME_TEST_POSTGRES_DSN` to a disposable PostgreSQL server whose
+test role can create/drop databases; each case creates and removes its own database.
+Set `TOOLFRAME_TEST_EXECUTABLE` to the absolute path of a freshly built binary to
+include the isolated real check/invoke/serve/MCP target-switch test. PostgreSQL
+and executable tests are skipped when their explicit test settings are absent.
+
+Run Ruff checks/format validation with `--target-version py311` across `core`,
+`examples`, `app` and `domains` to retain the embedded package's Python 3.11 syntax
+compatibility; the host runtime itself requires Python 3.14.

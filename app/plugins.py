@@ -10,3 +10,7 @@ PLUGINS = []
 # Domains retain these services while their tools/widgets execute. Example:
 # DOMAIN_PLUGINS = {"entry_register": ("my_service",)}
 DOMAIN_PLUGINS = {}
+
+# Optional mapping of installed plugin names to toolframe_migrations.Schema.
+# Schema targets prepare before dependent setup; stopping a plugin retains data.
+SCHEMAS = {}

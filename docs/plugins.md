@@ -19,8 +19,9 @@ widgets. Tools remain listed in the startup MCP catalog and report the structure
 `plugin_unavailable` error when called. Widgets display an unavailable message on
 their next render. An already rendered browser page is not forcibly refreshed.
 
-`toolframe.database` and `toolframe.artifacts` expose the existing SDK handles as
-host-owned services. They cannot be disabled or reconfigured using management
+`toolframe.database` is the stable typed database service. Its concrete plugin is
+`toolframe.database.sqlite` or `toolframe.database.postgresql`, selected at startup.
+`toolframe.artifacts` exposes artifact storage. These host services cannot be disabled or reconfigured using management
 routes. Business domain exports and database migrations keep their existing
 ownership rules. Stopping a domain never drops its tables or removes its files.
 
@@ -65,6 +66,13 @@ unknown dependencies/domains, dependency cycles, invalid configuration, and
 enabled plugins depending on disabled plugins stop startup.
 
 ## Use a service
+
+When callers must work with interchangeable implementations, declare a
+runtime-checkable Python Protocol and `ServiceKey[YourProtocol]`. Providers use
+`Plugin(..., provides=KEY)`; consumers use `requires=(KEY,)`, `ctx.require(KEY)`
+and `manager.lease(KEY)`. A service key has one selected provider. The manager
+validates its contract and tracks the concrete provider's dependencies and leases.
+See the [typed database contract](database-providers.md) for a working example.
 
 In a synchronous MCP tool:
 
@@ -135,7 +143,9 @@ the launcher may ultimately terminate an unresponsive process as before.
 
 - `toolframe check --format json` validates definitions, configuration, dependency
   order, source and schemas. Its `pluginValidation` is `definitions-only`:
-  it does not start plugin connections or prove external service readiness.
+  it does not run custom setup or prove external service readiness. Database
+  validation connects read-only to PostgreSQL or uses a temporary SQLite copy;
+  its exact validation level is reported separately.
 - `toolframe invoke` starts configured plugins, calls the real MCP tool, then
   cleans plugins before returning. Plugin stdout is kept out of its JSON output.
 - `toolframe serve` starts plugins before reporting readiness and closes them
@@ -144,6 +154,22 @@ the launcher may ultimately terminate an unresponsive process as before.
 Source files, installed packages, migrations, routes, and MCP schemas remain
 startup-loaded. This release does not hot-reload Python modules, dynamically run
 pip, coordinate multiple workers, isolate plugins, or provide a marketplace.
+
+## Attach a plugin's schema
+
+`app/plugins.py` may export `SCHEMAS = {"your.concrete_plugin": schema}` alongside
+`PLUGINS`. Each value is a `toolframe_migrations.Schema`, or the result of
+`read_schema(Path(...))`. The named plugin must be installed in `PLUGINS`.
+Toolframe automatically adds its database service dependency. Domain schemas in
+`domains/<owner>/migrations/schema.json` are discovered without this mapping.
+
+Schema targets describe installed code, including a plugin configured with
+`enabled=False`; disabling changes service availability, not the installed schema
+requirements. Uninstall by removing the definition and its schema declaration,
+then restarting. Existing data, ownership and archived history remain. Declare
+revision dependencies separately from runtime `requires`. See
+[schema authoring](plugin-migrations.md) and the
+[executable lifecycle example](../examples/plugins/README.md).
 
 ## Update the embedded package
 

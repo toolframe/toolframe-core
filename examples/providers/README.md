@@ -31,5 +31,5 @@ python examples/providers/run.py
 
 The example creates its table and data inside a temporary directory, closes the
 provider, and removes that temporary data. It does not move or modify existing
-data. Main runtime integration is still being implemented on this development
-branch.
+data. The host now loads the same factory during `check`, `invoke`, and `serve`,
+and the database plugin owns schema preparation and provider cleanup.
