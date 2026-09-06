@@ -764,6 +764,28 @@ class SQLiteProvider(DatabaseOperations):
         connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, self.max_bytes)
         connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
 
+    def normalize_error(
+        self, error: Exception, *, operation: str
+    ) -> DashboardDatabaseError:
+        """Normalize raw host-operation errors without logging connection secrets."""
+        if isinstance(error, DashboardDatabaseError):
+            return error
+        failure = _classify_error(error, None)
+        trace_id = uuid.uuid4().hex
+        self.logger.error(
+            "database host failure traceId=%s exception_type=%s",
+            trace_id,
+            type(error).__name__,
+        )
+        return DashboardDatabaseError(
+            failure.code,
+            failure.message,
+            retryable=failure.retryable,
+            trace_id=trace_id,
+            recovery_hint=failure.recovery_hint,
+            details=failure.details,
+        )
+
     def _raise_public(
         self,
         error: Exception,

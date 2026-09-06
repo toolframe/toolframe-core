@@ -74,8 +74,14 @@ Do not give untrusted plugins in-process execution access.
 Provider construction is lazy. `create_provider(settings)` accepts built-ins or
 a `module:factory` imported from installed application dependencies. A factory
 receives `settings`, `logger`, and `audit_sink` and returns `DatabaseProvider`.
-Its host integration also exposes `dialect`, `identity`, `connection()` and
-`begin_locked()`. These raw operations belong to migration coordination, not
+Its host integration also exposes `dialect`, `identity`, `settings`, `connection()`,
+`begin_locked()` and `normalize_error(error, *, operation)`. The error hook returns
+a safe `DashboardDatabaseError`, preserving retryability without logging driver
+text, SQL values, credentials or raw tracebacks. The coordinator uses only this
+public contract; composition-based wrappers do not need private helpers or a
+`logger` attribute. If recording a failed run also fails, the original structured
+error remains available and the run may retain its `prepared` status for recovery.
+These raw operations belong to migration coordination, not
 MCP tools or browser endpoints. A third-party provider can extend a supported
 SQLite/PostgreSQL implementation without modifying Rust. New SQL dialects need
 an explicit migration contract extension rather than pretending to be either.

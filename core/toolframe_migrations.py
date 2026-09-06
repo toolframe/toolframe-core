@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import uuid
@@ -750,17 +751,28 @@ class MigrationCoordinator:
                 "appliedNow": [artifact.ref for artifact in plan.pending],
                 "runId": run_id,
             }
-        except (MigrationError, DashboardDatabaseError) as error:
+        except MigrationError as error:
             self._record_failure(run_id, error.code)
             raise
         except Exception as error:  # noqa: BLE001 - normalize raw provider migration errors.
             self._record_failure(run_id, "migration_sql_failed")
             try:
-                self.provider._raise_public(error, "migration execution")
-            except DashboardDatabaseError as public:
-                raise MigrationError(
-                    "migration_sql_failed", public.message, retryable=public.retryable
-                ) from None
+                public = self.provider.normalize_error(
+                    error, operation="migration execution"
+                )
+                if not isinstance(public, DashboardDatabaseError):
+                    raise TypeError("invalid provider error contract")
+            except Exception as normalization_error:  # noqa: BLE001 - third-party hooks must not mask failures or reveal secrets.
+                logging.getLogger(__name__).error(
+                    "migration error normalization failed exception_type=%s",
+                    type(normalization_error).__name__,
+                )
+                public = DashboardDatabaseError(
+                    "database_error", "The database could not execute the migration."
+                )
+            raise MigrationError(
+                "migration_sql_failed", public.message, retryable=public.retryable
+            ) from None
 
     def _record_failure(self, run_id, code):
         try:
@@ -775,7 +787,7 @@ class MigrationCoordinator:
                     )
                     connection.commit()
         except Exception as error:  # noqa: BLE001 - preserve the original failure without secrets.
-            self.provider.logger.error(
+            logging.getLogger(__name__).error(
                 "migration failure record unavailable exception_type=%s",
                 type(error).__name__,
             )

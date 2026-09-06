@@ -10,7 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import pandas as pd
 from fastapi_cordis import ServiceKey
-from toolframe_database import ExecuteResult, SQLiteProvider
+from toolframe_database import DashboardDatabaseError, ExecuteResult, SQLiteProvider
 from toolframe_database_config import DatabaseConfigurationError, DatabaseSettings
 from toolframe_idempotency import IdempotencyResult, IdempotencyTransaction
 
@@ -65,6 +65,12 @@ class DatabaseProvider(DatabaseService, Protocol):
     def connection(self, *, read_only: bool = False) -> AbstractContextManager[Any]: ...
 
     def begin_locked(self, connection: Any, key: str) -> None: ...
+
+    def normalize_error(
+        self, error: Exception, *, operation: str
+    ) -> DashboardDatabaseError:
+        """Return a safe failure; never log driver text, SQL, or secret context."""
+        ...
 
 
 DATABASE = ServiceKey("toolframe.database", DatabaseService)

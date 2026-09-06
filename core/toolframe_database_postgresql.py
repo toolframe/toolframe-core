@@ -304,8 +304,12 @@ class PostgreSQLProvider(DatabaseOperations):
             self._raise_public(error, sql)
 
     def _raise_public(self, error, sql, *, policy=None):
+        raise self.normalize_error(error, operation="database operation") from None
+
+    def normalize_error(self, error, *, operation):
+        """Translate driver failures through the public provider contract."""
         if isinstance(error, DashboardDatabaseError):
-            raise error
+            return error
         original = getattr(error, "orig", error)
         state = getattr(original, "sqlstate", None) or ""
         if isinstance(error, _SdkFailure):
@@ -355,11 +359,11 @@ class PostgreSQLProvider(DatabaseOperations):
             type(original).__name__,
             state,
         )
-        raise DashboardDatabaseError(
+        return DashboardDatabaseError(
             failure.code,
             failure.message,
             retryable=failure.retryable,
             trace_id=trace_id,
             recovery_hint=failure.recovery_hint,
             details=failure.details,
-        ) from None
+        )
