@@ -106,11 +106,11 @@ def probe_save(key: str, value: str) -> dict:
             **({"TOOLFRAME_POSTGRES_DSN": dsn} if dialect == "postgresql" else {}),
         }
 
-    def command(dialect, *args):
+    def command(dialect, *args, overrides=None):
         result = subprocess.run(
             [*common, *args],
             cwd=tmp_path,
-            env=environment(dialect),
+            env={**environment(dialect), **(overrides or {})},
             capture_output=True,
             timeout=240,
             check=False,
@@ -231,4 +231,27 @@ def probe_save(key: str, value: str) -> dict:
                         child.kill()
                         await child.wait()
 
+    for filename, flags, overrides in (
+        (
+            "cli.db",
+            ("--database", "cli.db"),
+            {"TOOLFRAME_SQLITE_PATH": "preferred.db", "TOOLFRAME_DB": "legacy.db"},
+        ),
+        (
+            "preferred.db",
+            (),
+            {"TOOLFRAME_SQLITE_PATH": "preferred.db", "TOOLFRAME_DB": "legacy.db"},
+        ),
+        ("legacy.db", (), {"TOOLFRAME_DB": "legacy.db"}),
+    ):
+        checked = command(
+            "sqlite", "check", "--format", "json", *flags, overrides=overrides
+        )
+        assert checked["database"]["target"] == str((tmp_path / filename).resolve())
+        assert not (tmp_path / filename).exists()
     asyncio.run(exercise())
+    original = (probe / "migrations/sqlite.sql").read_bytes()
+    draft = command("sqlite", "scaffold", "migration", "probe", "add_note")
+    assert draft["revision"] == "probe@0001_add_note" and draft["draft"] is True
+    assert (probe / "migrations/sqlite.sql").read_bytes() == original
+    assert all(Path(path).is_file() for path in draft["sources"])
