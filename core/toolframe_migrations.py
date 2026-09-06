@@ -905,6 +905,21 @@ def validate_script(artifact, dialect, owners):
         "upper",
     }
     for sql, tree in statements:
+        # A SELECT wrapper does not make a data-modifying CTE read-only.
+        # Keep this transactional subset explicit: every mutation is its own
+        # top-level statement, with one owned target checked below.
+        if any(
+            isinstance(node, (exp.Into, exp.Lock))
+            or (
+                node is not tree
+                and isinstance(node, (exp.DML, exp.DDL, exp.Alter, exp.Drop))
+            )
+            for node in tree.walk()
+        ):
+            _error(
+                "unsupported_migration_sql",
+                "Nested mutations, SELECT INTO and explicit row locks are not supported in migrations; use separate owned statements.",
+            )
         drop_index = (
             isinstance(tree, exp.Drop)
             and str(tree.args.get("kind", "")).upper() == "INDEX"

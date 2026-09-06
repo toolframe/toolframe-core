@@ -117,7 +117,11 @@ installed sources are rechecked between archival and execution.
 The supported SQL subset covers persistent tables, indexes and views, ordinary
 data mutations, and a bounded set of pure SQL functions. Transaction commands,
 database administration, procedural functions/triggers, concurrent indexes,
-temporary/unlogged objects and cascading DDL are rejected. These bounds permit
+temporary/unlogged objects and cascading DDL are rejected. Every mutation must be
+a separate top-level statement: data-modifying CTEs, nested mutations, `SELECT
+INTO` and explicit row locks are rejected even when a table is declared in
+`reads`. PostgreSQL can execute a modifying CTE even when the outer query does not
+use its result ([PostgreSQL documentation](https://www.postgresql.org/docs/17/queries-with.html#QUERIES-WITH-MODIFYING)). These bounds permit
 transactional schema application on both providers. PostgreSQL sequence counters
 can still have gaps after rolled-back inserts. External side effects from
 manually installed database objects are outside this guarantee; plugins and
