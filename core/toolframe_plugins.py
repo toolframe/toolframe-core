@@ -33,6 +33,26 @@ def use_plugin(name: str):
     return get_plugins().lease(name)
 
 
+def plugin_unavailable_details(manager: PluginManager, name: str) -> dict[str, Any]:
+    """Describe a recovery action using public state, without reading configuration."""
+    snapshot = {item["name"]: item for item in manager.snapshot()}
+    item = snapshot.get(name, {})
+    state = item.get("state", "unknown")
+    blocked = item.get("blockedBy", [])
+    if state == "failed":
+        hint = f"Inspect the server log, correct the cause, then Retry {name} at /info."
+    elif state == "blocked":
+        hint = (
+            f"Restore dependencies ({', '.join(blocked)}) at /info; "
+            f"{name} will resume automatically. Failed dependencies require Retry."
+        )
+    elif state == "disabled":
+        hint = f"Enable {name} at /info before retrying."
+    else:
+        hint = "Check /api/plugins for current states and recovery actions at /info."
+    return {"plugin": name, "state": state, "blockedBy": blocked, "recoveryHint": hint}
+
+
 def _read_catalog(
     app_dir: Path,
 ) -> tuple[list[Plugin], dict[str, tuple[str, ...]], dict[str, Schema]]:
@@ -81,7 +101,7 @@ def _read_catalog(
             for name, schema in schemas.items()
         ):
             raise PluginError("SCHEMAS must map plugin names to Schema declarations")
-        if set(schemas) - {plugin.name for plugin in plugins}:
+        if set(schemas) - {plugin.id for plugin in plugins}:
             raise PluginError(
                 "SCHEMAS contains a plugin that is not installed in PLUGINS"
             )
@@ -96,6 +116,7 @@ class ToolframePlugins(PluginManager):
 
     def __init__(self, definitions, migrations, migration_state):
         super().__init__(definitions)
+        self.validate()
         self.migrations = migrations
         self.migration_state = migration_state
 
@@ -144,7 +165,7 @@ def configure_plugins(
 
     plugins = [
         replace(plugin, requires=(*plugin.requires, DATABASE))
-        if plugin.name in plugin_schemas
+        if plugin.id in plugin_schemas
         and DATABASE not in plugin.requires
         and DATABASE.name not in plugin.requires
         else plugin

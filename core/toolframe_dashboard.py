@@ -40,6 +40,7 @@ from toolframe_idempotency import (
     IdempotencyResult,
     IdempotencyTransaction,
 )
+from toolframe_plugins import plugin_unavailable_details
 
 __all__ = [
     "DashboardContext",
@@ -356,7 +357,10 @@ def render_widget(
             import streamlit as st
 
             st.info(
-                f"{widget.title} is unavailable while plugin {error.name} is stopped."
+                f"{widget.title} is unavailable. "
+                + plugin_unavailable_details(base_context.plugins, error.name)[
+                    "recoveryHint"
+                ]
             )
     finally:
         _dashboard_request_metadata.reset(metadata_token)

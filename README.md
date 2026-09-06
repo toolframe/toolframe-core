@@ -313,8 +313,14 @@ Create distributable binaries with `make package` for the current host or
 app/domain scaffold, managed Python runtime modules, information page, and
 production business-app skill.
 
-After changing the sibling `../fastapi-cordis` package, run
-`python3 scripts/sync-fastapi-cordis.py` before building. The checked-in embedded
+The embedded package is the unreleased `fastapi-cordis==0.2.0`, sourced from
+`../fastapi-cordis-reactive` (`codex/reactive-plugin-runtime`). After changing and
+testing that checkout, run
+`python3 scripts/sync-fastapi-cordis.py --source ../fastapi-cordis-reactive`
+before building. The older `../fastapi-cordis` checkout is still independent.
+The checked-in source and wheel are embedded in the executable; UV installs the
+wheel as a local dependency when preparing the application's Python environment.
+No PyPI publication or editable sibling install is needed. The embedded
 copy makes normal builds and deployed binaries independent of the sibling path.
 Use `--check` to verify that copy against its source.
 

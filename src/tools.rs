@@ -20,7 +20,7 @@ const CORE_DEPENDENCIES: &[&str] = &[
     // runtime installable on supported Monterey-era Intel machines.
     "cryptography==48.0.1",
     "fastapi==0.135.2",
-    "fastapi-cordis==0.1.0",
+    "fastapi-cordis==0.2.0",
     "fastmcp==4.0.0",
     "pydantic==2.12.5",
     "psycopg[binary]==3.3.5",
@@ -572,7 +572,7 @@ mod tests {
         assert!(
             dependencies
                 .iter()
-                .any(|item| item == "fastapi-cordis==0.1.0")
+                .any(|item| item == "fastapi-cordis==0.2.0")
         );
 
         let project = runtime_project_toml(&catalog, &app).expect("render UV project");

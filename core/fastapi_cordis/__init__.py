@@ -1,5 +1,6 @@
 """Small, explicit Cordis-inspired plugin runtime; no JavaScript compatibility."""
 
+from ._events import EventKey
 from ._runtime import (
     ConfigurationError,
     DependencyError,
@@ -11,14 +12,17 @@ from ._runtime import (
     PluginUnavailable,
     UnknownPlugin,
 )
+from ._scope import EffectScope
 from ._services import ServiceKey
 from .fastapi import install, plugin_router, service
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "ConfigurationError",
     "DependencyError",
     "DrainTimeout",
+    "EffectScope",
+    "EventKey",
     "Plugin",
     "PluginContext",
     "PluginError",

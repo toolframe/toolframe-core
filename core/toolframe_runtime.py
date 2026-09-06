@@ -49,7 +49,7 @@ from toolframe_database_config import DatabaseSettings
 from toolframe_database_host import database_snapshot as provider_database_snapshot
 from toolframe_database_service import create_provider
 from toolframe_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
-from toolframe_plugins import configure_plugins
+from toolframe_plugins import configure_plugins, plugin_unavailable_details
 
 LOGGER = logging.getLogger("toolframe.runtime")
 READY_SENTINEL = "TOOLFRAME_READY"
@@ -1024,10 +1024,7 @@ def _leased_tool(function: Any, domain: str, plugins: PluginManager) -> Any:
                 "plugin_unavailable",
                 str(error),
                 retryable=True,
-                details={
-                    "plugin": error.name,
-                    "recoveryHint": "Check /api/plugins and enable the required plugin before retrying.",
-                },
+                details=plugin_unavailable_details(plugins, error.name),
             ) from error
 
     # Preserve domain-local types even though the wrapper lives in this module.

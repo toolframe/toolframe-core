@@ -142,15 +142,21 @@ class PluginIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Welcome, Ada", str(result.to_mcp_result()))
             render_widget(widget, context)
             self.assertEqual(rendered, ["Hello", "Welcome"])
-            with self.assertRaises(DependencyError):
-                await manager.disable("formatter")
-            await manager.disable("formatter", cascade=True)
+            await manager.disable("formatter")
+            domain_state = manager.snapshot()[-1]
+            self.assertEqual(domain_state["state"], "blocked")
+            self.assertTrue(domain_state["enabled"])
+            self.assertEqual(domain_state["blockedBy"], ["formatter"])
             result = await mcp.call_tool("greet", {"payload": {"name": "Ada"}})
             self.assertTrue(result.is_error)
             self.assertEqual(
                 result.structured_content["error"]["code"], "plugin_unavailable"
             )
             self.assertTrue(result.structured_content["error"]["retryable"])
+            self.assertIn(
+                "automatically",
+                result.structured_content["error"]["details"]["recoveryHint"],
+            )
             messages = []
             with patch.dict(
                 sys.modules, {"streamlit": SimpleNamespace(info=messages.append)}
@@ -159,6 +165,11 @@ class PluginIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rendered, ["Hello", "Welcome"])
             self.assertIn("domain.entry_register", messages[0])
             await manager.enable("formatter")
+            self.assertEqual(manager.snapshot()[-1]["state"], "active")
+            await manager.disable("formatter", cascade=True)
+            self.assertFalse(manager.snapshot()[-1]["enabled"])
+            await manager.enable("formatter")
+            self.assertEqual(manager.snapshot()[-1]["state"], "disabled")
             await manager.enable("domain.entry_register")
             with use_plugin("formatter") as value:
                 self.assertEqual(value, "Welcome")

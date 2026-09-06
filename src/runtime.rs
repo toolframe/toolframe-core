@@ -53,9 +53,25 @@ const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/toolframe_dashboard_ru
 const CORE_LOGGING: &str = include_str!("../core/toolframe_logging.py");
 const CORE_CLI: &str = include_str!("../core/toolframe_cli.py");
 const CORE_PLUGINS: &str = include_str!("../core/toolframe_plugins.py");
-const PLUGIN_WHEEL_NAME: &str = "fastapi_cordis-0.1.0-py3-none-any.whl";
-const PLUGIN_WHEEL: &[u8] = include_bytes!("../core/fastapi_cordis-0.1.0-py3-none-any.whl");
+const PLUGIN_WHEEL_NAME: &str = "fastapi_cordis-0.2.0-py3-none-any.whl";
+const PLUGIN_WHEEL: &[u8] = include_bytes!("../core/fastapi_cordis-0.2.0-py3-none-any.whl");
 const EMBEDDED_PLUGIN_PACKAGE: &[(&str, &str)] = &[
+    (
+        "_errors.py",
+        include_str!("../core/fastapi_cordis/_errors.py"),
+    ),
+    (
+        "_events.py",
+        include_str!("../core/fastapi_cordis/_events.py"),
+    ),
+    (
+        "_graph.py",
+        include_str!("../core/fastapi_cordis/_graph.py"),
+    ),
+    (
+        "_scope.py",
+        include_str!("../core/fastapi_cordis/_scope.py"),
+    ),
     (
         "__init__.py",
         include_str!("../core/fastapi_cordis/__init__.py"),

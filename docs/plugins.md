@@ -5,8 +5,9 @@ single Python process. A plugin is a named service with a setup function, typed
 configuration, declared dependencies, and cleanup callbacks. API requests, MCP
 tools, Streamlit widgets and local `invoke` use the same lifecycle rules.
 
-The standalone package lives in the sibling `../fastapi-cordis` repository.
-Toolframe embeds an exact source copy in its executable, so deployed apps do not
+The current unreleased 0.2.0 package comes from `../fastapi-cordis-reactive`,
+branch `codex/reactive-plugin-runtime`. The older `../fastapi-cordis` checkout
+remains independent. Toolframe embeds an exact source copy and wheel, so deployed apps do not
 need that sibling directory, a Node runtime, or an unpublished PyPI dependency.
 This is an independent Cordis-inspired implementation; JavaScript Cordis plugins
 and APIs are not interchangeable with it.
@@ -173,11 +174,11 @@ revision dependencies separately from runtime `requires`. See
 
 ## Update the embedded package
 
-The sibling repository is the source of truth. Edit and test it first, then:
+The designated package checkout is the source of truth. Edit and test it first, then:
 
 ```sh
-python3 scripts/sync-fastapi-cordis.py
-python3 scripts/sync-fastapi-cordis.py --check
+python3 scripts/sync-fastapi-cordis.py --source ../fastapi-cordis-reactive
+python3 scripts/sync-fastapi-cordis.py --source ../fastapi-cordis-reactive --check
 cargo test --all-targets
 cargo build --release
 ```
@@ -185,7 +186,7 @@ cargo build --release
 `core/fastapi_cordis/UPSTREAM.json` records the package version, dependencies,
 source and wheel hashes. Sync uses `uv build` with a fixed build timestamp to
 produce a reproducible wheel. The wheel is supplied to UV as a local source for
-`fastapi-cordis==0.1.0`, so other plugins can declare a normal dependency on it
+`fastapi-cordis==0.2.0`, so other plugins can declare a normal dependency on it
 before it is published to PyPI. The source copy, wheel and MIT license are embedded
 in the executable and included in its runtime cache hash. Regular builds work
 without the sibling repo. Do not hand-edit the embedded copy.
