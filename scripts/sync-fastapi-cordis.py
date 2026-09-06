@@ -7,9 +7,8 @@ import json
 import os
 import subprocess
 import tempfile
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 
 def main() -> None:
