@@ -88,10 +88,14 @@ class DatabaseAdapterTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "protected_table_forbidden")
         self.assertFalse(raised.exception.retryable)
-        count = self.adapter.query(
-            "SELECT COUNT(*) AS count FROM _toolframe_runtime_state"
-        ).iloc[0]["count"]
-        self.assertEqual(count, 0)
+        with self.assertRaises(database.DatabaseError) as read:
+            self.adapter.query("SELECT COUNT(*) AS count FROM _toolframe_runtime_state")
+        self.assertEqual(read.exception.code, "protected_table_forbidden")
+        with closing(sqlite3.connect(self.database_path)) as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM _toolframe_runtime_state"
+            ).fetchone()[0]
+            self.assertEqual(count, 0)
 
         with self.assertRaises(database.DatabaseError) as sqlite_owned:
             self.adapter.execute(

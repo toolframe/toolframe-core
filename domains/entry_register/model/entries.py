@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import pandas as pd
@@ -36,6 +37,10 @@ class EntryDatabase(Protocol):
     def execute(
         self, sql: str, params: Mapping[str, Any] | Sequence[Any] = ()
     ) -> Any: ...
+
+    def insert(
+        self, table: str, values: Mapping[str, Any], *, id_column: str = "id"
+    ) -> int: ...
 
 
 def validate_label(value: Any) -> str:
@@ -86,9 +91,9 @@ def list_entries(database: EntryDatabase, *, limit: int = 100) -> pd.DataFrame:
         SELECT id, label, value, version, created_at, updated_at
         FROM {TABLE}
         ORDER BY id DESC
-        LIMIT ?
+        LIMIT :limit
         """,
-        (bounded_limit,),
+        {"limit": bounded_limit},
         max_rows=bounded_limit,
     )
 
@@ -96,13 +101,10 @@ def list_entries(database: EntryDatabase, *, limit: int = 100) -> pd.DataFrame:
 def add_entry(database: EntryDatabase, *, label: Any, value: Any) -> int:
     """Create one validated entry and return its identifier."""
 
-    result = database.execute(
-        f"INSERT INTO {TABLE} (label, value) VALUES (?, ?)",
-        (validate_label(label), validate_value(value)),
+    return database.insert(
+        TABLE,
+        {"label": validate_label(label), "value": validate_value(value)},
     )
-    if result.last_insert_rowid is None:
-        raise RuntimeError("entry insert did not return an identifier")
-    return int(result.last_insert_rowid)
 
 
 def update_entry(
@@ -118,16 +120,19 @@ def update_entry(
     result = database.execute(
         f"""
         UPDATE {TABLE}
-        SET label = ?, value = ?, version = version + 1,
-            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ')
-        WHERE id = ? AND version = ?
+        SET label = :label, value = :value, version = version + 1,
+            updated_at = :updated_at
+        WHERE id = :id AND version = :version
         """,
-        (
-            validate_label(label),
-            validate_value(value),
-            int(entry_id),
-            int(expected_version),
-        ),
+        {
+            "label": validate_label(label),
+            "value": validate_value(value),
+            "id": int(entry_id),
+            "version": int(expected_version),
+            "updated_at": datetime.now(UTC)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+        },
     )
     if result.affected_rows != 1:
         raise EntryConflictError(

@@ -21,6 +21,20 @@ const CORE_ARCHITECTURE: &str = include_str!("../core/toolframe_architecture.py"
 const CORE_DASHBOARD: &str = include_str!("../core/toolframe_dashboard.py");
 const CORE_DATABASE: &str = include_str!("../core/toolframe_db.py");
 const CORE_DATABASE_BACKEND: &str = include_str!("../core/toolframe_database.py");
+const DATABASE_MODULES: &[(&str, &str)] = &[
+    (
+        "toolframe_database_config.py",
+        include_str!("../core/toolframe_database_config.py"),
+    ),
+    (
+        "toolframe_database_service.py",
+        include_str!("../core/toolframe_database_service.py"),
+    ),
+    (
+        "toolframe_database_postgresql.py",
+        include_str!("../core/toolframe_database_postgresql.py"),
+    ),
+];
 const CORE_IDEMPOTENCY: &str = include_str!("../core/toolframe_idempotency.py");
 const CORE_ARTIFACTS: &str = include_str!("../core/toolframe_artifacts.py");
 const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/toolframe_dashboard_runner.py");
@@ -466,7 +480,7 @@ pub fn prepare_runtime(
         PLUGIN_WHEEL,
         INFO_PAGE.as_bytes(),
     ];
-    for (name, source) in EMBEDDED_PLUGIN_PACKAGE {
+    for (name, source) in DATABASE_MODULES.iter().chain(EMBEDDED_PLUGIN_PACKAGE) {
         core_sources.push(name.as_bytes());
         core_sources.push(source.as_bytes());
     }
@@ -499,6 +513,9 @@ pub fn prepare_runtime(
         &core_dir.join("toolframe_database.py"),
         CORE_DATABASE_BACKEND,
     )?;
+    for (name, source) in DATABASE_MODULES {
+        write_managed(&core_dir.join(name), source)?;
+    }
     write_managed(&idempotency, CORE_IDEMPOTENCY)?;
     write_managed(&artifacts_sdk, CORE_ARTIFACTS)?;
     write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
@@ -1200,6 +1217,12 @@ mod tests {
             fs::read_to_string(core.join("toolframe_plugins.py")).expect("read plugin support"),
             CORE_PLUGINS
         );
+        for (name, expected) in DATABASE_MODULES {
+            assert_eq!(
+                fs::read_to_string(core.join(name)).expect("read database provider module"),
+                *expected
+            );
+        }
         for (name, expected) in EMBEDDED_PLUGIN_PACKAGE {
             assert_eq!(
                 fs::read_to_string(core.join("fastapi_cordis").join(name))

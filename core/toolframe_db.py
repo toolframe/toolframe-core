@@ -1,4 +1,4 @@
-"""Startup-configured, data-only SQLite access for Toolframe tools.
+"""Startup-configured, data-only access for Toolframe tools.
 
 FastAPI owns the application lifecycle but does not provide a database access
 API. The Toolframe runtime configures this adapter before it imports any MCP
@@ -80,6 +80,21 @@ class Database:
         """Atomically commit one parameterized INSERT, UPDATE, DELETE, or REPLACE."""
 
         return self._backend.execute(sql, params)
+
+    def insert(self, table, values, *, id_column="id"):
+        return self._backend.insert(table, values, id_column=id_column)
+
+    def transaction(self):
+        return self._backend.transaction()
+
+    def run_once(self, namespace, key, input_value, mutation):
+        return self._backend.run_once(namespace, key, input_value, mutation)
+
+    def public_info(self):
+        return self._backend.public_info()
+
+    def close(self):
+        self._backend.close()
 
 
 _configuration_lock = threading.RLock()

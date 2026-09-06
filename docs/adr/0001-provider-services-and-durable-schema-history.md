@@ -44,9 +44,10 @@ guarantees rather than promise universal rollback.
 
 ## Implementation references
 
-SQLAlchemy supplies portable parameter binding, result handling, and connection
-management behind the database Interface. Provider hooks retain actual database
-locking and read restrictions. See the official [engine documentation](https://docs.sqlalchemy.org/en/20/core/engines.html),
+The common operations layer supplies bounded results, transactions and portable
+insert identifiers. SQLite retains its native connection and authorization API;
+PostgreSQL uses SQLAlchemy pooling and psycopg connections. Provider hooks own
+parameter conversion, actual database locking and read restrictions. See the official [engine documentation](https://docs.sqlalchemy.org/en/20/core/engines.html),
 [SQLite transaction behavior](https://docs.sqlalchemy.org/en/20/dialects/sqlite.html),
 [Psycopg transactions](https://www.psycopg.org/psycopg3/docs/basic/transactions.html),
 and [PostgreSQL locking](https://www.postgresql.org/docs/17/explicit-locking.html).

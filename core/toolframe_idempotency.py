@@ -1,4 +1,4 @@
-"""Durable, explicit idempotency for local SQLite business mutations."""
+"""Durable, explicit idempotency using the selected database provider."""
 
 from __future__ import annotations
 
@@ -8,12 +8,11 @@ import json
 import logging
 import math
 import re
-import sqlite3
 import threading
 import time
 import traceback
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,50 +62,6 @@ _REJECTED_CODES = frozenset(
         "idempotency_result_too_large",
     }
 )
-_TABLE_IN_FIRST_ARGUMENT = frozenset(
-    value
-    for name in (
-        "SQLITE_ANALYZE",
-        "SQLITE_CREATE_TABLE",
-        "SQLITE_CREATE_TEMP_TABLE",
-        "SQLITE_CREATE_VTABLE",
-        "SQLITE_DELETE",
-        "SQLITE_DROP_TABLE",
-        "SQLITE_DROP_TEMP_TABLE",
-        "SQLITE_DROP_VTABLE",
-        "SQLITE_INSERT",
-        "SQLITE_READ",
-        "SQLITE_UPDATE",
-    )
-    if isinstance((value := getattr(sqlite3, name, None)), int)
-)
-_TABLE_IN_SECOND_ARGUMENT = frozenset(
-    value
-    for name in (
-        "SQLITE_ALTER_TABLE",
-        "SQLITE_CREATE_INDEX",
-        "SQLITE_CREATE_TEMP_INDEX",
-        "SQLITE_CREATE_TEMP_TRIGGER",
-        "SQLITE_CREATE_TRIGGER",
-        "SQLITE_DROP_INDEX",
-        "SQLITE_DROP_TEMP_INDEX",
-        "SQLITE_DROP_TEMP_TRIGGER",
-        "SQLITE_DROP_TRIGGER",
-    )
-    if isinstance((value := getattr(sqlite3, name, None)), int)
-)
-_ALWAYS_FORBIDDEN_ACTIONS = frozenset(
-    value
-    for name in (
-        "SQLITE_ATTACH",
-        "SQLITE_DETACH",
-        "SQLITE_PRAGMA",
-        "SQLITE_SAVEPOINT",
-        "SQLITE_TRANSACTION",
-    )
-    if isinstance((value := getattr(sqlite3, name, None)), int)
-)
-_REINDEX_ACTION = getattr(sqlite3, "SQLITE_REINDEX", -1)
 
 
 class IdempotencyError(RuntimeError):
@@ -144,117 +99,77 @@ class IdempotencyResult:
 
 
 class IdempotencyTransaction:
-    """The SQLite transaction owned by one first-time idempotent mutation."""
+    """Bounded business operations inside one provider-owned idempotent write."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, provider, connection):
+        self._provider = provider
         self._connection = connection
         self._open = True
-        self._denied_private_table = False
-        private_indexes = connection.execute(
-            f'PRAGMA index_list("{_TABLE}")'
-        ).fetchall()
-        self._private_reindex_targets = frozenset(
-            {_TABLE.casefold(), *(str(row[1]).casefold() for row in private_indexes)}
+        self._failed = False
+
+    def _call(self, method, *args, **kwargs):
+        self._require_open()
+        try:
+            return method(*args, **kwargs, private=True)
+        except Exception:
+            self._failed = True
+            raise
+
+    def execute(self, sql, params=()):
+        result, _ = self._call(
+            self._provider._execute_on_connection, self._connection, sql, params
         )
-        connection.set_authorizer(self._authorize)
+        return result
 
-    def execute(
-        self,
-        sql: str,
-        params: Mapping[str, Any] | Sequence[Any] = (),
-    ) -> sqlite3.Cursor:
-        """Execute one business statement inside the owned transaction."""
+    def insert(self, table, values, *, id_column="id"):
+        from toolframe_database import _insert
 
         self._require_open()
-        return self._connection.execute(sql, params)
-
-    def executemany(
-        self,
-        sql: str,
-        params: Sequence[Mapping[str, Any] | Sequence[Any]],
-    ) -> sqlite3.Cursor:
-        """Execute one parameterized business statement for several rows."""
-
-        self._require_open()
-        return self._connection.executemany(sql, params)
-
-    def query_one(
-        self,
-        sql: str,
-        params: Mapping[str, Any] | Sequence[Any] = (),
-    ) -> sqlite3.Row | None:
-        """Return one row from a business query in the owned transaction."""
-
-        cursor = self.execute(sql, params)
         try:
-            return cursor.fetchone()
-        finally:
-            cursor.close()
+            return _insert(self, table, values, id_column=id_column)
+        except Exception:
+            self._failed = True
+            raise
 
-    def query_all(
-        self,
-        sql: str,
-        params: Mapping[str, Any] | Sequence[Any] = (),
-    ) -> list[sqlite3.Row]:
-        """Return all rows from a business query in the owned transaction."""
+    def query(self, sql, params=(), *, max_rows=None, max_bytes=None):
+        return self._call(
+            self._provider._query_on_connection,
+            self._connection,
+            sql,
+            params,
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+        )
 
-        cursor = self.execute(sql, params)
-        try:
-            return cursor.fetchall()
-        finally:
-            cursor.close()
+    def query_one(self, sql, params=()):
+        rows = self.query_all(sql, params)
+        return rows[0] if rows else None
 
-    def _finish(self) -> None:
-        if self._open:
-            self._open = False
-            self._connection.set_authorizer(None)
+    def query_all(self, sql, params=()):
+        return self.query(sql, params).to_dict(orient="records")
 
-    def _require_open(self) -> None:
-        if not self._open:
+    def executemany(self, sql, params):
+        from toolframe_database import ExecuteResult
+
+        count, last = 0, None
+        for values in params:
+            result = self.execute(sql, values)
+            count += result.affected_rows
+            last = result.last_insert_rowid
+        return ExecuteResult(count, last)
+
+    def _finish(self):
+        self._open = False
+
+    def _require_open(self):
+        if not self._open or self._failed:
             raise IdempotencyError(
-                "idempotency_transaction_closed",
-                "The idempotency transaction is no longer active.",
-                recovery_hint="Use the transaction only inside the run_once callback.",
+                "idempotency_transaction_closed"
+                if not self._open
+                else "idempotency_transaction_aborted",
+                "The idempotency transaction cannot continue.",
+                recovery_hint="Use the transaction only inside a successful run_once callback.",
             )
-
-    def _authorize(
-        self,
-        action: int,
-        argument_one: str | None,
-        argument_two: str | None,
-        _database_name: str | None,
-        _trigger_name: str | None,
-    ) -> int:
-        table_name = (
-            argument_one
-            if action in _TABLE_IN_FIRST_ARGUMENT
-            else argument_two
-            if action in _TABLE_IN_SECOND_ARGUMENT
-            else None
-        )
-        if (
-            isinstance(table_name, str) and table_name.casefold() == _TABLE.casefold()
-        ) or (
-            action == _REINDEX_ACTION
-            and isinstance(argument_one, str)
-            and argument_one.casefold() in self._private_reindex_targets
-        ):
-            self._denied_private_table = True
-            return sqlite3.SQLITE_DENY
-        return (
-            sqlite3.SQLITE_DENY
-            if action in _ALWAYS_FORBIDDEN_ACTIONS
-            else sqlite3.SQLITE_OK
-        )
-
-    def _policy_error(self) -> IdempotencyError | None:
-        if not self._denied_private_table:
-            return None
-        return IdempotencyError(
-            "idempotency_private_table",
-            "Business mutation SQL cannot access the private idempotency receipt table.",
-            recovery_hint="Read and write only business tables inside the run_once callback.",
-        )
 
 
 _audit_fields: contextvars.ContextVar[Mapping[str, Any]] = contextvars.ContextVar(
@@ -281,14 +196,26 @@ class IdempotencyStore:
 
     def __init__(
         self,
-        database_path: Path | str,
+        database_path: Path | str | None = None,
         *,
+        provider: Any = None,
         input_limit_bytes: int = _DEFAULT_INPUT_LIMIT_BYTES,
         result_limit_bytes: int = _DEFAULT_RESULT_LIMIT_BYTES,
         audit_sink: Any | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
-        self.database_path = Path(database_path).expanduser().resolve(strict=False)
+        if provider is None:
+            from toolframe_database import SQLiteProvider
+
+            provider = SQLiteProvider(
+                database_path,
+                allow_schema_changes=False,
+                protected_table_prefixes=("_toolframe_", "sqlite_"),
+                logger=logger,
+                audit_sink=audit_sink,
+            )
+        self.provider = provider
+        self.database_path = getattr(provider, "path", None)
         self.input_limit_bytes = _positive_limit("input_limit_bytes", input_limit_bytes)
         self.result_limit_bytes = _bounded_limit(
             "result_limit_bytes",
@@ -320,7 +247,7 @@ class IdempotencyStore:
         )
         input_sha256 = hashlib.sha256(input_json).hexdigest()
         active = _active_stores.get()
-        store_identity = str(self.database_path)
+        store_identity = self.provider.identity
         if store_identity in active:
             raise IdempotencyError(
                 "idempotency_nested",
@@ -391,136 +318,102 @@ class IdempotencyStore:
         )
         return result
 
-    def _run(
-        self,
-        *,
-        namespace: str,
-        key: str,
-        input_sha256: str,
-        mutation: Callable[[IdempotencyTransaction], Any],
-        operation_id: str,
-    ) -> IdempotencyResult:
-        connection: sqlite3.Connection | None = None
-        transaction: IdempotencyTransaction | None = None
+    def _provider_call(self, call, *args, **kwargs):
         try:
-            connection = self._connect()
-            existing = self._find(connection, namespace, key)
-            if existing is not None:
-                return self._replay(existing, input_sha256, operation_id)
+            return call(*args, **kwargs)
+        except Exception as error:  # noqa: BLE001 - normalize provider failures.
+            self.provider._raise_public(error, "idempotency storage operation")
 
-            connection.execute("BEGIN IMMEDIATE")
-            existing = self._find(connection, namespace, key)
-            if existing is not None:
-                connection.commit()
-                return self._replay(existing, input_sha256, operation_id)
-
-            transaction = IdempotencyTransaction(connection)
-            value = mutation(transaction)
-            transaction._finish()
-            transaction = None
-            result_json = _encode_json(
-                value,
-                limit=self.result_limit_bytes,
-                invalid_code="idempotency_invalid_result",
-                oversized_code="idempotency_result_too_large",
-                value_name="idempotency result",
-            )
-            result_sha256 = hashlib.sha256(result_json).hexdigest()
-            connection.execute(
-                f"""
-                INSERT INTO {_TABLE} (
-                    namespace, business_key, input_sha256, result_json,
-                    result_sha256, result_bytes, original_operation_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    namespace,
-                    key,
-                    input_sha256,
-                    result_json,
-                    result_sha256,
-                    len(result_json),
-                    operation_id,
-                ),
-            )
-            connection.commit()
-            return IdempotencyResult(
-                value=json.loads(result_json),
-                replayed=False,
-                operation_id=operation_id,
-                original_operation_id=operation_id,
-            )
-        except IdempotencyError:
-            if transaction is not None:
-                transaction._finish()
-                transaction = None
-            if connection is not None:
-                _rollback_quietly(connection, self.logger)
-            raise
-        except sqlite3.Error as error:
-            policy_error = (
-                transaction._policy_error() if transaction is not None else None
-            )
-            if transaction is not None:
-                transaction._finish()
-                transaction = None
-            if connection is not None:
-                _rollback_quietly(connection, self.logger)
-            if policy_error is not None:
-                raise policy_error from error
-            self._log_database_failure(error)
-            raise _sqlite_error(error) from error
-        except BaseException:
-            if transaction is not None:
-                transaction._finish()
-                transaction = None
-            if connection is not None:
-                _rollback_quietly(connection, self.logger)
-            raise
-        finally:
-            if transaction is not None:
-                transaction._finish()
-            if connection is not None:
-                connection.close()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            self.database_path,
-            timeout=_BUSY_TIMEOUT_MS / 1000,
-            isolation_level=None,
+    def _find(self, connection, namespace, key):
+        cursor = self._provider_call(
+            connection.execute,
+            f"SELECT input_sha256, result_json, result_sha256, result_bytes, "
+            f"original_operation_id FROM {_TABLE} "
+            "WHERE namespace = :namespace AND business_key = :key",
+            {"namespace": namespace, "key": key},
         )
         try:
-            connection.row_factory = sqlite3.Row
-            connection.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.enable_load_extension(False)
-            if hasattr(connection, "setconfig") and hasattr(
-                sqlite3, "SQLITE_DBCONFIG_DEFENSIVE"
-            ):
-                connection.setconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE, True)
-            _configure_wal(connection)
-            return connection
-        except BaseException:
-            connection.close()
-            raise
+            row = cursor.fetchone()
+            return (
+                dict(zip((column[0] for column in cursor.description), row))
+                if row is not None
+                else None
+            )
+        finally:
+            cursor.close()
 
-    @staticmethod
-    def _find(
-        connection: sqlite3.Connection, namespace: str, key: str
-    ) -> sqlite3.Row | None:
-        return connection.execute(
-            f"""
-            SELECT input_sha256, result_json, result_sha256, result_bytes,
-                   original_operation_id
-            FROM {_TABLE}
-            WHERE namespace = ? AND business_key = ?
-            """,
-            (namespace, key),
-        ).fetchone()
+    def _run(self, *, namespace, key, input_sha256, mutation, operation_id):
+        from toolframe_database import DashboardDatabaseError
+
+        transaction = None
+        try:
+            with self.provider.connection() as connection:
+                try:
+                    self._provider_call(
+                        self.provider.begin_locked,
+                        connection,
+                        f"idempotency:{len(namespace)}:{namespace}:{key}",
+                    )
+                    existing = self._find(connection, namespace, key)
+                    if existing is not None:
+                        result = self._replay(existing, input_sha256, operation_id)
+                        self._provider_call(connection.commit)
+                        return result
+                    transaction = IdempotencyTransaction(self.provider, connection)
+                    value = mutation(transaction)
+                    transaction._require_open()
+                    transaction._finish()
+                    result_json = _encode_json(
+                        value,
+                        limit=self.result_limit_bytes,
+                        invalid_code="idempotency_invalid_result",
+                        oversized_code="idempotency_result_too_large",
+                        value_name="idempotency result",
+                    )
+                    self._provider_call(
+                        connection.execute,
+                        f"INSERT INTO {_TABLE} (namespace, business_key, input_sha256, "
+                        "result_json, result_sha256, result_bytes, original_operation_id) "
+                        "VALUES (:namespace, :key, :input, :result, :hash, :size, :operation)",
+                        {
+                            "namespace": namespace,
+                            "key": key,
+                            "input": input_sha256,
+                            "result": result_json,
+                            "hash": hashlib.sha256(result_json).hexdigest(),
+                            "size": len(result_json),
+                            "operation": operation_id,
+                        },
+                    ).close()
+                    self._provider_call(connection.commit)
+                    return IdempotencyResult(
+                        json.loads(result_json), False, operation_id, operation_id
+                    )
+                except BaseException:
+                    _rollback_quietly(connection, self.logger)
+                    raise
+                finally:
+                    if transaction is not None:
+                        transaction._finish()
+        except DashboardDatabaseError as error:
+            code = {
+                "database_busy": "idempotency_database_busy",
+                "database_io": "idempotency_database_io",
+                "protected_table_forbidden": "idempotency_private_table",
+                "constraint_violation": "constraint_violation",
+            }.get(error.code, "idempotency_database_error")
+            raise IdempotencyError(
+                code,
+                error.message,
+                retryable=error.retryable,
+                trace_id=error.trace_id,
+                recovery_hint=error.recovery_hint,
+                details={"databaseCode": error.code},
+            ) from None
 
     @staticmethod
     def _replay(
-        row: sqlite3.Row, input_sha256: str, operation_id: str
+        row: Mapping[str, Any], input_sha256: str, operation_id: str
     ) -> IdempotencyResult:
         if row["input_sha256"] != input_sha256:
             raise IdempotencyError(
@@ -564,27 +457,24 @@ class IdempotencyStore:
         metadata.update(fields)
         self.audit_sink.emit("audit", event, level=level, **metadata)
 
-    def _log_database_failure(self, error: sqlite3.Error) -> None:
-        trace = "".join(
-            traceback.format_exception(type(error), error, error.__traceback__)
-        )
-        self.logger.error(
-            "idempotency database failure exception_type=%s\n%s",
-            type(error).__name__,
-            trace,
-        )
-
 
 _configuration_lock = threading.RLock()
 _configured_store: IdempotencyStore | None = None
 
 
-def _configure(database_path: Path | str, *, audit_sink: Any | None = None) -> None:
+def _configure(
+    database_path: Path | str | None = None,
+    *,
+    provider=None,
+    audit_sink: Any | None = None,
+) -> None:
     """Configure the process-global helper before tools can be invoked."""
 
     global _configured_store
     with _configuration_lock:
-        _configured_store = IdempotencyStore(database_path, audit_sink=audit_sink)
+        _configured_store = IdempotencyStore(
+            database_path, provider=provider, audit_sink=audit_sink
+        )
 
 
 def run_once(
@@ -615,29 +505,6 @@ def _bounded_limit(name: str, value: int, *, maximum: int) -> int:
             f"{name} must be no greater than the {maximum}-byte durable schema limit"
         )
     return value
-
-
-def _configure_wal(connection: sqlite3.Connection) -> None:
-    deadline = time.monotonic() + (_BUSY_TIMEOUT_MS / 1000)
-    while True:
-        try:
-            row = connection.execute("PRAGMA journal_mode = WAL").fetchone()
-            mode = str(row[0]).casefold() if row is not None else ""
-            if mode != "wal":
-                raise sqlite3.OperationalError(
-                    f"SQLite did not enter WAL journal mode (reported {mode or 'no mode'})"
-                )
-            return
-        except sqlite3.OperationalError as error:
-            remaining = deadline - time.monotonic()
-            if not _is_busy_error(error) or remaining <= 0:
-                raise
-            time.sleep(min(0.01, remaining))
-
-
-def _is_busy_error(error: sqlite3.Error) -> bool:
-    text = str(error).casefold()
-    return "locked" in text or "busy" in text
 
 
 def _validate_namespace(value: Any) -> str:
@@ -742,44 +609,13 @@ def _validate_json_value(value: Any, *, seen: set[int] | None = None) -> None:
     raise TypeError(f"unsupported JSON type: {type(value).__name__}")
 
 
-def _sqlite_error(error: sqlite3.Error) -> IdempotencyError:
-    text = str(error).casefold()
-    if _is_busy_error(error):
-        return IdempotencyError(
-            "idempotency_database_busy",
-            "The database is busy while claiming the idempotency key.",
-            retryable=True,
-            recovery_hint="Wait briefly for the active writer, then retry the same key and input.",
-            details={"exceptionType": type(error).__name__},
-        )
-    if isinstance(error, sqlite3.IntegrityError):
-        return IdempotencyError(
-            "constraint_violation",
-            "The idempotent business mutation violated a database constraint.",
-            recovery_hint="Correct the business input, then use a new idempotency key.",
-            details={"exceptionType": type(error).__name__},
-        )
-    if any(marker in text for marker in ("disk i/o error", "database or disk is full")):
-        return IdempotencyError(
-            "idempotency_database_io",
-            "Database storage failed during the idempotent mutation.",
-            retryable=True,
-            recovery_hint="Restore storage availability, then retry the same key and input.",
-            details={"exceptionType": type(error).__name__},
-        )
-    return IdempotencyError(
-        "idempotency_database_error",
-        "The database could not complete the idempotent mutation.",
-        recovery_hint="Inspect the server log using the trace ID before retrying.",
-        details={"exceptionType": type(error).__name__},
-    )
-
-
-def _rollback_quietly(connection: sqlite3.Connection, logger: logging.Logger) -> None:
+def _rollback_quietly(connection: Any, logger: logging.Logger) -> None:
     try:
         connection.rollback()
-    except sqlite3.Error:
-        logger.exception("idempotency rollback failed")
+    except Exception as error:  # noqa: BLE001 - rollback errors must not expose a DSN.
+        logger.error(
+            "idempotency rollback failed exception_type=%s", type(error).__name__
+        )
 
 
 def _error_payload(error: BaseException) -> dict[str, Any]:

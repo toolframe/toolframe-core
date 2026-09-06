@@ -6,13 +6,14 @@ import contextvars
 import logging
 import math
 import os
+import re
 import sqlite3
 import time
 import traceback
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from types import MappingProxyType, TracebackType
 from typing import Any, Self
 from urllib.parse import quote
@@ -136,6 +137,15 @@ class ExecuteResult:
     last_insert_rowid: int | None
     rows: pd.DataFrame | None = None
 
+    @property
+    def lastrowid(self) -> int | None:
+        """Legacy SQLite alias; portable callers use insert() or RETURNING."""
+        return self.last_insert_rowid
+
+    @property
+    def rowcount(self) -> int:
+        return self.affected_rows
+
 
 @dataclass(slots=True)
 class _PolicyState:
@@ -245,6 +255,15 @@ class _PolicyState:
             return sqlite3.SQLITE_OK
 
         if action in _READ_ACTIONS:
+            if action == getattr(sqlite3, "SQLITE_READ", -1) and any(
+                (argument_one or "").casefold().startswith(prefix)
+                for prefix in self.protected_table_prefixes
+            ):
+                return self.deny(
+                    "protected_table_forbidden",
+                    "Runtime-owned tables cannot be accessed through this adapter.",
+                    "Read and write business tables only.",
+                )
             return sqlite3.SQLITE_OK
 
         return self.deny(
@@ -276,37 +295,67 @@ class _SdkFailure(Exception):
         super().__init__(message)
 
 
-class DashboardDatabase:
-    """Bounded SQLite access for trusted dashboard code.
+class DatabaseOperations:
+    """Shared bounded operations, audit events, and atomic transaction semantics."""
 
-    A fresh SQLite connection is created for each standalone operation.  A
-    transaction owns one connection for the lifetime of its ``with`` block.
-    Connections are never shared between Streamlit session threads.
-    """
-
-    def __init__(
+    def _initialize(
         self,
-        path: Path,
+        settings,
         *,
-        logger: logging.Logger | None = None,
-        max_rows: int = _DEFAULT_MAX_ROWS,
-        max_bytes: int = _DEFAULT_MAX_BYTES,
-        audit_sink: Any | None = None,
-        allow_schema_changes: bool = True,
-        protected_table_prefixes: Sequence[str] = (),
-    ) -> None:
-        self.path = Path(path).expanduser().resolve(strict=False)
+        logger=None,
+        audit_sink=None,
+        allow_schema_changes=False,
+        protected_table_prefixes=(),
+    ):
+        self.settings = settings
         self.logger = logger or _LOGGER
-        self.max_rows = _validate_hard_limit("max_rows", max_rows)
-        self.max_bytes = _validate_hard_limit("max_bytes", max_bytes)
+        self.max_rows = _validate_hard_limit("max_rows", settings.max_rows)
+        self.max_bytes = _validate_hard_limit("max_bytes", settings.max_bytes)
         self.audit_sink = audit_sink
         self.allow_schema_changes = bool(allow_schema_changes)
         self.protected_table_prefixes = tuple(
             _validate_table_prefix(prefix) for prefix in protected_table_prefixes
         )
-        self._idempotency = IdempotencyStore(
-            self.path, audit_sink=audit_sink, logger=self.logger
-        )
+        self._closed = False
+        self._idempotency = None
+
+    @property
+    def identity(self):
+        return self.settings.identity
+
+    def public_info(self):
+        return self.settings.public_info()
+
+    def close(self):
+        """Close provider resources without removing data or schema."""
+        self._closed = True
+
+    def _ensure_open(self):
+        if self._closed:
+            raise DashboardDatabaseError(
+                "database_closed",
+                "The database provider is closed.",
+                recovery_hint="Use the currently active database service.",
+            )
+
+    def insert(self, table, values, *, id_column="id"):
+        return _insert(self, table, values, id_column=id_column)
+
+    @contextmanager
+    def connection(self, *, read_only=False):
+        """Provider integration boundary; application code uses the bounded methods."""
+        connection = None
+        try:
+            connection = self._connect(read_only=read_only)
+        except DashboardDatabaseError:
+            raise
+        except Exception as error:  # noqa: BLE001 - normalize provider failures.
+            self._raise_public(error, "provider operation")
+        try:
+            yield connection
+        finally:
+            if connection is not None:
+                connection.close()
 
     def query(
         self,
@@ -378,7 +427,7 @@ class DashboardDatabase:
                 raise
 
         try:
-            connection.execute("BEGIN")
+            connection.execute("BEGIN").close()
             result, policy = self._execute_on_connection(connection, sql, params)
             connection.commit()
         except DashboardDatabaseError as error:
@@ -427,6 +476,11 @@ class DashboardDatabase:
                 recovery_hint=(
                     "Make run_once own the complete transaction and use its callback transaction."
                 ),
+            )
+        self._ensure_open()
+        if self._idempotency is None:
+            self._idempotency = IdempotencyStore(
+                provider=self, audit_sink=self.audit_sink, logger=self.logger
             )
         metadata = {
             "dashboardSessionId": None,
@@ -487,24 +541,66 @@ class DashboardDatabase:
             **fields,
         )
 
+
+class SQLiteProvider(DatabaseOperations):
+    """SQLite connections, native authorization, and locking behind the shared API."""
+
+    dialect = "sqlite"
+
+    def __init__(
+        self,
+        path=None,
+        *,
+        settings=None,
+        logger=None,
+        max_rows=_DEFAULT_MAX_ROWS,
+        max_bytes=_DEFAULT_MAX_BYTES,
+        audit_sink=None,
+        allow_schema_changes=True,
+        protected_table_prefixes=(),
+    ):
+        from toolframe_database_config import DatabaseSettings
+
+        if settings is None:
+            settings = DatabaseSettings(
+                sqlite_path=path,
+                max_rows=max_rows,
+                max_bytes=max_bytes,
+                timeout_seconds=_BUSY_TIMEOUT_MS / 1000,
+            )
+        self.path = settings.sqlite_path
+        self._initialize(
+            settings,
+            logger=logger,
+            audit_sink=audit_sink,
+            allow_schema_changes=allow_schema_changes,
+            protected_table_prefixes=protected_table_prefixes,
+        )
+
+    def begin_locked(self, connection, key):
+        """Serialize writers on SQLite before reading the durable claim."""
+        connection.execute("BEGIN IMMEDIATE").close()
+
     def _connect(self, *, read_only: bool) -> sqlite3.Connection:
+        self._ensure_open()
+        timeout_ms = int(self.settings.timeout_seconds * 1000)
         if read_only:
             encoded_path = quote(os.fspath(self.path), safe="/")
             connection = sqlite3.connect(
                 f"file:{encoded_path}?mode=ro",
                 uri=True,
-                timeout=_BUSY_TIMEOUT_MS / 1000,
+                timeout=self.settings.timeout_seconds,
                 isolation_level=None,
             )
         else:
             connection = sqlite3.connect(
                 self.path,
-                timeout=_BUSY_TIMEOUT_MS / 1000,
+                timeout=self.settings.timeout_seconds,
                 isolation_level=None,
             )
 
         try:
-            connection.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+            connection.execute(f"PRAGMA busy_timeout = {timeout_ms}")
             connection.execute("PRAGMA foreign_keys = ON")
             connection.enable_load_extension(False)
             if hasattr(connection, "setconfig") and hasattr(
@@ -517,7 +613,7 @@ class DashboardDatabase:
             if read_only:
                 connection.execute("PRAGMA query_only = ON")
             else:
-                connection.execute("PRAGMA journal_mode = WAL")
+                _configure_wal(connection, self.settings.timeout_seconds)
             return connection
         except Exception:
             connection.close()
@@ -531,13 +627,16 @@ class DashboardDatabase:
         *,
         max_rows: int | None,
         max_bytes: int | None,
+        private: bool = False,
     ) -> pd.DataFrame:
         policy = _PolicyState(
             "query",
             allow_schema_changes=self.allow_schema_changes,
-            protected_table_prefixes=self.protected_table_prefixes,
+            protected_table_prefixes=self.protected_table_prefixes
+            + (("_toolframe_", "sqlite_") if private else ()),
         )
         try:
+            self._start_statement_timeout(connection)
             normalized_sql = _validate_sql(sql)
             normalized_params = _validate_params(params, max_bytes=self.max_bytes)
             row_limit = _validate_call_limit("max_rows", max_rows, self.max_rows)
@@ -560,20 +659,27 @@ class DashboardDatabase:
             self._raise_public(error, sql, policy=policy)
         finally:
             connection.set_authorizer(None)
+            connection.set_progress_handler(None, 0)
 
     def _execute_on_connection(
         self,
         connection: sqlite3.Connection,
         sql: str,
         params: Mapping[str, Any] | Sequence[Any],
+        *,
+        private: bool = False,
     ) -> tuple[ExecuteResult, _PolicyState]:
         policy = _PolicyState(
             "execute",
-            allow_schema_changes=self.allow_schema_changes,
-            protected_table_prefixes=self.protected_table_prefixes,
+            allow_schema_changes=self.allow_schema_changes and not private,
+            protected_table_prefixes=self.protected_table_prefixes
+            + (("_toolframe_", "sqlite_") if private else ()),
         )
         try:
+            self._start_statement_timeout(connection)
             normalized_sql = _validate_sql(sql)
+            if private:
+                _protect_private_tables(normalized_sql, dialect="sqlite")
             normalized_params = _validate_params(params, max_bytes=self.max_bytes)
             policy.statement_keyword = _leading_keyword(normalized_sql)
             if not policy.allow_schema_changes and policy.statement_keyword in {
@@ -650,6 +756,11 @@ class DashboardDatabase:
             self._raise_public(error, sql, policy=policy)
         finally:
             connection.set_authorizer(None)
+            connection.set_progress_handler(None, 0)
+
+    def _start_statement_timeout(self, connection):
+        deadline = time.monotonic() + self.settings.timeout_seconds
+        connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
 
     def _raise_public(
         self,
@@ -658,6 +769,8 @@ class DashboardDatabase:
         *,
         policy: _PolicyState | None = None,
     ) -> None:
+        if isinstance(error, DashboardDatabaseError):
+            raise error
         trace_id = uuid.uuid4().hex
         safe_sql = sql if isinstance(sql, str) else f"<{type(sql).__name__}>"
         formatted_traceback = "".join(
@@ -680,6 +793,9 @@ class DashboardDatabase:
             recovery_hint=failure.recovery_hint,
             details={"exception_type": type(error).__name__, **failure.details},
         ) from error
+
+
+DashboardDatabase = SQLiteProvider
 
 
 _active_transactions: contextvars.ContextVar[tuple[int, ...]] = contextvars.ContextVar(
@@ -738,7 +854,7 @@ class _DashboardTransaction:
         self._context_token = _active_transactions.set((*active, id(self._database)))
         try:
             self._connection = self._database._connect(read_only=False)
-            self._connection.execute("BEGIN")
+            self._connection.execute("BEGIN").close()
             return self
         except Exception as error:  # noqa: BLE001 - normalize the public boundary.
             if self._connection is not None:
@@ -947,6 +1063,14 @@ class _DashboardTransaction:
             )
         return self._connection
 
+    def insert(self, table, values, *, id_column="id"):
+        try:
+            self._require_open()
+            return _insert(self, table, values, id_column=id_column)
+        except DashboardDatabaseError:
+            self._failed = True
+            raise
+
     def _reset_context(self) -> None:
         if self._context_token is not None:
             _active_transactions.reset(self._context_token)
@@ -957,6 +1081,91 @@ def _validate_hard_limit(name: str, value: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
+
+
+def _identifier(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z_][a-z0-9_]*", value):
+        raise DashboardDatabaseError(
+            "invalid_identifier",
+            "A table or column identifier is invalid.",
+            recovery_hint="Use lowercase letters, digits, and underscores in identifiers.",
+        )
+    return f'"{value}"'
+
+
+def _protect_private_tables(sql, *, dialect):
+    import sqlglot
+    from sqlglot import exp
+    from sqlglot.tokens import TokenType
+
+    # Inspect table nodes, not arbitrary column names or string literals.
+    if _leading_keyword(sql) == "REINDEX":
+        tokens = sqlglot.Dialect.get_or_raise(dialect).tokenize(sql)
+        tables = [
+            token.text
+            for token in tokens[1:]
+            if token.token_type != TokenType.SEMICOLON
+        ]
+    else:
+        try:
+            trees = sqlglot.parse(sql, read=dialect)
+        except sqlglot.errors.SqlglotError:
+            return  # The provider reports syntax errors at execution.
+        tables = [
+            table.name
+            for tree in trees
+            if tree is not None
+            for table in tree.find_all(exp.Table)
+        ]
+    if any(name.casefold().startswith("_toolframe_") for name in tables):
+        raise _SdkFailure(
+            "protected_table_forbidden",
+            "Runtime-owned tables are private.",
+            recovery_hint="Use business tables inside the idempotent callback.",
+        )
+
+
+def _configure_wal(connection, timeout_seconds):
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            cursor = connection.execute("PRAGMA journal_mode = WAL")
+            row = cursor.fetchone()
+            cursor.close()
+            if row is None or str(row[0]).casefold() != "wal":
+                raise sqlite3.OperationalError("SQLite could not enter WAL mode")
+            return
+        except sqlite3.OperationalError as error:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not any(
+                word in str(error).casefold() for word in ("busy", "locked")
+            ):
+                raise
+            time.sleep(min(0.01, remaining))
+
+
+def _insert(database, table, values, *, id_column):
+    if not isinstance(values, Mapping) or not values:
+        raise DashboardDatabaseError(
+            "invalid_parameters",
+            "insert() requires a non-empty value mapping.",
+            recovery_hint="Pass column names and bound scalar values.",
+        )
+    names = list(values)
+    columns = ", ".join(_identifier(name) for name in names)
+    placeholders = ", ".join(f":p{index}" for index in range(len(names)))
+    result = database.execute(
+        f"INSERT INTO {_identifier(table)} ({columns}) VALUES ({placeholders}) "
+        f"RETURNING {_identifier(id_column)}",
+        {f"p{index}": values[name] for index, name in enumerate(names)},
+    )
+    if result.rows is None or len(result.rows) != 1:
+        raise DashboardDatabaseError(
+            "missing_insert_id",
+            "The insert did not return exactly one identifier.",
+            recovery_hint="Use an integer identity column and verify the schema.",
+        )
+    return int(result.rows.iloc[0, 0])
 
 
 def _validate_table_prefix(value: str) -> str:
@@ -1200,7 +1409,7 @@ def _classify_error(error: Exception, policy: _PolicyState | None) -> _SdkFailur
             recovery_hint="Correct the submitted data or resolve the conflicting row.",
         )
     if isinstance(error, sqlite3.Error) and (
-        "locked" in error_text or "busy" in error_text
+        "locked" in error_text or "busy" in error_text or "interrupted" in error_text
     ):
         return _SdkFailure(
             "database_busy",

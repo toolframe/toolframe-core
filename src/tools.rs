@@ -23,6 +23,9 @@ const CORE_DEPENDENCIES: &[&str] = &[
     "fastapi-cordis==0.1.0",
     "fastmcp==4.0.0",
     "pydantic==2.12.5",
+    "psycopg[binary]==3.3.5",
+    "sqlalchemy==2.0.52",
+    "sqlglot==28.10.1",
     "streamlit==1.61.0",
     "uvicorn==0.42.0",
 ];

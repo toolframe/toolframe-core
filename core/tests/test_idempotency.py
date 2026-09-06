@@ -14,6 +14,7 @@ CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
+import toolframe_database as database_backend
 import toolframe_idempotency as idempotency
 
 
@@ -240,7 +241,7 @@ class IdempotencyTests(unittest.TestCase):
         self.assertEqual(result.value, {"value": "business-value"})
         self.assertFalse(result.replayed)
 
-    def test_business_table_reindex_is_allowed(self):
+    def test_business_table_maintenance_requires_migration_path(self):
         with closing(sqlite3.connect(self.database_path)) as connection:
             connection.executescript(
                 """
@@ -258,10 +259,9 @@ class IdempotencyTests(unittest.TestCase):
             )
             return {"reindexed": True}
 
-        result = self.store.run_once("events.create", "business-reindex", {}, mutation)
-
-        self.assertEqual(result.value, {"reindexed": True})
-        self.assertFalse(result.replayed)
+        with self.assertRaises(idempotency.IdempotencyError) as raised:
+            self.store.run_once("events.create", "business-reindex", {}, mutation)
+        self.assertEqual(raised.exception.details["databaseCode"], "forbidden_sql")
 
     def test_wal_configuration_retries_a_busy_fresh_connection(self):
         real_connection = sqlite3.connect(self.database_path, isolation_level=None)
@@ -288,7 +288,7 @@ class IdempotencyTests(unittest.TestCase):
                 return self.connection.execute(sql, params)
 
         connection = BusyOnceConnection(real_connection)
-        with patch.object(idempotency.sqlite3, "connect", return_value=connection):
+        with patch.object(database_backend.sqlite3, "connect", return_value=connection):
             result = self.store.run_once(
                 "events.create", "wal-retry", {}, lambda transaction: {"ok": True}
             )
