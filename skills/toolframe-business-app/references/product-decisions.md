@@ -10,6 +10,13 @@ Round 13 is the current source-layout and agent-authority policy. Where older
 rounds describe root feature folders, `app_` table prefixes, a public SQL
 fallback, or a generated/multi-document root LLMS set, Round 13 supersedes them.
 
+The subsequent dependency/plugin revision supersedes historical recommendations
+below about SQLite-only persistence, global numbering for new migrations and
+launcher-owned database execution. The current contract is in
+[plugins-and-data.md](plugins-and-data.md): Python-selected SQLite/PostgreSQL,
+typed services, owner-scoped revisions, and retained legacy/artifact history.
+The older answers remain here as historical evidence, not current instructions.
+
 ## Round 1 — audience and operating agreement (Q1–Q4)
 
 ### Q1 — Who should this skill serve?

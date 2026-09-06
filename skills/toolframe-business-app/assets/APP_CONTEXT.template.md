@@ -53,7 +53,7 @@ meaning for a canonical term.
   linked pages apply to this business app].
 - MCP: `/mcp` — [the small Business RPC catalog, separated into bounded
   business queries and guarded business commands; state each caller intent].
-- Database: `data/data.db` — [business data owned by this app].
+- Database: [selected provider and safe target; SQLite default `data/data.db`].
 - Scheduler boundary: [external trigger, cadence, or “none”].
 
 ## Boundaries
@@ -100,7 +100,7 @@ real dependency; leave the table empty rather than inventing a shared layer.
 | --- | --- | --- |
 | App composition | `app/dashboard.py` | [registry use or custom composition and visible app identity] |
 | Shared dependencies | `app/pyproject.toml` | [why each app-wide package is required] |
-| Domain model/schema | `domains/<domain>/model/`, `domains/<domain>/migrations/` | [owning domain, latest global migration, and immutable-history note] |
+| Domain model/schema | `domains/<domain>/model/`, `domains/<domain>/migrations/` | [owning domain, schema target and legacy history, and immutable-history note] |
 | MCP tools | `domains/<domain>/tools/` | [narrow commands/queries, intents, and private `_*.py` helpers] |
 | Domain UI | `domains/<domain>/ui/` | [auto-loaded direct widgets and manual composition choices] |
 | LAN agent discovery | `app/llms.txt`, `domains/<domain>/llms/*.md` | [explicitly linked peer documents and last reconciliation] |

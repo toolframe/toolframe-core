@@ -128,7 +128,7 @@
         "The master agent uses root APP_CONTEXT.md and DOMAIN_MODEL.md, app/dashboard.py, app/llms.txt, app/pyproject.toml, and one domains/purchase_requests tree.",
         "No legacy root dashboard, tools, migrations, llms, or generic shared source folder is created.",
         "Business rules live in the domain model and are shared by its UI and tool rather than duplicated.",
-        "The migration file lives under the owning domain, uses the next global number, and creates domain-prefixed tables.",
+        "The owning domain gets schema.json and provider SQL variants with an owner-local revision and domain-prefixed tables.",
         "The public MCP surface contains only the bounded review query/command needed by the workflow, not CRUD or SQL.",
         "A direct domain UI widget is auto-discovered and app/dashboard.py remains free to compose it differently.",
         "APP_CONTEXT.md and DOMAIN_MODEL.md remain private while app/llms.txt links only needed peer documents.",
@@ -147,10 +147,10 @@
       ]
     },
     {
-      "id": "e2e-global-migrations",
+      "id": "e2e-preserve-legacy-and-namespace-new-revisions",
       "prompt": "The existing customer domain owns migrations 0000 and 0001. Add the first invoice-domain schema safely.",
       "assertions": [
-        "The invoice migration is globally numbered 0002 rather than restarting at 0000.",
+        "The invoice migration gets its own owner-local revision; preserved legacy 0000 and 0001 stay unchanged.",
         "Existing applied migration bytes, filenames, locations, and checksums are preserved.",
         "The new file lives under domains/invoicing/migrations and uses invoicing-prefixed table names.",
         "Duplicate and gap handling is fail-closed and check is run without mutating configured data."
@@ -185,6 +185,26 @@
         "The linked capability guide describes the actual narrow query and tells peers to escalate missing behavior to the master agent.",
         "APP_CONTEXT.md, DOMAIN_MODEL.md, repair steps, schema controls, and unlinked documents remain private.",
         "A successful tool list, not reading llms.txt, is the MCP connection proof."
+      ]
+    },
+    {
+      "id": "e2e-provider-target-switch",
+      "prompt": "Switch this Toolframe app from SQLite to PostgreSQL, then return to its old SQLite target.",
+      "assertions": [
+        "Reads plugins-and-data.md before choosing configuration.",
+        "Uses the same typed database service and portable insert IDs.",
+        "Changes take effect on restart; old rows and receipts remain and are never transferred automatically.",
+        "Verifies real disposable PostgreSQL calls, not only a read-only check."
+      ]
+    },
+    {
+      "id": "e2e-plugin-schema-lifecycle",
+      "prompt": "Add an inventory service plugin with a schema, disable it, uninstall it, then install older code.",
+      "assertions": [
+        "Keeps service key, concrete provider ID and schema owner distinct.",
+        "Maps installed plugin to SCHEMAS and declares revision dependencies separately from requires.",
+        "Preserves data and verifiable history on disable/uninstall; never runs absent pending scripts.",
+        "Rejects an incompatible old target unless compatible_heads explicitly permits it."
       ]
     }
   ],

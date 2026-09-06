@@ -180,6 +180,10 @@ const EMBEDDED_BUSINESS_SKILL_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../skills/toolframe-business-app/references/development-handbook.md"),
     ),
     (
+        "references/plugins-and-data.md",
+        include_bytes!("../skills/toolframe-business-app/references/plugins-and-data.md"),
+    ),
+    (
         "references/job-domain-model.md",
         include_bytes!("../skills/toolframe-business-app/references/job-domain-model.md"),
     ),

@@ -54,7 +54,7 @@ domains/<business_domain>/
 - `app/dashboard.py` is the unrestricted application composition root. The
   default registry is convenient, not mandatory.
 - Preserve user data and the exact bytes of applied migrations. Domain-owned
-  migration files form one globally numbered, gap-free history.
+  revisions use stable owner namespaces; preserve the original legacy history.
 - Prefix business tables with the owning domain name. `_toolframe_*` is
   runtime-owned.
 - Public tools and widgets are direct `*.py` files. `_*.py`, dot files, and
@@ -76,7 +76,7 @@ what durable evidence proves completion, and the one screen or query needed
 next. Translate implementation choices into business consequences; ask the
 owner only when a choice changes behavior, risk, or data meaning.
 
-Use Toolframe for one trusted LAN, one bounded workflow, one SQLite database,
+Use Toolframe for one trusted LAN, one bounded workflow, one selected SQLite or PostgreSQL database,
 short-lived interactions, and trusted Python. Read
 [operations-handbook.md](references/operations-handbook.md) and recommend a
 dedicated app when the request needs public access, authentication,
@@ -128,8 +128,9 @@ language, invariants, and lifecycle form a real bounded business capability:
 
 Build in this order:
 
-1. Add the next global migration under the owning domain, if durable state must
-   change.
+1. Add an owner-scoped schema revision if durable state must change. Read
+   [plugins-and-data.md](references/plugins-and-data.md) for provider selection,
+   service dependencies, SQL variants, legacy preservation and lifecycle checks.
 2. Put business rules and persistence operations in that domain's `model/`.
 3. Add the smallest intent-shaped MCP command or bounded query in `tools/`.
 4. Add or update the human decision surface in `ui/` and compose it from
@@ -151,7 +152,7 @@ Business queries answer one bounded workflow question. Hide SQL, invariants,
 events, version/lease checks, idempotency, and transaction details behind that
 small interface.
 
-Use `toolframe_db.get_database()` instead of opening SQLite in public tools,
+Use `toolframe_db.get_database()` instead of opening database drivers in public tools,
 `toolframe_idempotency.run_once()` for replay-safe mutations,
 `toolframe_artifacts.get_artifact_store()` for large durable outputs, and
 `toolframe_runtime.ToolframeError` for structured tool failures.
@@ -228,12 +229,12 @@ Connect task only after actual tool listing proves MCP registration.
 - Migrations, MCP tools, dependencies, and the linked LLMS allowlist are
   startup contracts. Dashboard code may rerun in Streamlit; this is not MCP hot
   reload.
-- The global migration number does not reset inside a new domain.
+- New schema revisions belong to their owner; existing legacy numbers and bytes stay unchanged.
 - A domain root `__init__.py` is a deliberate business boundary, not a dumping
   ground for models or storage helpers.
 - Reading `/llms.txt` does not install MCP. A successful tool-list response is
   the connection proof.
 - `127.0.0.1` works only on the host. Peers use the printed LAN host and the
   same port for `/llms.txt` and `/mcp`.
-- One process, one dependency environment, and SQLite's writer model are
-  deliberate simplicity limits.
+- One process and one dependency environment remain the runtime limits.
+  Provider choice changes database behavior; it does not add worker isolation.

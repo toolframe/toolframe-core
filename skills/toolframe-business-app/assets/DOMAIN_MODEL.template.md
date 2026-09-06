@@ -13,7 +13,7 @@ in code and documentation.
 - Outside the app: `<scheduler, external systems, manual processes>`
 - Human entrance: `<dashboard pages/widgets>`
 - Agent entrance: `<MCP tools and `/mcp` connection>`
-- Data source and database: `<data/data.db and any external read-only references>`
+- Data source and database: `<selected provider/target and any external read-only references>`
 - Owning source domain(s): `<domains/<business_domain>>`
 - Cross-domain public APIs: `<explicit high-level functions exported from domain __init__.py, or none>`
 
@@ -47,18 +47,17 @@ Rules that must remain true across every write:
 2. `<invariant two>`
 3. `<invariant three>`
 
-## SQLite mapping
+## Database mapping
 
 User tables use the owning domain's prefix, such as `<business_domain>_`. Files
-under every domain's `migrations/` form one global schema history. Applied
-migrations are immutable; add the next global contiguous version under the
-owning domain. Keep launcher-owned `_toolframe_migrations` and
-`_toolframe_idempotency` tables out of user migrations.
+under the owner's `migrations/` declare schema revisions and provider SQL variants.
+Applied revisions and legacy history stay immutable; append an explicit dependency
+and new target for upgrades. `_toolframe_*` tables belong to the Python runtime.
 
 | Table | Columns and constraints | Indexes | Created/changed by |
 | --- | --- | --- | --- |
-| `<business_domain>_<entity>` | `<columns, nullability, checks, foreign keys, version>` | `<business query indexes>` | `<global migration number>` |
-| `<business_domain>_<entity>_events` | `<append-only event columns>` | `<history indexes>` | `<global migration number>` |
+| `<business_domain>_<entity>` | `<columns, nullability, checks, foreign keys, version>` | `<business query indexes>` | `<owner@revision>` |
+| `<business_domain>_<entity>_events` | `<append-only event columns>` | `<history indexes>` | `<owner@revision>` |
 
 Use UTC timestamps, bound parameters, and short transactions. Large outputs
 belong in managed artifact references rather than oversized JSON columns.
@@ -132,7 +131,7 @@ an MCP/tool call. Record the date, command, and observed evidence here:
 ## Change and reconciliation record
 
 When the business changes, update this document, `APP_CONTEXT.md`, the next
-global domain-owned migration, affected model, tools, widgets, linked peer
+owner-scoped schema revision, affected model, tools, widgets, linked peer
 documents, and tests together. Never edit an applied migration or hide a
 contradiction in one caller.
 

@@ -20,8 +20,8 @@ The current product contract is:
 - One uv-managed Python runtime and process serves FastAPI, Streamlit, and
   FastMCP. MCP is Streamable HTTP at `/mcp`; SSE and stdio are not supported.
 - The app binds for LAN use without authentication. Treat every tool and
-  dashboard mutation as trusted-code access. `data/data.db` is the only supported
-  database in this MVP.
+  dashboard mutation as trusted-code access. the configured database is SQLite by default or PostgreSQL.
+  Read [plugins-and-data.md](plugins-and-data.md) for persistence contracts.
 - Peer agents receive only narrow, parameterized business tools that enforce
   this model. The private `_execute_sql_reference.py` may guide master-agent
   implementation but is not published and never becomes a peer repair path.
@@ -48,13 +48,13 @@ to be the actor making an MCP request.
 | **Business failure** | An explicit decision that the requested outcome cannot or should not be completed. It enters `failed` only through a deliberate guarded transition. | Not an automatic mapping from a technical error. |
 | **Technical failure** | An execution or infrastructure problem, classified as retryable or non-retryable. It is recorded on the Attempt. Exhausted technical recovery enters `blocked`, never `failed` automatically. | Not a business-state transition until a guard explicitly blocks or fails the Job. |
 
-## Recommended SQLite mapping
+## Recommended database mapping
 
 User-owned tables use their owning domain prefix and are created by that
-domain's files in the one global migration history. The examples below assume
+domain's owner-scoped schema revisions. The examples below assume
 the domain is named `job_desk`; names and optional columns can be adapted, but
 the relationships and constraints below should remain recognizable. The
-launcher-owned `_toolframe_migrations` and `_toolframe_idempotency` tables are
+runtime-owned `_toolframe_*` tables are
 internal and must not be edited by a user migration.
 
 | Table | Required meaning and representative columns |
@@ -133,7 +133,7 @@ append a second business action.
 
 ## Claims, leases, and stale writes
 
-`claim_next_job` is a single short SQLite write transaction. Conceptually it:
+`claim_next_job` is a single short database write transaction. Conceptually it:
 
 1. obtains the write lock;
 2. requeues any eligible expired Lease (closing its Attempt and appending an
@@ -168,7 +168,7 @@ Attempt may use the same ContextVersion unless a human creates a newer one.
 ## Retry, idempotency, and optimistic concurrency
 
 Transport and tool errors have their own `retryable` classification. A
-retryable timeout or SQLite busy error may be retried with the same
+retryable timeout or database busy error may be retried with the same
 idempotency key. Syntax, validation, constraint, policy, stale-lease, and
 idempotency-input-mismatch errors are not safe blind retries. Include the trace
 id and recovery hint in the tool response; keep full diagnostics in the local
@@ -267,8 +267,8 @@ Keep the scheduler out of these tests: use a test actor to simulate its poll.
 
 Maintain `APP_CONTEXT.md` for the app’s purpose, actors, operating loop, and
 limits, and `DOMAIN_MODEL.md` for the app-specific adaptation of this model.
-Domain-owned migration directories form the schema source of truth and one
-global history; never edit an applied migration—add the next global version.
+Domain schema manifests declare immutable revisions and explicit dependencies.
+Add a revision for changes and preserve the original legacy history.
 Tool signatures are the callable contract, dashboard widgets are the human projection, and `./toolframe check
 --format json`, `/info`, and local JSONL logs are runtime evidence.
 

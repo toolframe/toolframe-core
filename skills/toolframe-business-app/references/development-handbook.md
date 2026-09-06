@@ -17,7 +17,7 @@ Ask in business language:
 - What result or history proves success?
 - What should the owner see first?
 
-Toolframe fits one trusted LAN, one bounded workflow, one SQLite database, a
+Toolframe fits one trusted LAN, one bounded workflow, one selected SQLite or PostgreSQL database, a
 Streamlit human surface, and a small set of trusted MCP tools. Escalate before
 implementation for public access, authentication/permissions, untrusted code,
 tenants, high availability, durable workers, heavy concurrent writes, multiple
@@ -55,7 +55,7 @@ package. `serve` may create a complete source root only when that whole root is
 absent. An existing partial root is a defect to diagnose, not permission to
 auto-repair or overwrite files.
 
-`check` validates the global migration history without mutating the configured
+`check` validates schema dependencies and archived history without mutating the configured
 database, resolves the real dependency environment, compiles public Python,
 enforces domain import boundaries, imports every public tool and widget, and
 validates only the LLMS documents explicitly linked by `app/llms.txt`.
@@ -107,26 +107,26 @@ automatic widget registry, select part of it, or compose UI directly.
 
 ### A. Add durable schema in the owning domain
 
-All domain migration directories contribute to one global, immutable history.
-Create the next version with:
+Read [plugins-and-data.md](plugins-and-data.md) for the schema manifest, provider
+variants, service boundaries and preservation contract. Create an owner-scoped draft with:
 
 ```sh
 ./toolframe scaffold migration <domain> <description>
 ```
 
-The generated number is the next version across all domains, not the next
-version inside that domain. Never edit, rename, move, or delete an applied
-migration. Restore changed historical bytes and add a new version instead.
+Complete the generated SQL variants and owned `tables` in `schema.json`.
+Preserve applied bytes and metadata; add a revision with explicit dependencies.
+Original legacy numbering stays intact.
 
 Business tables use the owning domain prefix, such as `inventory_control_stock`
 or `job_desk_jobs`. `_toolframe_*` tables belong to the runtime. Keep schema
 administration out of MCP and the dashboard. Do not put transaction control,
 connection PRAGMAs, attached databases, or triggers in migration source; the
-launcher owns migration execution and the ledger.
+Python coordinator owns migration execution and durable artifacts/history.
 
 Prefer durable business history: stable identities, UTC timestamps, actor
 labels, explicit versions, and append-only events/results when reconstruction
-matters. Back up the database and sidecars before destructive data work.
+matters. Back up the selected database before destructive data work; include sidecars for SQLite.
 
 ### B. Put rules in `model/`
 
@@ -164,7 +164,7 @@ Use:
 - `toolframe_artifacts.get_artifact_store()` for create-once large outputs; and
 - `toolframe_runtime.ToolframeError` for structured business/tool failures.
 
-Do not open SQLite directly in public tools. The private
+Use the configured database service in public tools. The private
 `_execute_sql_reference.py` demonstrates adapter mechanics but is not an MCP
 capability and must never appear in peer docs. When a peer needs unsupported
 behavior, implement a new narrow business tool through the master agent.

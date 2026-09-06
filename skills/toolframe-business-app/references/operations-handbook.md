@@ -13,7 +13,10 @@ One Rust launcher runs one managed Python 3.14 process containing:
 - built-in diagnostics at `/info`;
 - a FastMCP Streamable HTTP endpoint at `/mcp`;
 - the authored peer guide at `/llms.txt`; and
-- one SQLite database, normally `data/data.db`.
+- one selected database: SQLite at `data/data.db` by default, or PostgreSQL.
+
+Read [plugins-and-data.md](plugins-and-data.md) for provider settings, target
+switches, schema history and plugin lifecycle.
 
 The app has no authentication, authorization, or Python sandbox. Any reachable
 LAN client can use exposed dashboard actions and MCP tools. Do not publish the
@@ -109,11 +112,13 @@ Use the safe create-once scaffolds:
 ./toolframe check --format json
 ```
 
-Check validates the complete domain layout, global migration history, applied
-checksums against isolated state, dependency resolution, public Python compile
+Check validates the complete domain layout, schema/history contracts,
+dependency resolution, public Python compile
 and import boundaries, every public tool/schema, every public widget, and the
 linked LLMS allowlist. It does not bind a port or apply pending migrations to
-the configured database. Trusted imports can still have side effects.
+the configured database. SQLite uses a filesystem copy for a trial; PostgreSQL
+validates history and the plan without trial DDL. The JSON report states the level.
+Trusted imports must remain free of side effects.
 
 A failed check is a release blocker. Do not hide the file, weaken validation,
 or run with a partial domain.
@@ -122,14 +127,15 @@ or run with a partial domain.
 
 Stop the process before copying durable state. Preserve:
 
-- `data/data.db` and present `-wal`/`-shm` sidecars;
+- the selected database (for SQLite, its file and present `-wal`/`-shm` sidecars;
+  for PostgreSQL, a consistent database backup including `_toolframe_*` history);
 - `domains/`, especially all migration files;
 - `app/`, `APP_CONTEXT.md`, and `DOMAIN_MODEL.md`;
 - `workspace/`; and
 - `.toolframe/logs/` when diagnostic history is needed.
 
 Applied migration bytes are immutable. Never edit, rename, move, or delete an
-applied file. A new domain still uses the next global migration number.
+applied revision. New domains use owner-local revisions and explicit dependencies.
 
 ## Doctor: report first, repair only when asked
 
@@ -151,7 +157,7 @@ made by the master development agent.
 | Temporary UV/package/network failure | Usually | Restore connectivity and retry; use offline only with a complete cache. |
 | Port unavailable | Sometimes | Stop the competing service or choose an approved port. |
 | Database busy/transient I/O | Usually | Stop competing writers, verify disk health, then retry. |
-| Migration gap, duplicate, bad SQL, or checksum drift | No | Restore historical bytes or add the next global migration; never erase data/history. |
+| Migration gap, duplicate, bad SQL, or checksum drift | No | Restore historical bytes or append an owner-scoped revision; never erase data/history. |
 | Dependency conflict or wrong Python range | No | Correct `app/pyproject.toml` or public tool metadata, then check/restart. |
 | Syntax or domain-boundary error | No | Repair the named public source through the master agent. |
 | Tool identity/decorator/schema/import failure | No | Repair the named tool and restart; it cannot be skipped. |
