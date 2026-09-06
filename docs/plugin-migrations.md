@@ -152,6 +152,12 @@ numbering, UTF-8 bytes and checksums remain immutable. Original applied rows in
 `_toolframe_migrations`, including timestamps, are verified and retained during
 adoption; they are not renumbered or rewritten.
 
+Completeness is checked against installed sources **plus verified applied
+archives**. Removing the first or an intermediate legacy domain is valid after
+its revisions have been durably archived and applied. The same file gap on a
+fresh target, or one filled only by an unapplied archive, fails. Reinstallation
+still checks the original bytes and durable ownership before serving requests.
+
 The existing `0000_bootstrap.sql` and `0001_adopt_domain_table_name.sql` are unchanged.
 Their PostgreSQL companions are under `migrations/postgresql/`. The preserved
 global ledger pins the original canonical SQLite source hashes; durable artifacts

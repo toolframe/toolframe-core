@@ -346,17 +346,10 @@ def discover_domains(domains_dir: Path):
     ]
     if len(versions) != len(set(versions)):
         _error("duplicate_revision", "Legacy global migration numbers must be unique.")
-    if versions and (versions[0] != 0 or versions != list(range(versions[-1] + 1))):
-        _error(
-            "legacy_history_gap",
-            "Legacy migration numbers must remain contiguous from 0000.",
-        )
-    if (
-        legacy
-        and next(item for item in legacy if item.ref == "legacy@0000").metadata[
-            "legacy_filename"
-        ]
-        != "0000_bootstrap.sql"
+    if any(
+        item.ref == "legacy@0000"
+        and item.metadata["legacy_filename"] != "0000_bootstrap.sql"
+        for item in legacy
     ):
         _error(
             "invalid_filename", "Legacy revision 0000 must keep its bootstrap filename."
@@ -579,6 +572,18 @@ class MigrationCoordinator:
     def plan(self, connection) -> Plan:
         applied, owners, legacy, names = self._load(connection)
         available = {**applied, **self.installed}
+        # Removed domains can leave holes in the installed file sequence. Only
+        # integrity-checked, applied history may fill them; pending archives do not.
+        versions = sorted(
+            artifact.metadata["legacy_version"]
+            for artifact in available.values()
+            if artifact.metadata["legacy_version"] is not None
+        )
+        if versions and versions != list(range(versions[-1] + 1)):
+            _error(
+                "legacy_history_gap",
+                "Installed sources and applied legacy history must be contiguous from 0000.",
+            )
         for ref, previous in applied.items():
             current = self.installed.get(ref)
             if current is not None and current.sha256 != previous.sha256:
