@@ -23,6 +23,10 @@ const CORE_DATABASE: &str = include_str!("../core/toolframe_db.py");
 const CORE_DATABASE_BACKEND: &str = include_str!("../core/toolframe_database.py");
 const DATABASE_MODULES: &[(&str, &str)] = &[
     (
+        "toolframe_database_host.py",
+        include_str!("../core/toolframe_database_host.py"),
+    ),
+    (
         "toolframe_migrations.py",
         include_str!("../core/toolframe_migrations.py"),
     ),
@@ -129,6 +133,16 @@ const EMBEDDED_DOMAINS_TREE: &[(&str, &str)] = &[
         "entry_register/migrations/0001_adopt_domain_table_name.sql",
         include_str!("../domains/entry_register/migrations/0001_adopt_domain_table_name.sql"),
     ),
+    (
+        "entry_register/migrations/postgresql/0000_bootstrap.sql",
+        include_str!("../domains/entry_register/migrations/postgresql/0000_bootstrap.sql"),
+    ),
+    (
+        "entry_register/migrations/postgresql/0001_adopt_domain_table_name.sql",
+        include_str!(
+            "../domains/entry_register/migrations/postgresql/0001_adopt_domain_table_name.sql"
+        ),
+    ),
 ];
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -178,7 +192,6 @@ const EMBEDDED_BUSINESS_SKILL_FILES: &[(&str, &[u8])] = &[
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub root: PathBuf,
-    pub database: PathBuf,
     pub app: PathBuf,
     pub domains: PathBuf,
     pub workspace: PathBuf,
@@ -420,7 +433,6 @@ fn write_embedded_skill_file(path: &Path, content: &[u8]) -> Result<()> {
 
 pub fn resolve_paths(
     root: &Path,
-    database: Option<PathBuf>,
     app: Option<PathBuf>,
     domains: Option<PathBuf>,
     workspace: Option<PathBuf>,
@@ -429,7 +441,6 @@ pub fn resolve_paths(
     let cwd = env::current_dir().context("could not read the current directory")?;
     Ok(AppPaths {
         root: root.to_path_buf(),
-        database: absolute_override(database, &cwd, &root.join("data").join("data.db")),
         app: absolute_override(app, &cwd, &root.join("app")),
         domains: absolute_override(domains, &cwd, &root.join("domains")),
         workspace: absolute_override(workspace, &cwd, &root.join("workspace")),
@@ -438,7 +449,6 @@ pub fn resolve_paths(
 }
 
 pub fn prepare_directories(paths: &AppPaths) -> Result<PreparedDirectories> {
-    prepare_database_parent(&paths.database)?;
     let app_scaffolded = scaffold_directory_if_missing(&paths.app, "app", EMBEDDED_APP_TREE)?;
     let domains_scaffolded =
         scaffold_directory_if_missing(&paths.domains, "domains", EMBEDDED_DOMAINS_TREE)?;
@@ -639,14 +649,6 @@ fn create_directory_if_missing(path: &Path, label: &str) -> Result<bool> {
     fs::create_dir_all(path)
         .with_context(|| format!("could not create {label} directory {}", path.display()))?;
     Ok(true)
-}
-
-fn prepare_database_parent(path: &Path) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("database path {} has no parent directory", path.display()))?;
-    create_directory_if_missing(parent, "database parent")?;
-    Ok(())
 }
 
 fn scaffold_file_if_missing(path: &Path, label: &str, content: &str) -> Result<bool> {
@@ -1169,7 +1171,6 @@ mod tests {
     fn example_paths(root: &Path) -> AppPaths {
         AppPaths {
             root: root.to_path_buf(),
-            database: root.join("data/data.db"),
             app: root.join("app"),
             domains: root.join("domains"),
             workspace: root.join("workspace"),
@@ -1314,9 +1315,8 @@ mod tests {
     #[test]
     fn resolves_default_and_relative_app_and_domain_paths() {
         let root = Path::new("/tmp/toolframe-dist");
-        let defaults = resolve_paths(root, None, None, None, None, None).expect("resolve defaults");
+        let defaults = resolve_paths(root, None, None, None, None).expect("resolve defaults");
         assert_eq!(defaults.root, root);
-        assert_eq!(defaults.database, root.join("data/data.db"));
         assert_eq!(defaults.app, root.join("app"));
         assert_eq!(defaults.domains, root.join("domains"));
         assert_eq!(defaults.workspace, root.join("workspace"));
@@ -1325,7 +1325,6 @@ mod tests {
         let cwd = env::current_dir().expect("read current directory");
         let custom = resolve_paths(
             root,
-            None,
             Some(PathBuf::from("custom-app")),
             Some(PathBuf::from("custom-domains")),
             None,

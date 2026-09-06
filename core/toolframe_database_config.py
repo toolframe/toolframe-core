@@ -258,6 +258,15 @@ class DatabaseSettings(BaseModel):
         return self
 
     @classmethod
+    def from_runtime(cls, *, root: Path | None = None) -> DatabaseSettings:
+        """Read the launcher's original directories and explicit CLI override."""
+        return cls.from_env(
+            root=Path(os.environ.get("TOOLFRAME_EXECUTABLE_ROOT", root or Path.cwd())),
+            cwd=Path(os.environ.get("TOOLFRAME_INVOCATION_CWD", Path.cwd())),
+            cli_database=os.environ.get("TOOLFRAME_CLI_DATABASE"),
+        )
+
+    @classmethod
     def from_env(
         cls,
         *,
@@ -284,7 +293,7 @@ class DatabaseSettings(BaseModel):
                 sqlite_value = environment["TOOLFRAME_DB"]
                 sqlite_base = cwd_path
             else:
-                sqlite_value = root_path / "data.db"
+                sqlite_value = root_path / "data" / "data.db"
                 sqlite_base = None
 
             sqlite_path = _normalize_path(sqlite_value, base=sqlite_base)

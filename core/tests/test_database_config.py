@@ -34,7 +34,7 @@ def test_default_path_and_source_precedence_are_read_only(tmp_path):
         environ=environment,
     )
 
-    assert default_settings.sqlite_path == (root / "data.db").resolve()
+    assert default_settings.sqlite_path == (root / "data" / "data.db").resolve()
     assert (
         sqlite_environment_settings.sqlite_path
         == (cwd / "from-sqlite-path.db").resolve()
@@ -42,7 +42,7 @@ def test_default_path_and_source_precedence_are_read_only(tmp_path):
     assert db_environment_settings.sqlite_path == (cwd / "from-db.db").resolve()
     assert cli_settings.sqlite_path == (cwd / "from-cli.db").resolve()
     assert environment == original_environment
-    assert not (root / "data.db").exists()
+    assert not (root / "data").exists()
     assert not (cwd / "from-cli.db").exists()
 
 

@@ -249,7 +249,7 @@ def second() -> str:
 
         snapshot = runtime._database_snapshot(database)
 
-        self.assertEqual(snapshot["databasePath"], str(database))
+        self.assertEqual(snapshot["databasePath"], str(database.resolve()))
         self.assertEqual(len(snapshot["tables"][0]["rows"]), 25)
         self.assertTrue(snapshot["tables"][0]["truncated"])
         self.assertEqual(snapshot["tables"][0]["rows"][0], ["<blob: 1 bytes>"])

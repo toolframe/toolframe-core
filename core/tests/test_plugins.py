@@ -15,6 +15,8 @@ if str(CORE) not in sys.path:
 from fastapi_cordis import DependencyError, PluginError
 from fastmcp import FastMCP
 from toolframe_dashboard import DashboardContext, DashboardWidget, render_widget
+from toolframe_database_config import DatabaseSettings
+from toolframe_database_service import create_provider
 from toolframe_plugins import configure_plugins, use_plugin
 from toolframe_runtime import RuntimeGuardMiddleware, load_tools
 
@@ -88,10 +90,12 @@ class PluginIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.temporary.cleanup()
 
     def manager(self):
+        provider = create_provider(DatabaseSettings(sqlite_path=self.root / "data.db"))
+        self.addCleanup(provider.close)
         return configure_plugins(
             app_dir=self.app,
             domains_dir=self.domains,
-            database=object(),
+            database=provider,
             artifacts=object(),
         )
 
@@ -181,7 +185,7 @@ class PluginIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 [item["name"] for item in manager.snapshot()],
                 [
-                    "toolframe.database",
+                    "toolframe.database.sqlite",
                     "toolframe.artifacts",
                     "domain.entry_register",
                 ],

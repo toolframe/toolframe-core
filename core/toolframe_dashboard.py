@@ -186,7 +186,7 @@ _current_context: contextvars.ContextVar[DashboardContext | None] = (
 
 def _configure(
     *,
-    database_path: Path,
+    database_path: Path | None = None,
     workspace: Path,
     logger: logging.Logger,
     runtime: Mapping[str, Any],
@@ -195,6 +195,7 @@ def _configure(
     audit_sink: Any | None = None,
     artifacts: ArtifactStore | None = None,
     plugins: PluginManager | None = None,
+    database: Any | None = None,
 ) -> DashboardContext:
     """Configure the process-global SDK before preflight and HTTP readiness."""
 
@@ -213,7 +214,9 @@ def _configure(
     if not isinstance(frozen_runtime, Mapping):
         raise TypeError("runtime must be a mapping")
     context = DashboardContext(
-        db=DashboardDatabase(database_path, logger=logger, audit_sink=audit_sink),
+        db=database
+        if database is not None
+        else DashboardDatabase(database_path, logger=logger, audit_sink=audit_sink),
         workspace=workspace_path,
         logger=logger,
         widget_id="",

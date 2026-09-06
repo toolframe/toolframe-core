@@ -608,8 +608,16 @@
 
       <section class="meta-grid" aria-label="Database details">
         <div class="meta-card">
-          <span>Database path</span>
+          <span>Database target</span>
           <strong id="database-path">Not available</strong>
+        </div>
+        <div class="meta-card">
+          <span>Database provider</span>
+          <strong id="database-provider">—</strong>
+        </div>
+        <div class="meta-card">
+          <span>Schema revisions</span>
+          <strong id="schema-revisions">—</strong>
         </div>
         <div class="meta-card">
           <span>Tables</span>
@@ -684,6 +692,8 @@
     const status = document.getElementById("status");
     const statusText = document.getElementById("status-text");
     const databasePath = document.getElementById("database-path");
+    const databaseProvider = document.getElementById("database-provider");
+    const schemaRevisions = document.getElementById("schema-revisions");
     const tableCount = document.getElementById("table-count");
     const lastRefreshed = document.getElementById("last-refreshed");
     const pythonVersion = document.getElementById("python-version");
@@ -847,6 +857,10 @@
 
     function renderRuntime(payload) {
       renderPlugins(Array.isArray(payload.plugins) ? payload.plugins : []);
+      databaseProvider.textContent = payload.database?.provider || "Not reported";
+      const applied = Array.isArray(payload.migrations?.applied) ? payload.migrations.applied : [];
+      schemaRevisions.textContent = `${applied.length} applied`;
+      schemaRevisions.title = applied.join(", ");
       pythonVersion.textContent = typeof payload.pythonVersion === "string" ? payload.pythonVersion : "Not reported";
       toolCount.textContent = `${payload.tools.length} tool${payload.tools.length === 1 ? "" : "s"}`;
       dependencyCount.textContent = payload.dependencies.length === 0
@@ -876,6 +890,9 @@
         card.appendChild(makeElement("h3", "", plugin.name));
         card.appendChild(makeElement("p", "", plugin.description));
         card.appendChild(makeElement("p", "", `${plugin.state} · ${plugin.inFlight} in progress`));
+        if (plugin.provides) {
+          card.appendChild(makeElement("div", "tool-source", `Provides: ${plugin.provides}`));
+        }
         if (plugin.requires.length) {
           card.appendChild(makeElement("div", "tool-source", `Requires: ${plugin.requires.join(", ")}`));
         }

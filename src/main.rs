@@ -18,7 +18,7 @@ use tokio::{
     sync::{Mutex, oneshot},
     time,
 };
-use toolframe::{db, development, runtime, tools, uv};
+use toolframe::{development, runtime, tools, uv};
 use tracing::{Event, Subscriber, info, warn};
 use tracing_subscriber::{
     fmt::{FmtContext, FormatEvent, FormatFields, format::Writer},
@@ -228,7 +228,7 @@ struct Cli {
     port_search_span: u16,
 
     /// SQLite database path. Relative overrides are resolved from the current directory.
-    #[arg(long, env = "TOOLFRAME_DB", global = true)]
+    #[arg(long, global = true)]
     database: Option<PathBuf>,
 
     /// Editable app source directory containing dashboard.py and llms.txt.
@@ -425,7 +425,6 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
     );
     let paths = runtime::resolve_paths(
         &executable_root,
-        cli.database,
         cli.app_dir,
         cli.domains_dir,
         cli.workspace_dir,
@@ -445,27 +444,6 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         info!(target: "toolframe::skill", path = %paths.root.join("DOMAIN_MODEL.md").display(), "created master-agent domain model");
     }
 
-    let migration_report =
-        db::migrate_domains(&paths.database, &paths.domains).with_context(|| {
-            format!(
-                "failed to migrate {} from {}",
-                paths.database.display(),
-                paths.domains.display()
-            )
-        })?;
-    console.print(
-        ConsoleCategory::Db,
-        format!(
-            "migrations ready at version {:04}",
-            migration_report.current_version
-        ),
-    );
-    let database = paths.database.canonicalize().with_context(|| {
-        format!(
-            "could not resolve database path {}",
-            paths.database.display()
-        )
-    })?;
     let domains_dir = paths
         .domains
         .canonicalize()
@@ -546,7 +524,6 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         .env("UV_MANAGED_PYTHON", "1")
         .env("UV_CACHE_DIR", runtime_dir.join("cache"))
         .env("UV_PYTHON_INSTALL_DIR", runtime_dir.join("python"))
-        .env("TOOLFRAME_DB", &database)
         .env("TOOLFRAME_APP_DIR", &app_dir)
         .env("TOOLFRAME_DOMAINS_DIR", &domains_dir)
         .env("TOOLFRAME_WORKSPACE", &workspace)
@@ -585,6 +562,7 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
         .env("TOOLFRAME_RESULT_LIMIT_BYTES", cli.result_limit.to_string())
         .env("TOOLFRAME_VERSION", env!("CARGO_PKG_VERSION"));
 
+    configure_database_environment(&mut command, &paths.root, cli.database.as_deref())?;
     let listener_guard = configure_server_listener(&mut command, standard_listener)?;
     configure_child_process(&mut command);
 
@@ -671,9 +649,7 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
 
     announce(Announcement {
         address,
-        database: &database,
         domains_dir: &domains_dir,
-        migrations: migration_report,
         app_dir: &app_dir,
         tool_count: catalog.manifest.tools.len(),
         logs_dir: &logs_dir,
@@ -720,7 +696,6 @@ async fn run_server(cli: Cli, console: ConsoleStyle) -> Result<()> {
 
 struct DevelopmentRuntime {
     paths: runtime::AppPaths,
-    migrations: db::MigrationValidation,
     catalog: tools::ToolCatalog,
     prepared: runtime::PreparedRuntime,
     uv: PathBuf,
@@ -735,13 +710,6 @@ async fn prepare_development_runtime(
 ) -> Result<DevelopmentRuntime> {
     let executable_root = runtime::executable_root()?;
     let paths = resolve_cli_paths(cli, &executable_root)?;
-    let migrations =
-        db::validate_domain_migrations(&paths.database, &paths.domains).with_context(|| {
-            format!(
-                "failed to validate domain migrations in {}",
-                paths.domains.display()
-            )
-        })?;
     let domains_dir = paths
         .domains
         .canonicalize()
@@ -783,7 +751,6 @@ async fn prepare_development_runtime(
     let uv_version = resolved_uv.version;
     Ok(DevelopmentRuntime {
         paths,
-        migrations,
         catalog,
         prepared,
         uv,
@@ -818,22 +785,14 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
             .cloned()
             .unwrap_or_else(|| serde_json::json!([])),
         "paths": {
-            "database": development.paths.database,
+            "database": python["database"]["target"],
             "app": development.paths.app,
             "domains": development.paths.domains,
             "workspace": development.paths.workspace,
             "runtime": development.paths.runtime,
         },
-        "migrations": {
-            "total": development.migrations.total,
-            "currentVersion": format!("{:04}", development.migrations.current_version),
-            "pending": development.migrations.pending,
-            "databaseMode": if development.migrations.database_exists {
-                "filesystem-snapshot"
-            } else {
-                "in-memory"
-            },
-        },
+        "database": python.get("database"),
+        "migrations": python.get("migrations"),
         "tools": python.get("tools").cloned().unwrap_or_else(|| serde_json::json!([])),
         "widgets": python.get("widgets").cloned().unwrap_or_else(|| serde_json::json!([])),
         "plugins": python.get("plugins").cloned().unwrap_or_else(|| serde_json::json!([])),
@@ -851,15 +810,14 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
         CheckFormat::Human => {
             println!("toolframe check passed");
             println!(
-                "  migrations  {} through {:04} ({} pending; validated on {})",
-                development.migrations.total,
-                development.migrations.current_version,
-                development.migrations.pending,
-                if development.migrations.database_exists {
-                    "a read-only snapshot"
-                } else {
-                    "an empty in-memory database"
-                }
+                "  migrations  {} total ({} pending; {})",
+                python["migrations"]["total"],
+                python["migrations"]["pending"]
+                    .as_array()
+                    .map_or(0, Vec::len),
+                python["migrations"]["validationLevel"]
+                    .as_str()
+                    .unwrap_or("unknown")
             );
             println!("  tools       {}", development.catalog.manifest.tools.len());
             println!(
@@ -935,7 +893,6 @@ fn run_scaffold(cli: &Cli, command: &ScaffoldCommand) -> Result<i32> {
 fn resolve_cli_paths(cli: &Cli, executable_root: &Path) -> Result<runtime::AppPaths> {
     runtime::resolve_paths(
         executable_root,
-        cli.database.clone(),
         cli.app_dir.clone(),
         cli.domains_dir.clone(),
         cli.workspace_dir.clone(),
@@ -1001,7 +958,6 @@ async fn run_cli_python(
             "UV_PYTHON_INSTALL_DIR",
             development.runtime_dir.join("python"),
         )
-        .env("TOOLFRAME_DB", &development.paths.database)
         .env("TOOLFRAME_APP_DIR", &development.paths.app)
         .env("TOOLFRAME_DOMAINS_DIR", &development.paths.domains)
         .env("TOOLFRAME_WORKSPACE", &development.workspace)
@@ -1019,6 +975,11 @@ async fn run_cli_python(
         )
         .env("TOOLFRAME_RESULT_LIMIT_BYTES", cli.result_limit.to_string())
         .env("TOOLFRAME_VERSION", env!("CARGO_PKG_VERSION"));
+    configure_database_environment(
+        &mut command,
+        &development.paths.root,
+        cli.database.as_deref(),
+    )?;
     if let Some(tool) = tool {
         command.arg("--tool").arg(tool);
     }
@@ -1049,6 +1010,22 @@ async fn run_cli_python(
     .await
     .context("development command timed out")?
     .context("could not wait for the development Python runner")
+}
+
+fn configure_database_environment(
+    command: &mut Command,
+    executable_root: &Path,
+    cli_database: Option<&Path>,
+) -> Result<()> {
+    // Python owns provider choice, precedence, target validation and diagnostics.
+    command
+        .env("TOOLFRAME_EXECUTABLE_ROOT", executable_root)
+        .env("TOOLFRAME_INVOCATION_CWD", std::env::current_dir()?)
+        .env_remove("TOOLFRAME_CLI_DATABASE");
+    if let Some(path) = cli_database {
+        command.env("TOOLFRAME_CLI_DATABASE", path);
+    }
+    Ok(())
 }
 
 fn format_child_stderr(stderr: &[u8]) -> String {
@@ -1519,9 +1496,7 @@ impl ChildProcessTree {
 
 struct Announcement<'a> {
     address: SocketAddr,
-    database: &'a Path,
     domains_dir: &'a Path,
-    migrations: db::MigrationReport,
     app_dir: &'a Path,
     tool_count: usize,
     logs_dir: &'a Path,
@@ -1533,9 +1508,7 @@ struct Announcement<'a> {
 fn announce(announcement: Announcement<'_>) {
     let Announcement {
         address,
-        database,
         domains_dir,
-        migrations,
         app_dir,
         tool_count,
         logs_dir,
@@ -1570,17 +1543,7 @@ fn announce(announcement: Announcement<'_>) {
     );
     console.print(
         ConsoleCategory::Db,
-        format!("Database   {}", database.display()),
-    );
-    console.print(
-        ConsoleCategory::Db,
-        format!(
-            "Migrations {} (current {:04}; {} applied this start; {} total)",
-            domains_dir.display(),
-            migrations.current_version,
-            migrations.applied_now,
-            migrations.total
-        ),
+        format!("Database and schema ready; details at {local_url}/info"),
     );
     console.print(
         ConsoleCategory::Python,

@@ -45,7 +45,7 @@ fn json_check_failure_is_machine_readable_and_does_not_create_data_db() {
         report["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("migration")
+            .contains("domains")
     );
     assert!(!database.exists());
 }

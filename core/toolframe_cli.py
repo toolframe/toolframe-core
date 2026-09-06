@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,9 @@ from toolframe_artifacts import (
     DEFAULT_MAX_ARTIFACT_BYTES,
     configure_artifact_store,
 )
+from toolframe_database_config import DatabaseSettings
+from toolframe_database_host import database_check
+from toolframe_database_service import create_provider
 from toolframe_db import _configure as _configure_database
 from toolframe_db import get_database
 from toolframe_idempotency import _configure as _configure_idempotency
@@ -65,16 +68,35 @@ def _require_python() -> None:
         )
 
 
-def _configure_tool_support(database: Path, workspace: Path) -> Any:
+def _configure_tool_support(provider, workspace: Path, *, preflight=False) -> Any:
     """Configure startup-loaded tool helpers before importing user tools."""
 
-    _configure_database(database, logger=logging.getLogger("toolframe.database"))
-    _configure_idempotency(database)
+    database = _configure_database(
+        provider=provider, ready=preflight, read_only=preflight
+    )
+    _configure_idempotency(provider=database)
     return configure_artifact_store(
         workspace,
         max_artifact_bytes=DEFAULT_MAX_ARTIFACT_BYTES,
         logger=logging.getLogger("toolframe.artifacts"),
     )
+
+
+@contextmanager
+def _preflight_environment(provider, workspace):
+    values = {"TOOLFRAME_WORKSPACE": os.fspath(workspace)}
+    if provider.dialect == "sqlite":
+        values["TOOLFRAME_DB"] = os.fspath(provider.settings.sqlite_path)
+    previous = {key: os.environ.get(key) for key in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _check(arguments: argparse.Namespace) -> int:
@@ -83,25 +105,34 @@ def _check(arguments: argparse.Namespace) -> int:
     domains_dir = arguments.domains.resolve(strict=True)
     validate_source_architecture(app_dir, domains_dir)
     agent_documents = validate_domain_llms_source(app_dir / "llms.txt", domains_dir)
-    with tempfile.TemporaryDirectory(prefix="toolframe-check-") as temporary:
+    settings = DatabaseSettings.from_runtime(root=app_dir.parent)
+    with (
+        database_check(settings) as (provider, level, mode),
+        tempfile.TemporaryDirectory(prefix="toolframe-check-") as temporary,
+    ):
         temporary_root = Path(temporary)
-        database = temporary_root / "data.db"
         workspace = temporary_root / "workspace"
         workspace.mkdir()
-        os.environ["TOOLFRAME_DB"] = os.fspath(database)
-        os.environ["TOOLFRAME_WORKSPACE"] = os.fspath(workspace)
-        with redirect_stdout(sys.stderr):
-            artifact_store = _configure_tool_support(database, workspace)
-            plugins = configure_plugins(
-                app_dir=app_dir, domains_dir=domains_dir,
-                database=get_database(), artifacts=artifact_store,
+        with redirect_stdout(sys.stderr), _preflight_environment(provider, workspace):
+            artifact_store = _configure_tool_support(
+                provider, workspace, preflight=True
             )
+            plugins = configure_plugins(
+                app_dir=app_dir,
+                domains_dir=domains_dir,
+                database=get_database(),
+                artifacts=artifact_store,
+            )
+            migrations = plugins.migrations.check()
+            if provider.dialect == "sqlite":
+                # Only the disposable filesystem copy receives a trial migration.
+                plugins.migrations.apply()
             tools, details, _ = load_tools(arguments.manifest, plugins)
 
             import toolframe_dashboard as dashboard_sdk
 
             dashboard_sdk._configure(
-                database_path=database,
+                database=get_database(),
                 app_dir=app_dir,
                 domains_dir=domains_dir,
                 workspace=workspace,
@@ -128,6 +159,12 @@ def _check(arguments: argparse.Namespace) -> int:
                 "agentDocuments": agent_documents,
                 "plugins": plugins.snapshot(),
                 "pluginValidation": "definitions-only",
+                "database": settings.public_info(),
+                "migrations": {
+                    **migrations,
+                    "validationLevel": level,
+                    "databaseMode": mode,
+                },
             }
         )
     return 0
@@ -141,26 +178,32 @@ def _invoke(arguments: argparse.Namespace) -> int:
     if not isinstance(payload, dict):
         raise TypeError("tool arguments must be a JSON object")
     with redirect_stdout(sys.stderr):
-        database = Path(os.environ["TOOLFRAME_DB"])
-        artifacts = _configure_tool_support(database, arguments.workspace)
-        plugins = configure_plugins(
-            app_dir=arguments.app.resolve(strict=True),
-            domains_dir=arguments.domains.resolve(strict=True),
-            database=get_database(), artifacts=artifacts,
-        )
-        tools, _, _ = load_tools(arguments.manifest, plugins)
-
-        async def invoke() -> Any:
-            mcp = FastMCP("toolframe-local-invoke", strict_input_validation=True)
-            for tool_object in tools:
-                mcp.add_tool(tool_object)
-            mcp.add_middleware(
-                RuntimeGuardMiddleware(1, arguments.timeout, arguments.result_limit)
+        app_dir = arguments.app.resolve(strict=True)
+        settings = DatabaseSettings.from_runtime(root=app_dir.parent)
+        provider = create_provider(settings)
+        try:
+            artifacts = _configure_tool_support(provider, arguments.workspace)
+            plugins = configure_plugins(
+                app_dir=app_dir,
+                domains_dir=arguments.domains.resolve(strict=True),
+                database=get_database(),
+                artifacts=artifacts,
             )
-            async with plugins.lifespan():
-                return await mcp.call_tool(arguments.tool, payload)
+            tools, _, _ = load_tools(arguments.manifest, plugins)
 
-        result = anyio.run(invoke)
+            async def invoke() -> Any:
+                mcp = FastMCP("toolframe-local-invoke", strict_input_validation=True)
+                for tool_object in tools:
+                    mcp.add_tool(tool_object)
+                mcp.add_middleware(
+                    RuntimeGuardMiddleware(1, arguments.timeout, arguments.result_limit)
+                )
+                async with plugins.lifespan():
+                    return await mcp.call_tool(arguments.tool, payload)
+
+            result = anyio.run(invoke)
+        finally:
+            provider.close()
     _emit(
         {
             "ok": not result.is_error,

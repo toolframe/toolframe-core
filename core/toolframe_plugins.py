@@ -7,10 +7,14 @@ import importlib.util
 import sys
 import threading
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import anyio
 from fastapi_cordis import Plugin, PluginError, PluginManager
+from toolframe_database_service import DATABASE, DatabaseProvider
+from toolframe_migrations import MigrationCoordinator, Schema, discover_domains
 
 _manager: PluginManager | None = None
 _lock = threading.RLock()
@@ -29,10 +33,12 @@ def use_plugin(name: str):
     return get_plugins().lease(name)
 
 
-def _read_catalog(app_dir: Path) -> tuple[list[Plugin], dict[str, tuple[str, ...]]]:
+def _read_catalog(
+    app_dir: Path,
+) -> tuple[list[Plugin], dict[str, tuple[str, ...]], dict[str, Schema]]:
     path = app_dir / "plugins.py"
     if not path.exists() and not path.is_symlink():
-        return [], {}
+        return [], {}, {}
     if not path.is_file() or path.is_symlink():
         raise PluginError(f"Plugin catalog must be a regular, non-symlink file: {path}")
     name = (
@@ -48,6 +54,7 @@ def _read_catalog(app_dir: Path) -> tuple[list[Plugin], dict[str, tuple[str, ...
         exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)  # noqa: S102 - trusted local catalog, like domain modules.
         plugins = getattr(module, "PLUGINS", None)
         bindings = getattr(module, "DOMAIN_PLUGINS", {})
+        schemas = getattr(module, "SCHEMAS", {})
         if not isinstance(plugins, (tuple, list)) or not all(
             isinstance(p, Plugin) for p in plugins
         ):
@@ -69,10 +76,28 @@ def _read_catalog(app_dir: Path) -> tuple[list[Plugin], dict[str, tuple[str, ...
                     "DOMAIN_PLUGINS must map domain names to plugin name sequences"
                 )
             result[domain] = tuple(dependencies)
-        return list(plugins), result
+        if not isinstance(schemas, dict) or not all(
+            isinstance(name, str) and isinstance(schema, Schema)
+            for name, schema in schemas.items()
+        ):
+            raise PluginError("SCHEMAS must map plugin names to Schema declarations")
+        if set(schemas) - {plugin.name for plugin in plugins}:
+            raise PluginError(
+                "SCHEMAS contains a plugin that is not installed in PLUGINS"
+            )
+        return list(plugins), result, schemas
     except BaseException:
         sys.modules.pop(name, None)
         raise
+
+
+class ToolframePlugins(PluginManager):
+    """The lifecycle graph and the schema coordinator owned by this application."""
+
+    def __init__(self, definitions, migrations, migration_state):
+        super().__init__(definitions)
+        self.migrations = migrations
+        self.migration_state = migration_state
 
 
 def configure_plugins(
@@ -84,7 +109,12 @@ def configure_plugins(
     are also exposed as host-owned services in the shared lifecycle graph.
     """
     global _manager
-    plugins, bindings = _read_catalog(app_dir)
+    plugins, bindings, plugin_schemas = _read_catalog(app_dir)
+    provider = getattr(database, "_backend", database)
+    if not isinstance(provider, DatabaseProvider):
+        raise PluginError(
+            "Toolframe requires a database provider implementing DatabaseProvider"
+        )
     for plugin in plugins:
         if plugin.name.startswith(("toolframe.", "domain.")):
             raise PluginError(f"Plugin name is reserved by Toolframe: {plugin.name!r}")
@@ -97,10 +127,34 @@ def configure_plugins(
         raise PluginError(
             f"Unknown domains in DOMAIN_PLUGINS: {sorted(set(bindings) - set(domains))}"
         )
+    domain_schemas, legacy = discover_domains(domains_dir)
+    migrations = MigrationCoordinator(
+        provider, [*domain_schemas, *plugin_schemas.values()], legacy=legacy
+    )
+    migration_state = {}
+
+    async def setup_database(context):
+        context.on_dispose(anyio.to_thread.run_sync, provider.close)
+        report = await anyio.to_thread.run_sync(migrations.apply)
+        migration_state.update(report)
+        activate = getattr(database, "_activate", None)
+        if activate is not None:
+            activate()
+        return database
+
+    plugins = [
+        replace(plugin, requires=(*plugin.requires, DATABASE))
+        if plugin.name in plugin_schemas
+        and DATABASE not in plugin.requires
+        and DATABASE.name not in plugin.requires
+        else plugin
+        for plugin in plugins
+    ]
     definitions = [
         Plugin(
-            "toolframe.database",
-            lambda _: database,
+            f"toolframe.database.{provider.dialect}",
+            setup_database,
+            provides=DATABASE,
             managed=False,
             description="Host-owned database access",
         ),
@@ -116,7 +170,7 @@ def configure_plugins(
                 f"domain.{domain}",
                 lambda _: None,
                 requires=(
-                    "toolframe.database",
+                    DATABASE,
                     "toolframe.artifacts",
                     *bindings.get(domain, ()),
                 ),
@@ -125,7 +179,7 @@ def configure_plugins(
             for domain in domains
         ],
     ]
-    manager = PluginManager(definitions)
+    manager = ToolframePlugins(definitions, migrations, migration_state)
     with _lock:
         _manager = manager
     return manager

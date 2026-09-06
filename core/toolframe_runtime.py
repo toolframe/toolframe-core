@@ -14,7 +14,6 @@ import math
 import os
 import re
 import signal
-import sqlite3
 import stat
 import sys
 import threading
@@ -22,8 +21,7 @@ import time
 import traceback
 import types
 import uuid
-from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from contextlib import ExitStack, asynccontextmanager
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -47,6 +45,9 @@ from toolframe_artifacts import (
     ArtifactError,
     configure_artifact_store,
 )
+from toolframe_database_config import DatabaseSettings
+from toolframe_database_host import database_snapshot as provider_database_snapshot
+from toolframe_database_service import create_provider
 from toolframe_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
 from toolframe_plugins import configure_plugins
 
@@ -1020,8 +1021,13 @@ def _leased_tool(function: Any, domain: str, plugins: PluginManager) -> Any:
                 return function(*args, **kwargs)
         except PluginUnavailable as error:
             raise ToolframeError(
-                "plugin_unavailable", str(error), retryable=True,
-                details={"plugin": error.name, "recoveryHint": "Check /api/plugins and enable the required plugin before retrying."},
+                "plugin_unavailable",
+                str(error),
+                retryable=True,
+                details={
+                    "plugin": error.name,
+                    "recoveryHint": "Check /api/plugins and enable the required plugin before retrying.",
+                },
             ) from error
 
     # Preserve domain-local types even though the wrapper lives in this module.
@@ -1110,7 +1116,9 @@ def load_tools(
                     f"decorated function {function.__name__!r} must match filename stem {expected_name!r}",
                 )
             tool_object = Tool.from_function(
-                _leased_tool(function, domain, plugins) if plugins is not None else function
+                _leased_tool(function, domain, plugins)
+                if plugins is not None
+                else function
             )
             if tool_object.name != expected_name:
                 raise ToolLoadError(
@@ -1168,7 +1176,10 @@ def build_application() -> FastAPI:
     )
     fatal_reporter = FatalShutdownReporter()
     try:
-        return _build_application(audit_sink, fatal_reporter)
+        with ExitStack() as failed_start:
+            app = _build_application(audit_sink, fatal_reporter, failed_start)
+            failed_start.pop_all()
+            return app
     except BaseException as error:
         error_fields = _error_fields(error)
         try:
@@ -1192,7 +1203,9 @@ def build_application() -> FastAPI:
 
 
 def _build_application(
-    audit_sink: StructuredLogs, fatal_shutdown: FatalShutdownReporter
+    audit_sink: StructuredLogs,
+    fatal_shutdown: FatalShutdownReporter,
+    failed_start: ExitStack,
 ) -> FastAPI:
     if sys.version_info[:2] != (3, 14) or sys.version_info.releaselevel != "final":
         raise RuntimeError(
@@ -1200,7 +1213,6 @@ def _build_application(
             f"found {sys.version.split()[0]} ({sys.version_info.releaselevel})"
         )
     manifest_path = _required_path("TOOLFRAME_MANIFEST")
-    database_path = _required_path("TOOLFRAME_DB")
     app_dir = _required_directory("TOOLFRAME_APP_DIR")
     domains_dir = _required_directory("TOOLFRAME_DOMAINS_DIR")
     validate_source_architecture(app_dir, domains_dir)
@@ -1226,11 +1238,13 @@ def _build_application(
     if not ready_token:
         raise RuntimeError("TOOLFRAME_READY_TOKEN is required")
 
-    database_sdk._configure(
-        database_path,
-        logger=logging.getLogger("toolframe.database"),
+    settings = DatabaseSettings.from_runtime(root=app_dir.parent)
+    provider = create_provider(
+        settings, logger=logging.getLogger("toolframe.database"), audit_sink=audit_sink
     )
-    idempotency._configure(database_path, audit_sink=audit_sink)
+    failed_start.callback(provider.close)
+    database = database_sdk._configure(provider=provider, ready=False)
+    idempotency._configure(provider=database, audit_sink=audit_sink)
     artifact_store = configure_artifact_store(
         workspace_path,
         max_artifact_bytes=DEFAULT_MAX_ARTIFACT_BYTES,
@@ -1238,8 +1252,10 @@ def _build_application(
         logger=logging.getLogger("toolframe.artifacts"),
     )
     plugins = configure_plugins(
-        app_dir=app_dir, domains_dir=domains_dir,
-        database=database_sdk.get_database(), artifacts=artifact_store,
+        app_dir=app_dir,
+        domains_dir=domains_dir,
+        database=database,
+        artifacts=artifact_store,
     )
     tools, tool_details, tool_dependencies = load_tools(manifest_path, plugins)
     dependency_summary = _json_string_list(
@@ -1267,11 +1283,12 @@ def _build_application(
         python_version=sys.version.split()[0],
         agent_documents=list(llms_documents),
     )
+    runtime_summary["database"] = settings.public_info()
 
     import toolframe_dashboard as dashboard_sdk
 
     dashboard_sdk._configure(
-        database_path=database_path,
+        database=database,
         app_dir=app_dir,
         domains_dir=domains_dir,
         workspace=workspace_path,
@@ -1426,7 +1443,14 @@ def _build_application(
     @app.get("/api/database")
     async def database_snapshot() -> JSONResponse:
         try:
-            snapshot = await anyio.to_thread.run_sync(_database_snapshot, database_path)
+
+            def preview():
+                with plugins.lease("toolframe.database"):
+                    return provider_database_snapshot(
+                        provider, limit=DATABASE_PREVIEW_ROWS
+                    )
+
+            snapshot = await anyio.to_thread.run_sync(preview)
             return JSONResponse(snapshot)
         except Exception:
             trace_id = uuid.uuid4().hex
@@ -1438,7 +1462,11 @@ def _build_application(
 
     @app.get("/api/runtime")
     async def runtime_snapshot() -> dict[str, Any]:
-        return {**runtime_summary, "plugins": plugins.snapshot()}
+        return {
+            **runtime_summary,
+            "plugins": plugins.snapshot(),
+            "migrations": plugins.migration_state,
+        }
 
     def _current_llms_source() -> tuple[list[str], bytes]:
         current_documents, index_bytes = _validated_domain_llms_source(
@@ -1805,42 +1833,12 @@ def _one_decorated_function(path: Path, module: types.ModuleType) -> Any:
 
 
 def _database_snapshot(path: Path) -> dict[str, Any]:
-    connection = sqlite3.connect(path)
+    """Compatibility helper for standalone callers; serving uses its active provider."""
+    provider = create_provider(DatabaseSettings(sqlite_path=path))
     try:
-        names = [
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_schema "
-                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-            )
-        ]
-        tables = []
-        for name in names:
-            identifier = '"' + name.replace('"', '""') + '"'
-            cursor = connection.execute(
-                f"SELECT * FROM {identifier} LIMIT ?", (DATABASE_PREVIEW_ROWS + 1,)
-            )
-            rows = cursor.fetchall()
-            tables.append(
-                {
-                    "name": name,
-                    "columns": [
-                        description[0] for description in cursor.description or []
-                    ],
-                    "rows": [
-                        [_json_value(value) for value in row]
-                        for row in rows[:DATABASE_PREVIEW_ROWS]
-                    ],
-                    "truncated": len(rows) > DATABASE_PREVIEW_ROWS,
-                }
-            )
-        return {
-            "databasePath": str(path),
-            "generatedAt": datetime.now(UTC).isoformat(),
-            "tables": tables,
-        }
+        return provider_database_snapshot(provider, limit=DATABASE_PREVIEW_ROWS)
     finally:
-        connection.close()
+        provider.close()
 
 
 def _json_value(value: Any) -> Any:

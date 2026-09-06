@@ -6,8 +6,10 @@ or deletes data from the previous target. Keep credentials in the environment,
 not in committed application files. Toolframe does not automatically load `.env`.
 
 `DatabaseSettings.from_env()` is the shared Python configuration boundary.
-Launcher and application integration is being implemented on
-`feature/revamp-dependency-plugin`.
+The launcher passes the original invocation directory and an explicit CLI path
+to Python. `check`, `invoke`, and `serve` all resolve the same settings. Rust never
+opens the database or runs migrations. Tools, plugins, MCP calls, Streamlit, and
+the information page share the selected provider.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -22,7 +24,7 @@ Launcher and application integration is being implemented on
 | `TOOLFRAME_DB_MAX_BYTES` | `10485760` | Positive hard result byte limit |
 
 SQLite path precedence is explicit `--database`, then `TOOLFRAME_SQLITE_PATH`,
-then `TOOLFRAME_DB`, then `<executable root>/data.db`. Explicit relative paths
+then `TOOLFRAME_DB`, then `<executable root>/data/data.db`. Explicit relative paths
 resolve against the original invocation directory. The default resolves against
 the executable root. Empty explicit values fail validation; they do not silently
 fall back. Provider selection is independent of the SQLite path. Selecting
@@ -43,3 +45,17 @@ export TOOLFRAME_DB_POOL_SIZE=5
 For SQLite, leave the provider unset and optionally set
 `TOOLFRAME_SQLITE_PATH=/absolute/path/data.db`. Configuration parsing itself does
 not create files, open connections, or run migrations.
+
+`check` trial-applies migrations to a verified filesystem copy of SQLite, including
+its WAL sidecars; it never opens the original file. PostgreSQL check validates
+history, archived artifacts, SQL policy and the dependency plan with read-only
+connections. It does not trial-execute PostgreSQL DDL or start custom plugins.
+The JSON report states `schema-trial` or `history-and-plan` respectively. Application
+writes through the supported database/idempotency helpers are disabled during
+preflight. Trusted application code must also keep imports free of side effects.
+
+`invoke` and `serve` archive and apply migrations before dependent plugins become
+available. Database calls at import time fail with `database_not_ready`; capture
+the handle at import time, then use it inside tool calls, render functions or
+plugin setup. A migration failure prevents readiness. Disabling a plugin affects
+availability, while its installed schema and data remain in place.
