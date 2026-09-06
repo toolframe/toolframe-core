@@ -19,6 +19,26 @@ names can change while the service contract stays stable. Register cleanup as
 soon as a resource opens. A plugin's background task must stop and join during
 cleanup. Hold leases until the actual work finishes.
 
+The embedded fastapi-cordis 0.2.0 host validates a complete enabled startup graph.
+During runtime, ordinary Stop blocks consumers while retaining their enabled
+intent; restoring dependencies resumes them. Cascade Stop also disables their
+intent. A failed plugin needs explicit Retry after correcting its cause; Enable
+or a config update does not clear failed state. Use `/info` or `/api/plugins` to
+inspect `blockedBy`, generation/config revision and task/lease diagnostics.
+
+Preview complete replacement settings with `POST /api/plugins/<id>/config/plan`.
+Inspect `affected`, `protected` and `canApply`; applying with `PUT .../config`
+revalidates the current graph. Equivalent normalized config does not restart
+services. Do not request, store or expose secret config through snapshots/plans.
+Host database/artifact services stay protected.
+
+Own asynchronous work with `ctx.task` and cleanup with a child `ctx.scope()` /
+`EffectScope`. Tasks must cooperate with cancellation. `EventKey` handlers belong
+to the plugin lifetime; events are local, non-durable and not tenant-isolated.
+They do not replace audit records or an outbox. Runtime `register`/`unregister`
+only changes already available service definitions: it does not install packages,
+add MCP/widget catalogs or discover/apply migrations. Those require host startup.
+
 `DATABASE` from `toolframe_database_service` is the stable database key. The
 selected host plugin is `toolframe.database.sqlite` or
 `toolframe.database.postgresql`. Host services cannot be disabled from management
@@ -79,7 +99,7 @@ Register revision that needs the old table depends on `legacy@0001`.
 
 Package plugins may export a `toolframe_migrations.Schema` with `Revision`
 objects or load one using `read_schema(Path(...))`. Register it in
-`app/plugins.py` as `SCHEMAS = {PLUGIN.name: SCHEMA}` beside `PLUGINS = [PLUGIN]`.
+`app/plugins.py` as `SCHEMAS = {PLUGIN.id: SCHEMA}` beside `PLUGINS = [PLUGIN]`.
 Toolframe adds the database dependency and prepares installed schema targets
 before dependent setup. A disabled but installed plugin still declares its schema.
 
@@ -89,6 +109,9 @@ public business service methods across plugins; a migration that reads another
 owner must list that table in `reads` and depend on its exact owner revision.
 Only owned tables may be mutated. The shared low-level database service is trusted
 application code, not per-plugin SQL authorization or a hostile-code sandbox.
+Put each mutation in a separate top-level statement: nested mutations,
+data-modifying CTEs, SELECT INTO and explicit row locks are unsupported. A read
+declaration never authorizes an indirect write.
 
 Migrations support bounded transactional table/index/view DDL and data SQL.
 Transaction control, PRAGMAs, attached databases, triggers, procedures, concurrent
@@ -100,6 +123,8 @@ applied history. PostgreSQL identity sequence gaps remain possible.
 
 Uninstalling a plugin means removing its definition and schema declaration, then
 restarting. Tables, data, ownership and verifiable archived history remain.
+Partial legacy removal is validated against installed sources plus verified
+applied archives. Missing fresh history or unapplied archives cannot fill gaps.
 Archived pending SQL from an absent plugin does not execute. Reinstall checks
 immutable checksums and target compatibility; older code requires an explicit
 `compatible_heads` declaration before it may run against a newer schema.
@@ -118,3 +143,8 @@ CRUD, transaction rollback, repeated idempotent calls, shutdown/restart, and any
 changed plugin lifecycle or schema compatibility. For target changes, prove the
 old data remains and does not appear automatically in the new target. Record the
 actual provider and validation level; a read-only check is not a PostgreSQL DDL run.
+
+A third-party `DatabaseProvider` implements the public `normalize_error(error,
+operation=...)` hook along with connection/locking operations. Preserve safe
+error codes and retryability without logging raw credentials or exception text;
+the migration coordinator does not rely on private helpers or a provider logger.

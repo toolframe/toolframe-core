@@ -248,6 +248,18 @@
         "An existing real target directory is preserved and unsafe installation path types fail startup.",
         "Check, invoke, and scaffold do not install the skill."
       ]
+    },
+    {
+      "id": "reactive-runtime-recovery-and-history",
+      "assertions": [
+        "Strict check/startup calls manager.validate, while ordinary runtime Stop blocks enabled consumers and restoring dependencies resumes them.",
+        "Cascade Stop disables dependent intent; failed plugins require Retry after correcting the cause rather than Enable.",
+        "Configuration preview reports affected/protected/canApply without config values; Apply revalidates and normalized equivalent values are a no-op.",
+        "Runtime register/unregister does not install packages, extend MCP/widget catalogs, or discover/apply migrations; local events do not replace audit/outbox.",
+        "Nested mutations and SELECT INTO cannot use read declarations to mutate foreign tables.",
+        "Partial legacy removal uses verified applied archives, while fresh gaps and absent pending archives fail.",
+        "Independent providers implement public normalize_error and do not expose raw credentials in errors or logs."
+      ]
     }
   ]
 }
