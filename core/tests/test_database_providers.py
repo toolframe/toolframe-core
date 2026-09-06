@@ -408,3 +408,28 @@ def test_unchanged_entry_domain_uses_either_provider(provider):
         model.update_entry(
             provider, entry_id=identifier, expected_version=1, label="stale", value=5
         )
+
+
+def test_idempotent_reference_tool_uses_current_domain_and_portable_id(
+    provider, monkeypatch
+):
+    import runpy
+
+    from toolframe_idempotency import _configure
+    from toolframe_migrations import MigrationCoordinator, discover_domains
+
+    repository = Path(__file__).resolve().parents[2]
+    monkeypatch.syspath_prepend(str(repository))
+    schemas, legacy = discover_domains(repository / "domains")
+    MigrationCoordinator(provider, schemas, legacy=legacy).apply()
+    _configure(provider=provider)
+    example = runpy.run_path(str(repository / "examples/idempotent_create_entry.py"))
+    create = example["idempotent_create_entry"]
+    first = create("example-key", "Example", 4.5)
+    duplicate = create("example-key", "Example", 4.5)
+    assert first["entry"] == duplicate["entry"]
+    assert isinstance(first["entry"]["id"], int)
+    assert first["replayed"] is False and duplicate["replayed"] is True
+    assert provider.query("SELECT label FROM entry_register_entries")[
+        "label"
+    ].tolist() == ["Example"]
