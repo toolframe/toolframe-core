@@ -24,6 +24,7 @@ import types
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ import toolframe_db as database_sdk
 import toolframe_idempotency as idempotency
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi_cordis import PluginManager, PluginUnavailable, plugin_router
 from fastmcp import FastMCP
 from fastmcp.decorators import get_fastmcp_meta
 from fastmcp.server.middleware import Middleware
@@ -46,6 +48,7 @@ from toolframe_artifacts import (
     configure_artifact_store,
 )
 from toolframe_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
+from toolframe_plugins import configure_plugins
 
 LOGGER = logging.getLogger("toolframe.runtime")
 READY_SENTINEL = "TOOLFRAME_READY"
@@ -1007,8 +1010,28 @@ def error_result(
     )
 
 
+def _leased_tool(function: Any, domain: str, plugins: PluginManager) -> Any:
+    @wraps(function)
+    def invoke(*args: Any, **kwargs: Any) -> Any:
+        try:
+            # Hold inside the actual worker, not the waiting async request: a
+            # timed-out synchronous tool may still be running in its thread.
+            with plugins.lease(f"domain.{domain}"):
+                return function(*args, **kwargs)
+        except PluginUnavailable as error:
+            raise ToolframeError(
+                "plugin_unavailable", str(error), retryable=True,
+                details={"plugin": error.name, "recoveryHint": "Check /api/plugins and enable the required plugin before retrying."},
+            ) from error
+
+    # Preserve domain-local types even though the wrapper lives in this module.
+    invoke.__signature__ = inspect.signature(function, eval_str=True)
+    return invoke
+
+
 def load_tools(
     manifest_path: Path,
+    plugins: PluginManager | None = None,
 ) -> tuple[list[Tool], list[dict[str, Any]], list[str]]:
     manifest = _read_manifest(manifest_path)
     domains_dir = _require_real_directory(
@@ -1086,7 +1109,9 @@ def load_tools(
                     "identity",
                     f"decorated function {function.__name__!r} must match filename stem {expected_name!r}",
                 )
-            tool_object = Tool.from_function(function)
+            tool_object = Tool.from_function(
+                _leased_tool(function, domain, plugins) if plugins is not None else function
+            )
             if tool_object.name != expected_name:
                 raise ToolLoadError(
                     path,
@@ -1212,7 +1237,11 @@ def _build_application(
         audit_sink=audit_sink,
         logger=logging.getLogger("toolframe.artifacts"),
     )
-    tools, tool_details, tool_dependencies = load_tools(manifest_path)
+    plugins = configure_plugins(
+        app_dir=app_dir, domains_dir=domains_dir,
+        database=database_sdk.get_database(), artifacts=artifact_store,
+    )
+    tools, tool_details, tool_dependencies = load_tools(manifest_path, plugins)
     dependency_summary = _json_string_list(
         "TOOLFRAME_DEPENDENCIES_JSON", required=False
     )
@@ -1250,6 +1279,7 @@ def _build_application(
         runtime=runtime_summary,
         audit_sink=audit_sink,
         artifacts=artifact_store,
+        plugins=plugins,
     )
     # Import-safe preflight intentionally does not render the app. Rendering is
     # session-scoped and may have database side effects.
@@ -1318,7 +1348,7 @@ def _build_application(
     async def application_lifespan(application: FastAPI):
         failure: BaseException | None = None
         try:
-            async with combined_lifespan(application):
+            async with plugins.lifespan(), combined_lifespan(application):
                 yield
         except BaseException as error:
             failure = error
@@ -1363,6 +1393,8 @@ def _build_application(
         openapi_url=None,
         lifespan=application_lifespan,
     )
+    app.state.plugin_manager = plugins
+    app.include_router(plugin_router(plugins, prefix="/api/plugins", management=True))
     app.add_middleware(
         LlmsMethodGuardMiddleware,
         audit_sink=audit_sink,
@@ -1406,7 +1438,7 @@ def _build_application(
 
     @app.get("/api/runtime")
     async def runtime_snapshot() -> dict[str, Any]:
-        return runtime_summary
+        return {**runtime_summary, "plugins": plugins.snapshot()}
 
     def _current_llms_source() -> tuple[list[str], bytes]:
         current_documents, index_bytes = _validated_domain_llms_source(

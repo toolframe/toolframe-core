@@ -24,6 +24,7 @@ import time
 import traceback
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType, ModuleType, TracebackType
@@ -31,6 +32,7 @@ from typing import Any, Self
 from urllib.parse import quote
 
 import pandas as pd
+from fastapi_cordis import PluginManager, PluginUnavailable
 from toolframe_architecture import validate_source_architecture
 from toolframe_artifacts import ArtifactStore
 from toolframe_idempotency import (
@@ -246,6 +248,7 @@ class DashboardContext:
     widget_id: str
     runtime: Mapping[str, Any]
     artifacts: ArtifactStore | None = None
+    plugins: PluginManager | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1511,6 +1514,7 @@ def _configure(
     domains_dir: Path,
     audit_sink: Any | None = None,
     artifacts: ArtifactStore | None = None,
+    plugins: PluginManager | None = None,
 ) -> DashboardContext:
     """Configure the process-global SDK before preflight and HTTP readiness."""
 
@@ -1535,6 +1539,7 @@ def _configure(
         widget_id="",
         runtime=frozen_runtime,
         artifacts=artifacts,
+        plugins=plugins,
     )
     with _configuration_lock:
         _configuration = _SdkConfiguration(app_path, domains_path, context)
@@ -1656,7 +1661,17 @@ def render_widget(
     token = _current_context.set(widget_context)
     metadata_token = _dashboard_request_metadata.set(request_metadata)
     try:
-        widget.module.render(widget_context)
+        try:
+            lease = (
+                base_context.plugins.lease(f"domain.{widget.domain}")
+                if base_context.plugins is not None else nullcontext()
+            )
+            with lease:
+                widget.module.render(widget_context)
+        except PluginUnavailable as error:
+            import streamlit as st
+
+            st.info(f"{widget.title} is unavailable while plugin {error.name} is stopped.")
     finally:
         _dashboard_request_metadata.reset(metadata_token)
         _current_context.reset(token)

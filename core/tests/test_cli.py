@@ -6,7 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -208,6 +208,45 @@ class CliRunnerTests(unittest.TestCase):
         self.assertEqual(arguments.app, self.app)
         self.assertEqual(arguments.domains, self.domains)
 
+    def test_check_validates_plugin_definitions_without_starting_connections(self):
+        (self.app / "plugins.py").write_text(
+            'from fastapi_cordis import Plugin\n'
+            'def setup(ctx):\n    raise RuntimeError("must not connect during check")\n'
+            'PLUGINS = [Plugin("external", setup)]\n'
+            'DOMAIN_PLUGINS = {"entry_register": ("external",)}\n'
+        )
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(io.StringIO()):
+            self.assertEqual(cli._check(self.arguments("check")), 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["pluginValidation"], "definitions-only")
+        self.assertIn("external", [plugin["name"] for plugin in report["plugins"]])
+
+    def test_invoke_starts_and_cleans_custom_plugin(self):
+        cleanup = self.root / "plugin-cleaned.txt"
+        (self.app / "plugins.py").write_text(
+            'from pathlib import Path\nfrom fastapi_cordis import Plugin\n'
+            'async def setup(ctx):\n'
+            f'    ctx.on_dispose(Path({str(cleanup)!r}).write_text, "closed")\n'
+            '    return "plugin result"\n'
+            'PLUGINS = [Plugin("custom", setup)]\n'
+            'DOMAIN_PLUGINS = {"entry_register": ("custom",)}\n'
+        )
+        self.replace_tool(
+            'from fastmcp.tools import tool\nfrom toolframe_plugins import use_plugin\n'
+            '@tool\ndef echo() -> str:\n    """Use a managed plugin."""\n'
+            '    with use_plugin("custom") as value:\n        return value\n'
+        )
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, {"TOOLFRAME_DB": str(self.root / "data.db")}),
+            patch("sys.stdin", io.StringIO('{}')),
+            redirect_stdout(output), redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(cli._invoke(self.arguments("invoke", tool="echo")), 0)
+        self.assertIn("plugin result", output.getvalue())
+        self.assertEqual(cleanup.read_text(), "closed")
+
     def test_check_configures_tool_helpers_in_temporary_paths(self):
         self.replace_tool(CONTEXT_TOOL_SOURCE)
         output = io.StringIO()
@@ -270,7 +309,7 @@ class CliRunnerTests(unittest.TestCase):
     def test_invoke_configures_durable_idempotency_before_tool_import(self):
         self.replace_tool(IDEMPOTENT_TOOL_SOURCE)
         database = self.root / "data.db"
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE _toolframe_idempotency (

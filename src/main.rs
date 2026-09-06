@@ -836,6 +836,8 @@ async fn run_check(cli: &Cli, format: CheckFormat) -> Result<i32> {
         },
         "tools": python.get("tools").cloned().unwrap_or_else(|| serde_json::json!([])),
         "widgets": python.get("widgets").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "plugins": python.get("plugins").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "pluginValidation": python.get("pluginValidation"),
         "dependencies": development.prepared.dependencies,
         "startupOnly": true,
         "listenerBound": false,

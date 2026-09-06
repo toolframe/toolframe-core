@@ -40,6 +40,15 @@ def validate_source_architecture(app_dir: Path, domains_dir: Path) -> None:
         domains=domain_names,
         enforce_domain_imports=False,
     )
+    plugin_catalog = app_root / "plugins.py"
+    if plugin_catalog.exists() or plugin_catalog.is_symlink():
+        _validate_python_source(
+            _real_file(plugin_catalog, "app plugin catalog"),
+            current_domain=None,
+            current_module=None,
+            domains=domain_names,
+            enforce_domain_imports=False,
+        )
 
     for domain, root in domain_roots.items():
         sources = [root / "__init__.py"]

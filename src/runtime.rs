@@ -25,6 +25,29 @@ const CORE_ARTIFACTS: &str = include_str!("../core/toolframe_artifacts.py");
 const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/toolframe_dashboard_runner.py");
 const CORE_LOGGING: &str = include_str!("../core/toolframe_logging.py");
 const CORE_CLI: &str = include_str!("../core/toolframe_cli.py");
+const CORE_PLUGINS: &str = include_str!("../core/toolframe_plugins.py");
+const PLUGIN_WHEEL_NAME: &str = "fastapi_cordis-0.1.0-py3-none-any.whl";
+const PLUGIN_WHEEL: &[u8] = include_bytes!("../core/fastapi_cordis-0.1.0-py3-none-any.whl");
+const EMBEDDED_PLUGIN_PACKAGE: &[(&str, &str)] = &[
+    (
+        "__init__.py",
+        include_str!("../core/fastapi_cordis/__init__.py"),
+    ),
+    (
+        "_runtime.py",
+        include_str!("../core/fastapi_cordis/_runtime.py"),
+    ),
+    (
+        "fastapi.py",
+        include_str!("../core/fastapi_cordis/fastapi.py"),
+    ),
+    ("py.typed", include_str!("../core/fastapi_cordis/py.typed")),
+    ("LICENSE", include_str!("../core/fastapi_cordis/LICENSE")),
+    (
+        "UPSTREAM.json",
+        include_str!("../core/fastapi_cordis/UPSTREAM.json"),
+    ),
+];
 const INFO_PAGE: &str = include_str!("../static/index.html");
 const DEFAULT_APP_CONTEXT: &str = include_str!("../APP_CONTEXT.md");
 const DEFAULT_DOMAIN_MODEL: &str = include_str!("../DOMAIN_MODEL.md");
@@ -32,6 +55,7 @@ const EMBEDDED_APP_TREE: &[(&str, &str)] = &[
     ("dashboard.py", include_str!("../app/dashboard.py")),
     ("llms.txt", include_str!("../app/llms.txt")),
     ("pyproject.toml", include_str!("../app/pyproject.toml")),
+    ("plugins.py", include_str!("../app/plugins.py")),
 ];
 const EMBEDDED_DOMAINS_TREE: &[(&str, &str)] = &[
     (
@@ -421,22 +445,26 @@ pub fn prepare_runtime(
     catalog: &ToolCatalog,
     app: &AppManifest,
 ) -> Result<PreparedRuntime> {
-    let core_hash = content_hash(
-        [
-            CORE_SERVER.as_bytes(),
-            CORE_SUPPORT.as_bytes(),
-            CORE_ARCHITECTURE.as_bytes(),
-            CORE_DASHBOARD.as_bytes(),
-            CORE_DATABASE.as_bytes(),
-            CORE_IDEMPOTENCY.as_bytes(),
-            CORE_ARTIFACTS.as_bytes(),
-            CORE_DASHBOARD_RUNNER.as_bytes(),
-            CORE_LOGGING.as_bytes(),
-            CORE_CLI.as_bytes(),
-            INFO_PAGE.as_bytes(),
-        ]
-        .concat(),
-    );
+    let mut core_sources = vec![
+        CORE_SERVER.as_bytes(),
+        CORE_SUPPORT.as_bytes(),
+        CORE_ARCHITECTURE.as_bytes(),
+        CORE_DASHBOARD.as_bytes(),
+        CORE_DATABASE.as_bytes(),
+        CORE_IDEMPOTENCY.as_bytes(),
+        CORE_ARTIFACTS.as_bytes(),
+        CORE_DASHBOARD_RUNNER.as_bytes(),
+        CORE_LOGGING.as_bytes(),
+        CORE_CLI.as_bytes(),
+        CORE_PLUGINS.as_bytes(),
+        PLUGIN_WHEEL,
+        INFO_PAGE.as_bytes(),
+    ];
+    for (name, source) in EMBEDDED_PLUGIN_PACKAGE {
+        core_sources.push(name.as_bytes());
+        core_sources.push(source.as_bytes());
+    }
+    let core_hash = content_hash(core_sources.concat());
     let core_dir = runtime_dir.join("core").join(core_hash);
     let manifests_dir = runtime_dir.join("manifests");
     let environments_dir = runtime_dir.join("environments");
@@ -466,9 +494,30 @@ pub fn prepare_runtime(
     write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
     write_managed(&core_logging, CORE_LOGGING)?;
     write_managed(&cli_runner, CORE_CLI)?;
+    write_managed(&core_dir.join("toolframe_plugins.py"), CORE_PLUGINS)?;
+    let plugin_dir = core_dir.join("fastapi_cordis");
+    fs::create_dir_all(&plugin_dir)
+        .with_context(|| format!("could not create {}", plugin_dir.display()))?;
+    for (name, source) in EMBEDDED_PLUGIN_PACKAGE {
+        write_managed(&plugin_dir.join(name), source)?;
+    }
+    let wheel_path = core_dir.join(PLUGIN_WHEEL_NAME);
+    write_managed(&wheel_path, PLUGIN_WHEEL)?;
     write_managed(&info_page, INFO_PAGE)?;
 
-    let project_toml = runtime_project_toml(catalog, app)?;
+    let mut project_toml = runtime_project_toml(catalog, app)?;
+    // A real distribution lets third-party plugins depend on fastapi-cordis
+    // before PyPI publication. The source path always points inside this runtime.
+    let wheel_source = toml::Value::String(
+        wheel_path
+            .canonicalize()
+            .with_context(|| format!("could not resolve {}", wheel_path.display()))?
+            .to_string_lossy()
+            .into_owned(),
+    );
+    project_toml.push_str(&format!(
+        "\n[tool.uv.sources]\nfastapi-cordis = {{ path = {wheel_source} }}\n"
+    ));
     let dependencies = runtime_dependencies(catalog, app);
     let project = environments_dir.join(content_hash(&project_toml));
     fs::create_dir_all(&project)
@@ -863,8 +912,9 @@ fn write_scaffold_file(path: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
-fn write_managed(path: &Path, content: &str) -> Result<()> {
-    if fs::read(path).is_ok_and(|current| current == content.as_bytes()) {
+fn write_managed(path: &Path, content: impl AsRef<[u8]>) -> Result<()> {
+    let content = content.as_ref();
+    if fs::read(path).is_ok_and(|current| current == content) {
         return Ok(());
     }
 
@@ -1131,6 +1181,32 @@ mod tests {
         assert_eq!(
             fs::read_to_string(core.join("toolframe_artifacts.py")).expect("read artifact support"),
             CORE_ARTIFACTS
+        );
+        assert_eq!(
+            fs::read_to_string(core.join("toolframe_plugins.py")).expect("read plugin support"),
+            CORE_PLUGINS
+        );
+        for (name, expected) in EMBEDDED_PLUGIN_PACKAGE {
+            assert_eq!(
+                fs::read_to_string(core.join("fastapi_cordis").join(name))
+                    .expect("read embedded plugin package"),
+                *expected
+            );
+        }
+        assert_eq!(
+            fs::read(core.join(PLUGIN_WHEEL_NAME)).expect("read embedded plugin wheel"),
+            PLUGIN_WHEEL
+        );
+        let project: toml::Value = toml::from_str(
+            &fs::read_to_string(prepared.project.join("pyproject.toml")).expect("read UV project"),
+        )
+        .expect("valid UV project");
+        let source = project["tool"]["uv"]["sources"]["fastapi-cordis"]["path"]
+            .as_str()
+            .expect("local wheel source");
+        assert_eq!(
+            Path::new(source),
+            core.join(PLUGIN_WHEEL_NAME).canonicalize().unwrap()
         );
     }
 

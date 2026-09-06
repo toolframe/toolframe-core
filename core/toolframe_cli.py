@@ -20,7 +20,9 @@ from toolframe_artifacts import (
     configure_artifact_store,
 )
 from toolframe_db import _configure as _configure_database
+from toolframe_db import get_database
 from toolframe_idempotency import _configure as _configure_idempotency
+from toolframe_plugins import configure_plugins
 from toolframe_runtime import (
     RuntimeGuardMiddleware,
     _pydantic_json,
@@ -90,7 +92,11 @@ def _check(arguments: argparse.Namespace) -> int:
         os.environ["TOOLFRAME_WORKSPACE"] = os.fspath(workspace)
         with redirect_stdout(sys.stderr):
             artifact_store = _configure_tool_support(database, workspace)
-            tools, details, _ = load_tools(arguments.manifest)
+            plugins = configure_plugins(
+                app_dir=app_dir, domains_dir=domains_dir,
+                database=get_database(), artifacts=artifact_store,
+            )
+            tools, details, _ = load_tools(arguments.manifest, plugins)
 
             import toolframe_dashboard as dashboard_sdk
 
@@ -102,6 +108,7 @@ def _check(arguments: argparse.Namespace) -> int:
                 logger=logging.getLogger("toolframe.check"),
                 runtime={"startupOnly": True, "preflight": True},
                 artifacts=artifact_store,
+                plugins=plugins,
             )
             widgets = dashboard_sdk.preflight_app(app_dir, domains_dir)
         _emit(
@@ -119,6 +126,8 @@ def _check(arguments: argparse.Namespace) -> int:
                 ],
                 "loadedToolCount": len(tools),
                 "agentDocuments": agent_documents,
+                "plugins": plugins.snapshot(),
+                "pluginValidation": "definitions-only",
             }
         )
     return 0
@@ -133,8 +142,13 @@ def _invoke(arguments: argparse.Namespace) -> int:
         raise TypeError("tool arguments must be a JSON object")
     with redirect_stdout(sys.stderr):
         database = Path(os.environ["TOOLFRAME_DB"])
-        _configure_tool_support(database, arguments.workspace)
-        tools, _, _ = load_tools(arguments.manifest)
+        artifacts = _configure_tool_support(database, arguments.workspace)
+        plugins = configure_plugins(
+            app_dir=arguments.app.resolve(strict=True),
+            domains_dir=arguments.domains.resolve(strict=True),
+            database=get_database(), artifacts=artifacts,
+        )
+        tools, _, _ = load_tools(arguments.manifest, plugins)
 
         async def invoke() -> Any:
             mcp = FastMCP("toolframe-local-invoke", strict_input_validation=True)
@@ -143,7 +157,8 @@ def _invoke(arguments: argparse.Namespace) -> int:
             mcp.add_middleware(
                 RuntimeGuardMiddleware(1, arguments.timeout, arguments.result_limit)
             )
-            return await mcp.call_tool(arguments.tool, payload)
+            async with plugins.lifespan():
+                return await mcp.call_tool(arguments.tool, payload)
 
         result = anyio.run(invoke)
     _emit(
