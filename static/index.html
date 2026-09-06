@@ -471,6 +471,31 @@
       font-style: italic;
     }
 
+    .plugin-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .plugin-config, .plugin-diagnostics {
+      margin-top: 12px;
+    }
+
+    .plugin-config summary, .plugin-diagnostics summary {
+      cursor: pointer;
+    }
+
+    .plugin-config-input {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #c9d4db;
+      border-radius: 8px;
+      resize: vertical;
+      font: inherit;
+    }
+
     .message {
       display: grid;
       min-height: 190px;
@@ -662,7 +687,7 @@
             <h2 id="plugins-title">Plugins</h2>
           </div>
         </div>
-        <p>Enable or stop tools and widgets together. Changes last until the server restarts.</p>
+        <p>Stop a service to pause its dependents; they resume when it returns. Changes last until the server restarts.</p>
         <p id="plugin-message" role="status" aria-live="polite"></p>
         <div id="plugin-list" aria-live="polite"></div>
       </section>
@@ -891,7 +916,8 @@
         card.appendChild(makeElement("p", "", plugin.description));
         card.appendChild(makeElement("p", "", `${plugin.state} · ${plugin.inFlight} in progress`));
         if (plugin.provides) {
-          card.appendChild(makeElement("div", "tool-source", `Provides: ${plugin.provides}`));
+          const provided = Array.isArray(plugin.provides) ? plugin.provides.join(", ") : plugin.provides;
+          card.appendChild(makeElement("div", "tool-source", `Provides: ${provided}`));
         }
         if (plugin.requires.length) {
           card.appendChild(makeElement("div", "tool-source", `Requires: ${plugin.requires.join(", ")}`));
@@ -899,14 +925,36 @@
         if (plugin.error) {
           card.appendChild(makeElement("p", "", `Last error: ${plugin.error}. Inspect the server log.`));
         }
+        if (plugin.state === "blocked") {
+          card.appendChild(makeElement("p", "", `Waiting for: ${(plugin.blockedBy || []).join(", ")}. Restore these dependencies to resume automatically; failed dependencies need Retry.`));
+        }
+        if (plugin.state === "failed") {
+          card.appendChild(makeElement("p", "", "Correct the cause or configuration, then Retry this service."));
+        }
+        const diagnostics = makeElement("details", "plugin-diagnostics");
+        diagnostics.appendChild(makeElement("summary", "", "Lifecycle details"));
+        diagnostics.appendChild(makeElement("p", "", `Enabled intent: ${plugin.enabled ? "yes" : "no"} · Generation: ${plugin.generation} · Config revision: ${plugin.configRevision}`));
+        diagnostics.appendChild(makeElement("p", "", `Owned tasks: ${plugin.ownedTasks} · Task failures: ${plugin.taskFailures}`));
+        const duration = (value) => Number.isFinite(value) ? `${value.toFixed(1)} ms` : "—";
+        diagnostics.appendChild(makeElement("p", "", `Last setup: ${duration(plugin.lastSetupMs)} · Drain: ${duration(plugin.lastDrainMs)} · Cleanup: ${duration(plugin.lastCleanupMs)}`));
+        card.appendChild(diagnostics);
         if (plugin.managed) {
-          const action = plugin.state === "active" ? "disable" : "enable";
-          const button = makeElement("button", "refresh-button", action === "disable" ? "Stop" : "Enable");
-          button.type = "button";
-          button.setAttribute("aria-label", `${button.textContent} ${plugin.name}`);
-          button.disabled = pluginBusy || ["starting", "draining"].includes(plugin.state);
-          button.addEventListener("click", () => changePlugin(plugin.name, action));
-          card.appendChild(button);
+          const actions = makeElement("div", "plugin-actions");
+          const action = plugin.state === "failed" ? "retry" : plugin.enabled ? "disable" : "enable";
+          const addAction = (action, label) => {
+            const button = makeElement("button", "refresh-button", label);
+            button.type = "button";
+            button.setAttribute("aria-label", `${label} ${plugin.name}`);
+            button.disabled = pluginBusy || ["starting", "draining"].includes(plugin.state);
+            button.addEventListener("click", () => changePlugin(plugin.name, action));
+            actions.appendChild(button);
+          };
+          addAction(action, { retry: "Retry", disable: "Stop", enable: "Enable" }[action]);
+          if (plugin.enabled && plugin.state !== "failed") {
+            addAction("disable?cascade=true", "Stop with dependents");
+          }
+          card.appendChild(actions);
+          card.appendChild(configurationEditor(plugin));
         } else {
           card.appendChild(makeElement("p", "", "Managed by Toolframe"));
         }
@@ -915,18 +963,80 @@
       pluginList.replaceChildren(grid);
     }
 
-    async function changePlugin(name, action) {
+    function configurationEditor(plugin) {
+      const panel = makeElement("details", "plugin-config");
+      panel.appendChild(makeElement("summary", "", "Configure"));
+      panel.appendChild(makeElement("p", "", "Enter the complete replacement settings as JSON. Current values stay private. Preview shows which services would restart."));
+      const editor = makeElement("textarea", "plugin-config-input");
+      editor.setAttribute("aria-label", `Replacement configuration for ${plugin.name}`);
+      editor.setAttribute("autocomplete", "off");
+      editor.spellcheck = false;
+      editor.rows = 4;
+      editor.placeholder = "Enter a JSON object";
+      panel.appendChild(editor);
+      const preview = makeElement("button", "refresh-button", "Preview changes");
+      preview.type = "button";
+      const apply = makeElement("button", "refresh-button", "Apply configuration");
+      apply.type = "button";
+      apply.disabled = true;
+      const report = makeElement("p", "plugin-plan");
+      report.setAttribute("role", "status");
+      let candidate = null;
+      editor.addEventListener("input", () => { candidate = null; apply.disabled = true; report.textContent = "Preview the edited settings before applying."; });
+      preview.addEventListener("click", async () => {
+        if (pluginBusy) return;
+        apply.disabled = true;
+        candidate = null;
+        const submitted = editor.value;
+        let config;
+        try {
+          config = JSON.parse(submitted);
+          if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error();
+        } catch (_) {
+          report.textContent = "Enter a valid JSON object.";
+          return;
+        }
+        preview.disabled = true;
+        try {
+          const plan = await pluginRequest(plugin.name, "config/plan", "POST", config);
+          if (editor.value !== submitted) return;
+          report.textContent = `${plan.changed ? "Settings change." : "No change; no services restart."} Affected: ${plan.affected.join(", ") || "none"}. Protected: ${plan.protected.join(", ") || "none"}. ${plan.canApply ? "Can apply. The server will recheck when you apply." : "Cannot apply in the current state."}`;
+          candidate = config;
+          apply.disabled = !plan.canApply;
+        } catch (error) {
+          report.textContent = error.message || "Configuration preview failed.";
+        } finally {
+          preview.disabled = false;
+        }
+      });
+      apply.addEventListener("click", () => {
+        if (candidate !== null) changePlugin(plugin.name, "config", "PUT", candidate);
+      });
+      const actions = makeElement("div", "plugin-actions");
+      actions.append(preview, apply);
+      panel.append(actions, report);
+      return panel;
+    }
+
+    async function pluginRequest(name, action, method, config) {
+      const response = await fetch(`/api/plugins/${encodeURIComponent(name)}/${action}`, {
+        method,
+        headers: { Accept: "application/json", ...(config === undefined ? {} : { "Content-Type": "application/json" }) },
+        ...(config === undefined ? {} : { body: JSON.stringify(config) })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Plugin change failed. Inspect the server log.");
+      return result;
+    }
+
+    async function changePlugin(name, action, method = "POST", config) {
       if (pluginBusy) return;
       pluginBusy = true;
       pluginList.querySelectorAll("button").forEach((button) => { button.disabled = true; });
-      pluginMessage.textContent = action === "disable" ? `Waiting for ${name} to finish its work…` : `Starting ${name}…`;
+      pluginMessage.textContent = `Applying ${action.split("?")[0]} for ${name}; waiting for any current work…`;
       try {
-        const response = await fetch(`/api/plugins/${encodeURIComponent(name)}/${action}`, {
-          method: "POST", headers: { Accept: "application/json" }
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Plugin change failed. Inspect the server log.");
-        pluginMessage.textContent = `${name} ${action === "disable" ? "stopped" : "enabled"}. Refresh an open dashboard to see the change.`;
+        await pluginRequest(name, action, method, config);
+        pluginMessage.textContent = `${name}: operation completed. Check the current state below; refresh an open dashboard to see the change.`;
       } catch (error) {
         pluginMessage.textContent = error.message || "Plugin change failed.";
       } finally {

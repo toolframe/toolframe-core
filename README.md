@@ -329,7 +329,11 @@ With the managed Python dependencies plus pytest/HTTPX installed, run
 files. Set `TOOLFRAME_TEST_POSTGRES_DSN` to a disposable PostgreSQL server whose
 test role can create/drop databases; each case creates and removes its own database.
 Set `TOOLFRAME_TEST_EXECUTABLE` to the absolute path of a freshly built binary to
-include the isolated real check/invoke/serve/MCP target-switch test. PostgreSQL
+include the isolated real check/invoke/serve/MCP target-switch test. Install
+Playwright in the test environment and set `TOOLFRAME_TEST_BROWSER=1` to also
+exercise `/info` in headless Chrome, including preview/apply, blocked recovery
+and Retry. `TOOLFRAME_TEST_BROWSER_EXECUTABLE` can select another Chromium binary;
+`TOOLFRAME_TEST_BROWSER_ARTIFACTS` selects the screenshot directory. PostgreSQL
 and executable tests are skipped when their explicit test settings are absent.
 
 Run Ruff checks/format validation with `--target-version py311` across `core`,

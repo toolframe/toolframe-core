@@ -16,6 +16,7 @@ import httpx
 import pytest
 from fastmcp import Client
 from test_database_providers import provider as provider  # noqa: PLC0414
+from test_reactive_plugins import CATALOG
 
 
 @pytest.mark.parametrize("provider", ["postgresql"], indirect=True)
@@ -34,6 +35,7 @@ def test_executable_target_switch_and_shared_entry_points(provider, tmp_path):
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
     (tmp_path / "workspace").mkdir()
+    (tmp_path / "app/plugins.py").write_text(CATALOG.replace('"alpha"', '"probe"'))
     probe = tmp_path / "domains/probe"
     for directory in ("tools", "ui", "llms", "model", "migrations"):
         (probe / directory).mkdir(parents=True)
@@ -46,12 +48,14 @@ def test_executable_target_switch_and_shared_entry_points(provider, tmp_path):
 # ///
 from fastmcp.tools import tool
 from toolframe_db import get_database
+from fastapi_cordis import __version__ as cordis_version
+from importlib.metadata import version
 
 @tool
 def probe_save(key: str, value: str) -> dict:
     """Store one test event and replay the result on retry."""
     result = get_database().run_once("probe.save", key, {"value": value}, lambda tx: {"id": tx.insert("probe_events", {"value": value}), "value": value})
-    return {"data": result.value, "replayed": result.replayed}
+    return {"data": result.value, "replayed": result.replayed, "cordisVersion": cordis_version, "distributionVersion": version("fastapi-cordis")}
 ''')
     for dialect, identity in (
         ("sqlite", "INTEGER PRIMARY KEY"),
@@ -141,6 +145,8 @@ def probe_save(key: str, value: str) -> dict:
                 dialect, "invoke", "probe_save", "--json", json.dumps(payload)
             )
             assert first["ok"]
+            assert first["result"][1]["cordisVersion"] == "0.2.0"
+            assert first["result"][1]["distributionVersion"] == "0.2.0"
             assert first["result"][1]["replayed"] is (index == 2)
             duplicate = command(
                 dialect, "invoke", "probe_save", "--json", json.dumps(payload)
@@ -185,6 +191,13 @@ def probe_save(key: str, value: str) -> dict:
                         )
                         assert dsn not in response.text
                         assert (await client.get(url + "/info")).status_code == 200
+                        if (
+                            os.environ.get("TOOLFRAME_TEST_BROWSER") == "1"
+                            and index == 0
+                        ):
+                            from test_plugin_page import exercise_plugin_page
+
+                            await exercise_plugin_page(url, tmp_path)
                         assert (await client.get(url + "/")).status_code == 200
                         preview = (await client.get(url + "/api/database")).json()
                         events = next(
@@ -196,6 +209,29 @@ def probe_save(key: str, value: str) -> dict:
                             len(events["rows"]) == 1 and events["rows"][0][1] == dialect
                         )
                         async with Client(url + "/mcp") as mcp:
+                            assert (await mcp.call_tool("probe_save", payload)).data[
+                                "replayed"
+                            ] is True
+                            assert (
+                                await client.post(
+                                    url + "/api/plugins/formatter/disable"
+                                )
+                            ).status_code == 200
+                            status = {
+                                item["name"]: item
+                                for item in (
+                                    await client.get(url + "/api/plugins")
+                                ).json()["plugins"]
+                            }
+                            assert status["domain.probe"]["state"] == "blocked"
+                            assert status["domain.probe"]["enabled"]
+                            blocked = await mcp.call_tool(
+                                "probe_save", payload, raise_on_error=False
+                            )
+                            assert blocked.is_error
+                            assert (
+                                await client.post(url + "/api/plugins/formatter/enable")
+                            ).status_code == 200
                             assert (await mcp.call_tool("probe_save", payload)).data[
                                 "replayed"
                             ] is True

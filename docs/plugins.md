@@ -64,7 +64,9 @@ plugins at import time; open connections and start workers in setup.
 
 Names beginning with `toolframe.` and `domain.` are reserved. Duplicate names,
 unknown dependencies/domains, dependency cycles, invalid configuration, and
-enabled plugins depending on disabled plugins stop startup.
+enabled plugins depending on disabled plugins stop startup. Toolframe explicitly
+calls `manager.validate()` for strict startup/preflight; the generic runtime alone
+permits incomplete graphs to wait in `blocked` state.
 
 ## Use a service
 
@@ -111,17 +113,32 @@ an operation that stops that same plugin; it will wait for you and time out.
 
 ## Operate the running app
 
-Open `/info` for plugin states, dependencies, in-flight counts and Enable/Stop
-buttons. Stop dependents before their providers. The HTTP interface also supports
-explicit cascades and configuration updates:
+Open `/info` for state, resolved dependencies, in-flight counts, lifecycle timings,
+generation/config revision and owned-task diagnostics. Management actions follow
+the actual state:
+
+| State | Meaning | Recovery |
+| --- | --- | --- |
+| `active` | Accepting work | Stop drains current calls and pauses dependents. |
+| `disabled` | Explicitly switched off | Enable sets the intent to run. |
+| `blocked` | Enabled, waiting for a dependency | Restore `blockedBy` dependencies; consumers resume automatically. |
+| `failed` | Setup or cleanup failed | Correct the cause/configuration, then Retry. Enable does not retry failures. |
+
+Ordinary Stop preserves consumers' enabled intent. **Stop with dependents**
+(`cascade=true`) switches off the whole dependent group; enable providers and
+then those consumers explicitly. Host database/artifact plugins remain protected.
+The HTTP interface also supports configuration previews and updates:
 
 ```sh
 curl http://127.0.0.1:8000/api/plugins
 curl -X POST http://127.0.0.1:8000/api/plugins/domain.entry_register/disable
 curl -X POST http://127.0.0.1:8000/api/plugins/domain.entry_register/enable
+curl -X POST http://127.0.0.1:8000/api/plugins/formatter/config/plan \
+  -H 'Content-Type: application/json' -d '{"prefix":"Summary"}'
 curl -X PUT http://127.0.0.1:8000/api/plugins/formatter/config \
   -H 'Content-Type: application/json' -d '{"prefix":"Summary"}'
 curl -X POST 'http://127.0.0.1:8000/api/plugins/formatter/disable?cascade=true'
+curl -X POST http://127.0.0.1:8000/api/plugins/formatter/retry
 ```
 
 These endpoints use Toolframe's existing trusted-LAN access and host/origin
@@ -129,11 +146,18 @@ checks. Responses omit configuration values and service objects. Changes apply
 to the running process only. Put durable defaults in `app/plugins.py`; a restart
 loads those defaults again. After a cascade, enable providers before dependents.
 
-Configuration is validated before interrupting work. A valid update drains and
-restarts the affected active dependency graph. If new setup fails, that graph
-stays unavailable with the attempted configuration retained; fix it and enable
-providers before dependents. Other plugins continue running. External side
-effects are not rolled back.
+Configuration replaces the complete settings object. The `/info` editor starts
+blank and never fetches existing values. Preview validates input and reports
+`changed`, `affected`, `protected`, `canApply`, `managerRunning`, `generation` and
+`configRevision`; it runs no setup or cleanup. Preview is advisory: Apply validates
+again and recomputes affected/protected services under the runtime mutation lock.
+A normalized equivalent configuration is a no-op, preserving generations and
+revision counters. Changed configuration drains/restarts active dependents; a
+protected participant prevents application. If setup fails, its attempted config
+remains and consumers become blocked. Correct the configuration, then Retry the
+failed plugin; a config update alone does not clear failed state. External side
+effects are not rolled back. Snapshots/plans omit configuration and service values;
+`provides` can be a string or list, and `requires` contains resolved plugin IDs.
 
 Stopping waits up to 30 seconds for tracked work. If work remains, the operation
 fails with HTTP 409, restores availability, and keeps resources open. A failed
@@ -156,13 +180,37 @@ Source files, installed packages, migrations, routes, and MCP schemas remain
 startup-loaded. This release does not hot-reload Python modules, dynamically run
 pip, coordinate multiple workers, isolate plugins, or provide a marketplace.
 
+`manager.register()` and `unregister()` update the trusted service graph at runtime.
+They do not install packages, load new MCP tools/widgets, or discover/apply schemas.
+Use the host's package/catalog/schema startup workflow when adding those features.
+
+## Owned resources and local events
+
+`ctx.scope()` returns a child `EffectScope`; `ctx.task(coroutine)` starts work owned
+by the plugin lifetime. Tasks are cancelled and joined before resource cleanup.
+Register cleanup immediately with `ctx.on_dispose`, `ctx.effect`, `enter_context`
+or `enter_async_context`. Child resource scopes can close independently; they are
+different from service resolution scopes. Cancellation must remain cooperative:
+the drain timeout bounds leased calls, not arbitrary setup or cleanup callbacks.
+
+`EventKey(name, payload_type)` identifies a typed local event. `ctx.on` owns a
+handler and removes it during cleanup. `await manager.emit` waits for handlers
+and their service leases. Event names belong to the manager, not to a tenant;
+events are process-local and non-durable, with no replay for stopped handlers.
+Keep audit records/outbox delivery in durable storage. The
+[executable resource/event example](../examples/plugins/reactive_effects.py)
+demonstrates these primitives without adding background jobs to the product.
+
 ## Attach a plugin's schema
 
-`app/plugins.py` may export `SCHEMAS = {"your.concrete_plugin": schema}` alongside
+`app/plugins.py` may export `SCHEMAS = {PLUGIN.id: schema}` alongside
 `PLUGINS`. Each value is a `toolframe_migrations.Schema`, or the result of
 `read_schema(Path(...))`. The named plugin must be installed in `PLUGINS`.
 Toolframe automatically adds its database service dependency. Domain schemas in
 `domains/<owner>/migrations/schema.json` are discovered without this mapping.
+For a scoped definition, the ID is `scope/name`; use that ID for schema mappings,
+domain bindings and management URLs (URL-encode it). This is service resolution,
+not tenant isolation or a dynamically loaded domain.
 
 Schema targets describe installed code, including a plugin configured with
 `enabled=False`; disabling changes service availability, not the installed schema
