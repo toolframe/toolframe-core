@@ -586,7 +586,7 @@
       </div>
       <div class="topbar-actions">
         <a class="dashboard-link" href="/">Open Streamlit dashboard</a>
-        <button class="refresh-button" id="refresh-button" type="button" aria-controls="table-preview tool-list">
+        <button class="refresh-button" id="refresh-button" type="button" aria-controls="table-preview tool-list plugin-list">
           Refresh preview
         </button>
       </div>
@@ -647,6 +647,18 @@
         <div id="tool-list" aria-live="polite"></div>
       </section>
 
+      <section class="tool-section" aria-labelledby="plugins-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Live services</p>
+            <h2 id="plugins-title">Plugins</h2>
+          </div>
+        </div>
+        <p>Enable or stop tools and widgets together. Changes last until the server restarts.</p>
+        <p id="plugin-message" role="status" aria-live="polite"></p>
+        <div id="plugin-list" aria-live="polite"></div>
+      </section>
+
       <section aria-labelledby="preview-title">
         <div class="section-heading">
           <div>
@@ -662,7 +674,7 @@
       </section>
     </main>
 
-    <footer>Preview data comes from <code>/api/database</code> and the immutable startup catalog from <code>/api/runtime</code>.</footer>
+    <footer>Data and runtime details come from <code>/api/database</code> and <code>/api/runtime</code>. Plugin controls use <code>/api/plugins</code>.</footer>
   </div>
 
   <script>
@@ -679,6 +691,9 @@
     const dependencyCount = document.getElementById("dependency-count");
     const toolList = document.getElementById("tool-list");
     const tablePreview = document.getElementById("table-preview");
+    const pluginList = document.getElementById("plugin-list");
+    const pluginMessage = document.getElementById("plugin-message");
+    let pluginBusy = false;
     let activeRequest = 0;
 
     function makeElement(tagName, className, text) {
@@ -831,6 +846,7 @@
     }
 
     function renderRuntime(payload) {
+      renderPlugins(Array.isArray(payload.plugins) ? payload.plugins : []);
       pythonVersion.textContent = typeof payload.pythonVersion === "string" ? payload.pythonVersion : "Not reported";
       toolCount.textContent = `${payload.tools.length} tool${payload.tools.length === 1 ? "" : "s"}`;
       dependencyCount.textContent = payload.dependencies.length === 0
@@ -851,6 +867,55 @@
         grid.appendChild(card);
       });
       toolList.replaceChildren(grid);
+    }
+
+    function renderPlugins(plugins) {
+      const grid = makeElement("div", "tool-grid");
+      plugins.forEach((plugin) => {
+        const card = makeElement("article", "tool-card");
+        card.appendChild(makeElement("h3", "", plugin.name));
+        card.appendChild(makeElement("p", "", plugin.description));
+        card.appendChild(makeElement("p", "", `${plugin.state} · ${plugin.inFlight} in progress`));
+        if (plugin.requires.length) {
+          card.appendChild(makeElement("div", "tool-source", `Requires: ${plugin.requires.join(", ")}`));
+        }
+        if (plugin.error) {
+          card.appendChild(makeElement("p", "", `Last error: ${plugin.error}. Inspect the server log.`));
+        }
+        if (plugin.managed) {
+          const action = plugin.state === "active" ? "disable" : "enable";
+          const button = makeElement("button", "refresh-button", action === "disable" ? "Stop" : "Enable");
+          button.type = "button";
+          button.setAttribute("aria-label", `${button.textContent} ${plugin.name}`);
+          button.disabled = pluginBusy || ["starting", "draining"].includes(plugin.state);
+          button.addEventListener("click", () => changePlugin(plugin.name, action));
+          card.appendChild(button);
+        } else {
+          card.appendChild(makeElement("p", "", "Managed by Toolframe"));
+        }
+        grid.appendChild(card);
+      });
+      pluginList.replaceChildren(grid);
+    }
+
+    async function changePlugin(name, action) {
+      if (pluginBusy) return;
+      pluginBusy = true;
+      pluginList.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+      pluginMessage.textContent = action === "disable" ? `Waiting for ${name} to finish its work…` : `Starting ${name}…`;
+      try {
+        const response = await fetch(`/api/plugins/${encodeURIComponent(name)}/${action}`, {
+          method: "POST", headers: { Accept: "application/json" }
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Plugin change failed. Inspect the server log.");
+        pluginMessage.textContent = `${name} ${action === "disable" ? "stopped" : "enabled"}. Refresh an open dashboard to see the change.`;
+      } catch (error) {
+        pluginMessage.textContent = error.message || "Plugin change failed.";
+      } finally {
+        pluginBusy = false;
+        await loadDashboard();
+      }
     }
 
     async function loadDashboard() {
@@ -893,6 +958,7 @@
         dependencyCount.textContent = "—";
         tablePreview.replaceChildren(setMessage("error", "!", "Couldn’t load the database", "Check that the server is running, then use Refresh to try again."));
         toolList.replaceChildren(setMessage("error", "!", "Couldn’t load the startup catalog", "Inspect the server log and retry the preview."));
+        pluginList.replaceChildren(setMessage("error", "!", "Couldn’t load plugins", "Refresh to read the current plugin states."));
         tablePreview.setAttribute("aria-busy", "false");
         setStatus("error", "Load failed");
       } finally {
