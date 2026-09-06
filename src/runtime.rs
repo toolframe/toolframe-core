@@ -23,6 +23,10 @@ const CORE_DATABASE: &str = include_str!("../core/toolframe_db.py");
 const CORE_DATABASE_BACKEND: &str = include_str!("../core/toolframe_database.py");
 const DATABASE_MODULES: &[(&str, &str)] = &[
     (
+        "toolframe_migration_scaffold.py",
+        include_str!("../core/toolframe_migration_scaffold.py"),
+    ),
+    (
         "toolframe_database_host.py",
         include_str!("../core/toolframe_database_host.py"),
     ),

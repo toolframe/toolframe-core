@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
-use crate::{db, domains, runtime, tools};
+use crate::{domains, runtime, tools};
 
 const DOMAIN_FILES: &[(&str, &str)] = &[
     (
@@ -65,15 +65,6 @@ pub fn scaffold_widget(domains_root: &Path, domain: &str, name: &str) -> Result<
         "\"\"\"{title} dashboard widget.\"\"\"\n\nimport streamlit as st\nfrom toolframe_dashboard import DashboardContext\n\nTITLE = {title:?}\n\n\ndef render(context: DashboardContext) -> None:\n    \"\"\"Render the {title} widget.\"\"\"\n    st.subheader(TITLE)\n    st.caption(f\"Workspace: {{context.workspace}}\")\n"
     );
     create_source_file(&selected.ui.join(format!("{name}.py")), &content)
-}
-
-pub fn scaffold_migration(domains_root: &Path, domain: &str, description: &str) -> Result<PathBuf> {
-    let selected = select_domain(domains_root, domain)?;
-    let filename = db::next_domain_migration_filename(domains_root, description)?;
-    let content = format!(
-        "-- {filename}\n-- Add migration SQL for the {domain} domain before starting toolframe.\n"
-    );
-    create_source_file(&selected.migrations.join(filename), &content)
 }
 
 fn select_domain(domains_root: &Path, name: &str) -> Result<domains::DomainLayout> {
@@ -143,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn scaffolds_domain_tool_widget_and_global_migration_without_overwriting() {
+    fn scaffolds_domain_tool_and_widget_without_overwriting() {
         let directory = tempfile::tempdir().expect("create temp directory");
         let domains_root = directory.path().join("domains");
         fs::create_dir(&domains_root).expect("create domains root");
@@ -162,8 +153,6 @@ mod tests {
             .expect("scaffold tool");
         let widget = scaffold_widget(&domains_root, "daily_reporting", "summary_card")
             .expect("scaffold widget");
-        let migration = scaffold_migration(&domains_root, "daily_reporting", "add_summary")
-            .expect("scaffold migration");
 
         assert!(
             fs::read_to_string(tool)
@@ -175,7 +164,6 @@ mod tests {
                 .unwrap()
                 .contains("TITLE = \"Summary Card\"")
         );
-        assert_eq!(migration.file_name().unwrap(), "0001_add_summary.sql");
         assert!(
             scaffold_tool(&domains_root, "daily_reporting", "daily_reporting_summary").is_err()
         );

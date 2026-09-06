@@ -25,6 +25,7 @@ from toolframe_database_service import create_provider
 from toolframe_db import _configure as _configure_database
 from toolframe_db import get_database
 from toolframe_idempotency import _configure as _configure_idempotency
+from toolframe_migration_scaffold import scaffold_migration
 from toolframe_plugins import configure_plugins
 from toolframe_runtime import (
     RuntimeGuardMiddleware,
@@ -36,7 +37,7 @@ from toolframe_runtime import (
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("check", "invoke"))
+    parser.add_argument("mode", choices=("check", "invoke", "scaffold-migration"))
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--domains", type=Path, required=True)
@@ -216,6 +217,15 @@ def _invoke(arguments: argparse.Namespace) -> int:
 
 def main() -> int:
     arguments = _parser().parse_args()
+    if arguments.mode == "scaffold-migration":
+        _require_python()
+        options = json.load(sys.stdin)
+        _emit(
+            scaffold_migration(
+                arguments.domains, options["domain"], options["description"]
+            )
+        )
+        return 0
     return _check(arguments) if arguments.mode == "check" else _invoke(arguments)
 
 

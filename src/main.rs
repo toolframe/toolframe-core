@@ -346,7 +346,7 @@ enum CliCommand {
 enum ScaffoldCommand {
     /// Create a complete business domain.
     Domain { domain: String },
-    /// Create the next globally numbered SQL migration in one domain.
+    /// Create a namespaced migration draft with SQLite and PostgreSQL variants.
     Migration { domain: String, description: String },
     /// Create a PEP 723 FastMCP tool module in one domain.
     Tool { domain: String, name: String },
@@ -398,7 +398,7 @@ async fn run(cli: Cli, console: ConsoleStyle) -> Result<i32> {
         None | Some(CliCommand::Serve) => run_server(cli, console).await.map(|()| 0),
         Some(CliCommand::Check { format }) => run_check(&cli, *format).await,
         Some(CliCommand::Invoke { tool, json }) => run_invoke(&cli, tool, json).await,
-        Some(CliCommand::Scaffold { command }) => run_scaffold(&cli, command),
+        Some(CliCommand::Scaffold { command }) => run_scaffold(&cli, command).await,
     }
 }
 
@@ -870,15 +870,40 @@ async fn run_invoke(cli: &Cli, tool: &str, arguments: &str) -> Result<i32> {
     }
 }
 
-fn run_scaffold(cli: &Cli, command: &ScaffoldCommand) -> Result<i32> {
+async fn run_scaffold(cli: &Cli, command: &ScaffoldCommand) -> Result<i32> {
+    if let ScaffoldCommand::Migration {
+        domain,
+        description,
+    } = command
+    {
+        let development = prepare_development_runtime(cli, false).await?;
+        let options = serde_json::to_vec(&serde_json::json!({
+            "domain": domain, "description": description,
+        }))?;
+        let output = run_cli_python(
+            cli,
+            &development,
+            "scaffold-migration",
+            None,
+            Some(&options),
+        )
+        .await?;
+        forward_child_stderr(&output.stderr)?;
+        if !output.status.success() {
+            bail!(
+                "Migration scaffold failed: {}",
+                String::from_utf8_lossy(&output.stdout).trim()
+            );
+        }
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(0);
+    }
     let executable_root = runtime::executable_root()?;
     let paths = resolve_cli_paths(cli, &executable_root)?;
     let destination = match command {
         ScaffoldCommand::Domain { domain } => development::scaffold_domain(&paths.domains, domain)?,
-        ScaffoldCommand::Migration {
-            domain,
-            description,
-        } => development::scaffold_migration(&paths.domains, domain, description)?,
+        ScaffoldCommand::Migration { .. } => unreachable!("handled by Python"),
         ScaffoldCommand::Tool { domain, name } => {
             development::scaffold_tool(&paths.domains, domain, name)?
         }

@@ -6,8 +6,29 @@ permission to another owner's schema. A migration dependency such as
 `entry_register@2` identifies an exact schema revision. Cross-plugin business
 operations should normally call the owning plugin's public service methods.
 
-The coordinator API is implemented in `toolframe_migrations`. Wiring it into all
-launcher and plugin startup paths is the next implementation step on this branch.
+The coordinator in `toolframe_migrations` runs during the host database plugin's
+setup, before dependent plugins, MCP calls and Streamlit become available. `check`
+uses the same planner; its provider-specific validation limits are documented in
+[database configuration](database-configuration.md).
+
+## Scaffold a domain revision
+
+```sh
+toolframe scaffold migration inventory create_items
+```
+
+This requires an existing `inventory` domain. It appends an owner-local revision
+to `domains/inventory/migrations/schema.json` and creates separate SQLite and
+PostgreSQL SQL drafts. Complete both SQL files and the revision's `tables` list,
+then run `toolframe check`. An unfinished draft intentionally fails validation.
+The previous schema target becomes an explicit dependency; extending an existing
+legacy domain depends on its last preserved legacy revision. Existing SQL bytes
+and legacy numbering never change. Only Python chooses revision identifiers.
+
+Scaffolding uses an exclusive `.scaffold.lock` and atomically replaces the JSON
+manifest. Concurrent scaffolds fail without overwriting another writer. After a
+process crash, inspect draft files and the manifest before removing a stale lock.
+This authoring command does not connect to either database.
 
 ## Declare immutable revisions
 
