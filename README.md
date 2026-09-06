@@ -38,8 +38,8 @@ Startup is intentionally fail-closed:
    widget. Domain import boundaries are checked before tool import.
 8. Import every public tool, materialize every MCP schema, then import and
    validate every public widget.
-9. Enter the server lifespans and report readiness only after the complete
-   catalog and dashboard preflight succeed.
+9. Start the validated plugin dependency graph, enter the server lifespans and
+   report readiness only after plugins, catalog and dashboard preflight succeed.
 
 Any broken public migration, dependency, tool, widget, domain API, or required
 app file stops startup. Toolframe never serves a partial tool catalog or skips a
@@ -50,6 +50,13 @@ master development agent can fix the source.
 path without binding a port or applying pending migrations to the configured
 database. Migration validation uses isolated state; trusted Python imports can
 still have import-time side effects.
+
+Toolframe embeds `fastapi-cordis` for dynamic service lifecycles and domain
+availability. Open `/info` to enable/stop plugins, or use `/api/plugins` for
+configuration and dependency-aware operations. MCP tools and widgets share the
+same manager. See [Plugin development and operations](docs/plugins.md) for the
+`app/plugins.py` contract, service access and deployment behavior. Source/schema
+changes still require a restart; runtime configuration changes last until restart.
 
 ## Start and inspect
 
@@ -285,3 +292,8 @@ Create distributable binaries with `make package` for the current host or
 `make release` for the supported macOS targets. The launcher embeds the default
 app/domain scaffold, managed Python runtime modules, information page, and
 production business-app skill.
+
+After changing the sibling `../fastapi-cordis` package, run
+`python3 scripts/sync-fastapi-cordis.py` before building. The checked-in embedded
+copy makes normal builds and deployed binaries independent of the sibling path.
+Use `--check` to verify that copy against its source.
