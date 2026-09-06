@@ -38,6 +38,10 @@ const EMBEDDED_PLUGIN_PACKAGE: &[(&str, &str)] = &[
         include_str!("../core/fastapi_cordis/_runtime.py"),
     ),
     (
+        "_services.py",
+        include_str!("../core/fastapi_cordis/_services.py"),
+    ),
+    (
         "fastapi.py",
         include_str!("../core/fastapi_cordis/fastapi.py"),
     ),

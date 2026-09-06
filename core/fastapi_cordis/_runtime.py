@@ -10,11 +10,20 @@ import math
 import re
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar, overload
 
 from pydantic import BaseModel
+
+from ._services import ServiceKey
+
+T = TypeVar("T")
 
 
 class PluginError(RuntimeError):
@@ -49,12 +58,13 @@ class Plugin:
 
     name: str
     setup: Callable[[PluginContext], Any]
-    requires: tuple[str, ...] = ()
+    requires: tuple[str | ServiceKey[Any], ...] = ()
     config: Mapping[str, Any] = field(default_factory=dict)
     config_model: type[BaseModel] | None = None
     enabled: bool = True
     managed: bool = True
     description: str = ""
+    provides: ServiceKey[Any] | None = None
 
 
 class PluginContext:
@@ -64,19 +74,26 @@ class PluginContext:
         self.name = plugin.name
         self.config = config
         self._manager = manager
-        self._requires = plugin.requires
+        self._requires = manager._dependencies[plugin.name]
         self._stack = stack
         self._accepting = True
 
-    def require(self, name: str) -> Any:
+    @overload
+    def require(self, name: ServiceKey[T]) -> T: ...
+
+    @overload
+    def require(self, name: str) -> Any: ...
+
+    def require(self, name: str | ServiceKey[Any]) -> Any:
         """Get a declared dependency during setup, owned until this plugin stops."""
         if not self._accepting:
             raise PluginError(
                 "require() is only available during setup; use a lease at call time"
             )
-        if name not in self._requires:
+        provider = self._manager._resolve_service(name)
+        if provider not in self._requires:
             raise DependencyError(f"{self.name!r} did not declare dependency {name!r}")
-        return self._manager._values[name]
+        return self._manager._values[provider]
 
     def on_dispose(
         self, callback: Callable[..., Any], *args: Any, **kwargs: Any
@@ -130,17 +147,52 @@ class PluginManager:
             if not callable(plugin.setup):
                 raise TypeError(f"Plugin {plugin.name!r} setup must be callable")
             if not isinstance(plugin.requires, tuple) or not all(
-                isinstance(n, str) for n in plugin.requires
+                isinstance(n, (str, ServiceKey)) for n in plugin.requires
             ):
-                raise TypeError("Plugin requires must be a tuple of names")
+                raise TypeError(
+                    "Plugin requires must be a tuple of names or ServiceKeys"
+                )
+            if plugin.provides is not None and not isinstance(
+                plugin.provides, ServiceKey
+            ):
+                raise TypeError("Plugin provides must be a ServiceKey")
             self._plugins[plugin.name] = plugin
             self._configs[plugin.name] = self._validate_config(plugin, plugin.config)
             self._enabled[plugin.name] = plugin.enabled
             self._state[plugin.name] = "registered" if plugin.enabled else "disabled"
             self._errors[plugin.name] = None
             self._counts[plugin.name] = 0
+        self._providers = {name: name for name in self._plugins}
+        for plugin in self._plugins.values():
+            if plugin.provides is not None:
+                name = plugin.provides.name
+                if name in self._providers and self._providers[name] != plugin.name:
+                    raise DependencyError(f"Multiple providers for service {name!r}")
+                self._providers[name] = plugin.name
+        self._dependencies: dict[str, tuple[str, ...]] = {}
+        for plugin in self._plugins.values():
+            try:
+                self._dependencies[plugin.name] = tuple(
+                    dict.fromkeys(self._resolve_service(ref) for ref in plugin.requires)
+                )
+            except UnknownPlugin as error:
+                raise DependencyError(
+                    f"Missing dependency for plugin {plugin.name!r}: {error}"
+                ) from error
         self._order = self._topological_order()
         self.validate()
+
+    def _resolve_service(self, reference: str | ServiceKey[Any]) -> str:
+        name = reference.name if isinstance(reference, ServiceKey) else reference
+        if name not in self._providers:
+            raise UnknownPlugin(name)
+        provider = self._providers[name]
+        if (
+            isinstance(reference, ServiceKey)
+            and self._plugins[provider].provides != reference
+        ):
+            raise DependencyError(f"Incompatible contract for service {name!r}")
+        return provider
 
     def _topological_order(self) -> tuple[str, ...]:
         ordered: list[str] = []
@@ -155,7 +207,7 @@ class PluginManager:
             if name in visited:
                 return
             visiting.add(name)
-            for dependency in self._plugins[name].requires:
+            for dependency in self._dependencies[name]:
                 visit(dependency)
             visiting.remove(name)
             visited.add(name)
@@ -187,7 +239,7 @@ class PluginManager:
         """Validate enabled dependencies without executing plugin setup."""
         for name in self._order:
             if self._enabled[name]:
-                for dependency in self._plugins[name].requires:
+                for dependency in self._dependencies[name]:
                     if not self._enabled[dependency]:
                         raise DependencyError(
                             f"Enabled plugin {name!r} requires disabled {dependency!r}"
@@ -200,7 +252,12 @@ class PluginManager:
                 {
                     "name": name,
                     "description": self._plugins[name].description,
-                    "requires": list(self._plugins[name].requires),
+                    "requires": list(self._dependencies[name]),
+                    "provides": (
+                        self._plugins[name].provides.name
+                        if self._plugins[name].provides is not None
+                        else name
+                    ),
                     "enabled": self._enabled[name],
                     "managed": self._plugins[name].managed,
                     "state": self._state[name],
@@ -213,13 +270,20 @@ class PluginManager:
     def _ancestors(self, name: str) -> set[str]:
         self._lookup(name)
         names = {name}
-        for dependency in self._plugins[name].requires:
+        for dependency in self._dependencies[name]:
             names.update(self._ancestors(dependency))
         return names
 
+    @overload
+    def lease(self, name: ServiceKey[T]) -> AbstractContextManager[T]: ...
+
+    @overload
+    def lease(self, name: str) -> AbstractContextManager[Any]: ...
+
     @contextmanager
-    def lease(self, name: str) -> Iterator[Any]:
+    def lease(self, name: str | ServiceKey[Any]) -> Iterator[Any]:
         """Hold a service and all its dependencies until actual work has finished."""
+        name = self._resolve_service(name)
         names = self._ancestors(name)
         with self._guard:
             if any(self._state[item] != "active" for item in names):
@@ -274,7 +338,7 @@ class PluginManager:
         plugin = self._plugins[name]
         if any(
             self._state[dep] not in {"active", "starting"} or dep not in self._values
-            for dep in plugin.requires
+            for dep in self._dependencies[name]
         ):
             raise DependencyError(f"Dependencies of {name!r} are not active")
         stack = AsyncExitStack()
@@ -289,6 +353,8 @@ class PluginManager:
             value = plugin.setup(context)
             if inspect.isawaitable(value):
                 value = await value
+            if plugin.provides is not None:
+                plugin.provides.validate(value)
         except BaseException as error:
             context._accepting = False
             with self._guard:

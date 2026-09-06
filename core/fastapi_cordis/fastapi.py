@@ -13,9 +13,10 @@ from ._runtime import (
     PluginUnavailable,
     UnknownPlugin,
 )
+from ._services import ServiceKey
 
 
-def service(name: str):
+def service(name: str | ServiceKey[Any]):
     """Use with Depends(service('name')); holds the lease through response work."""
 
     async def dependency(request: Request):

@@ -7,15 +7,16 @@
   "requiresPython": ">=3.11",
   "sha256": {
     "LICENSE": "8a4644e3cd33be65c73b812041d908136bba3e7d77c13cf64e34727e2c865f5d",
-    "__init__.py": "1ca748b83683a1f5a32c0091400725b4e8ce806e27cd099db3262acaa4d591ee",
-    "_runtime.py": "a3ffc5f3ff0d5c332e7b43bdd0d0a24a405f759069944f6138fc2463ec9e819f",
-    "fastapi.py": "e713e0c79f7b6229f2a6364cceefbcd4cc8446e4e9be22b02e8193bdaf46d78e",
+    "__init__.py": "8e92201a45054a839d9b8d7b4db04b5d96ff6bfc1ca045f630859c949200a987",
+    "_runtime.py": "19239c3483ada76c2be605e994b733d32d53f3db4006de5a67458f759aa8c1e7",
+    "_services.py": "69c8349c53a79a69690b2b83b94a6861f945714c92b1638675c43b072a1307c4",
+    "fastapi.py": "df715ed2aac555231230db256bb631187f89cb1885a6acc044cb9ddf60c40a31",
     "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "source": "fastapi-cordis/src/fastapi_cordis",
   "version": "0.1.0",
   "wheel": {
     "filename": "fastapi_cordis-0.1.0-py3-none-any.whl",
-    "sha256": "9ce665f1924d0abc64ac0b05a18c9b7aa971b6fb7f49fa8bfa1cf1c52dc32970"
+    "sha256": "cbd679c542b672e3f2af9da3a38a9236cc95a02564867c1f08cbf540d2dfb102"
   }
 }

@@ -23,7 +23,7 @@ def main() -> None:
     source = args.source.resolve(strict=True)
     metadata = tomllib.loads((source / "pyproject.toml").read_text())
     package = source / "src" / "fastapi_cordis"
-    expected = {"__init__.py", "_runtime.py", "fastapi.py", "py.typed"}
+    expected = {"__init__.py", "_runtime.py", "_services.py", "fastapi.py", "py.typed"}
     actual = {file.name for file in package.iterdir() if file.is_file()}
     if actual != expected:
         raise SystemExit(
