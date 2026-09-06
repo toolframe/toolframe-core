@@ -1,0 +1,21 @@
+{
+  "dependencies": [
+    "fastapi>=0.135.2,<1",
+    "pydantic>=2.12.5,<3"
+  ],
+  "name": "fastapi-cordis",
+  "requiresPython": ">=3.11",
+  "sha256": {
+    "LICENSE": "8a4644e3cd33be65c73b812041d908136bba3e7d77c13cf64e34727e2c865f5d",
+    "__init__.py": "1ca748b83683a1f5a32c0091400725b4e8ce806e27cd099db3262acaa4d591ee",
+    "_runtime.py": "a3ffc5f3ff0d5c332e7b43bdd0d0a24a405f759069944f6138fc2463ec9e819f",
+    "fastapi.py": "e713e0c79f7b6229f2a6364cceefbcd4cc8446e4e9be22b02e8193bdaf46d78e",
+    "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "source": "fastapi-cordis/src/fastapi_cordis",
+  "version": "0.1.0",
+  "wheel": {
+    "filename": "fastapi_cordis-0.1.0-py3-none-any.whl",
+    "sha256": "9ce665f1924d0abc64ac0b05a18c9b7aa971b6fb7f49fa8bfa1cf1c52dc32970"
+  }
+}
