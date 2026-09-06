@@ -16,6 +16,7 @@ if str(CORE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(CORE_DIRECTORY))
 
 import toolframe_dashboard as dashboard
+import toolframe_database as database_backend
 import toolframe_idempotency as idempotency
 
 
@@ -274,7 +275,7 @@ class DashboardDatabaseTests(unittest.TestCase):
         lock.execute("BEGIN EXCLUSIVE")
         try:
             with (
-                patch.object(dashboard, "_BUSY_TIMEOUT_MS", 1),
+                patch.object(database_backend, "_BUSY_TIMEOUT_MS", 1),
                 self.assertRaises(dashboard.DashboardDatabaseError) as busy,
             ):
                 self.database.execute(
@@ -286,7 +287,7 @@ class DashboardDatabaseTests(unittest.TestCase):
         self.assertEqual(busy.exception.code, "database_busy")
         self.assertTrue(busy.exception.retryable)
 
-        transient_io = dashboard._classify_error(
+        transient_io = database_backend._classify_error(
             sqlite3.OperationalError("disk I/O error"),
             None,
         )
@@ -294,7 +295,7 @@ class DashboardDatabaseTests(unittest.TestCase):
         self.assertTrue(transient_io.retryable)
         self.assertNotIn(str(self.database_path), transient_io.message)
 
-        full_disk = dashboard._classify_error(
+        full_disk = database_backend._classify_error(
             sqlite3.OperationalError("database or disk is full"),
             None,
         )

@@ -20,6 +20,7 @@ const CORE_SUPPORT: &str = include_str!("../core/toolframe_runtime.py");
 const CORE_ARCHITECTURE: &str = include_str!("../core/toolframe_architecture.py");
 const CORE_DASHBOARD: &str = include_str!("../core/toolframe_dashboard.py");
 const CORE_DATABASE: &str = include_str!("../core/toolframe_db.py");
+const CORE_DATABASE_BACKEND: &str = include_str!("../core/toolframe_database.py");
 const CORE_IDEMPOTENCY: &str = include_str!("../core/toolframe_idempotency.py");
 const CORE_ARTIFACTS: &str = include_str!("../core/toolframe_artifacts.py");
 const CORE_DASHBOARD_RUNNER: &str = include_str!("../core/toolframe_dashboard_runner.py");
@@ -455,6 +456,7 @@ pub fn prepare_runtime(
         CORE_ARCHITECTURE.as_bytes(),
         CORE_DASHBOARD.as_bytes(),
         CORE_DATABASE.as_bytes(),
+        CORE_DATABASE_BACKEND.as_bytes(),
         CORE_IDEMPOTENCY.as_bytes(),
         CORE_ARTIFACTS.as_bytes(),
         CORE_DASHBOARD_RUNNER.as_bytes(),
@@ -493,6 +495,10 @@ pub fn prepare_runtime(
     write_managed(&core_architecture, CORE_ARCHITECTURE)?;
     write_managed(&dashboard_sdk, CORE_DASHBOARD)?;
     write_managed(&database_sdk, CORE_DATABASE)?;
+    write_managed(
+        &core_dir.join("toolframe_database.py"),
+        CORE_DATABASE_BACKEND,
+    )?;
     write_managed(&idempotency, CORE_IDEMPOTENCY)?;
     write_managed(&artifacts_sdk, CORE_ARTIFACTS)?;
     write_managed(&dashboard_runner, CORE_DASHBOARD_RUNNER)?;
@@ -1185,6 +1191,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(core.join("toolframe_artifacts.py")).expect("read artifact support"),
             CORE_ARTIFACTS
+        );
+        assert_eq!(
+            fs::read_to_string(core.join("toolframe_database.py")).expect("read database backend"),
+            CORE_DATABASE_BACKEND
         );
         assert_eq!(
             fs::read_to_string(core.join("toolframe_plugins.py")).expect("read plugin support"),

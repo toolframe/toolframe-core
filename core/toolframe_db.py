@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from toolframe_dashboard import (
+from toolframe_database import (
     DashboardDatabase,
     DashboardDatabaseError,
     ExecuteResult,
