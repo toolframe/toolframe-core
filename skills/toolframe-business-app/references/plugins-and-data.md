@@ -1,15 +1,42 @@
 # Plugins and durable data
 
-Read this when adding a service, schema revision, database provider, or changing a
-database target. Finish when the dependency graph, schema plan, business calls,
-and preservation tests agree with the installed executable.
+Read this for Develop work, including business changes without a migration, and
+for service recovery, schema/provider changes or target selection. Finish when
+the service contract, connected dependency graph, schema plan, MCP/UI calls and
+preservation tests agree with the installed executable.
 
 ## Service boundary
 
-Keep ordinary business rules in the domain model. Use a plugin when work owns a
-shared client, service, worker or resource with setup and cleanup. Define plugins
-in `app/plugins.py` or import installed packages listed in `app/pyproject.toml`.
-The process loads these definitions once; changed source or packages need restart.
+Use a complete business capability as the default plugin development unit. Keep
+its ordinary rules, entities and persistence in the owning domain's model, behind
+one meaningful service interface. Extend that plugin for small changes. An external
+client/resource may be its own supporting plugin when it has an independent lifetime.
+Local business code can stay in the app; packaging is needed only for actual reuse
+or distribution. Changed models, contracts, catalogs or packages require restart.
+
+| Identity | Stockroom example | Responsibility |
+| --- | --- | --- |
+| Business owner | `stockroom` domain/schema owner | Model, tables, migrations, tools, UI and peer guide |
+| Public ServiceKey | `STOCKROOM`, named `stockroom.service` | Typed business interface consumed through requires/leases |
+| Concrete Plugin ID | `stockroom.local` | Creates the service, validates settings and owns any resources |
+| Host domain gate | `domain.stockroom` | Automatically guards discovered tools/widgets |
+
+Define the business plugin in `domains/stockroom/model/plugin.py`. The composition
+catalog imports that definition and connects the existing gate:
+
+```python
+from domains.stockroom.model.plugin import PLUGIN
+
+PLUGINS = [PLUGIN]
+DOMAIN_PLUGINS = {"stockroom": (PLUGIN.id,)}
+```
+
+Its local `migrations/schema.json` is discovered once by the host. The plugin
+requires `DATABASE`; use `SCHEMAS` instead for a packaged schema without that local
+manifest. Add genuine extra dependencies to `app/pyproject.toml`, restart to install
+them, and register imported definitions in the catalog. Runtime registration does
+not perform installation. The [copyable Stockroom app](../assets/business-plugin/README.md)
+has no extra dependency and exercises the fastapi-cordis wheel supplied by Toolframe.
 
 For interchangeable implementations, define a runtime-checkable Protocol and a
 `fastapi_cordis.ServiceKey`. Providers declare `provides=KEY`; consumers declare
@@ -18,6 +45,14 @@ For interchangeable implementations, define a runtime-checkable Protocol and a
 names can change while the service contract stays stable. Register cleanup as
 soon as a resource opens. A plugin's background task must stop and join during
 cleanup. Hold leases until the actual work finishes.
+
+MCP uses `with use_plugin(KEY)` and widgets use `with context.plugins.lease(KEY)`
+around the same business service. Across domains, import the key/Protocol only
+from the provider's root `__init__.py`, declare it in a retained consumer's
+`requires`, then obtain it with `ctx.require`. A public convenience function must
+own its call-time lease. Importing model functions directly bypasses this boundary.
+Toolframe prepares the domain namespace before catalog loading and retains model,
+contract and service class identities; widget reruns reload UI modules only.
 
 The embedded fastapi-cordis 0.2.0 host validates a complete enabled startup graph.
 During runtime, ordinary Stop blocks consumers while retaining their enabled
@@ -63,8 +98,9 @@ Changing provider or target requires restart. It never copies, moves or deletes
 old rows. Returning to the previous target recovers its own data and receipts.
 If data must move, design and authorize a separate migration/transfer task.
 
-Use `toolframe_db.get_database()` or the leased `DATABASE` service inside runtime
-work. Capturing the handle at import time is allowed; executing queries at import
+Business service setup injects `DATABASE`; its implementation owns database work.
+The compatible `toolframe_db.get_database()` helper remains available for existing
+trusted runtime code. Capturing the handle at import time is allowed; executing queries at import
 time is rejected before schema readiness. Named `:parameter` bindings and
 `insert(table, values)` provide portable inputs and returned integer IDs.
 PostgreSQL does not provide SQLite's `lastrowid`; IDs can have gaps.

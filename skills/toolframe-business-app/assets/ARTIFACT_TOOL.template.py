@@ -2,11 +2,12 @@
 # requires-python = ">=3.14,<3.15"
 # dependencies = []
 # ///
-"""Private reference for a narrow domain-owned artifact tool.
+"""Private reference for artifact operations behind a business service.
 
-Copy only when the business needs this outcome. Put the result in
-``domains/<domain>/tools/``, then rename both file and function to one globally
-unique, intent-shaped business name before publishing it.
+Use these operations inside the owning business service, with its injected
+ARTIFACTS dependency. Publish an intent-shaped tool that leases that service,
+as the business-plugin asset demonstrates. This file only shows artifact API
+mechanics; do not publish the example unchanged.
 """
 
 from datetime import UTC, datetime

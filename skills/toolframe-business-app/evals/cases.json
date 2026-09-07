@@ -202,9 +202,30 @@
       "prompt": "Add an inventory service plugin with a schema, disable it, uninstall it, then install older code.",
       "assertions": [
         "Keeps service key, concrete provider ID and schema owner distinct.",
-        "Maps installed plugin to SCHEMAS and declares revision dependencies separately from requires.",
+        "Uses either automatic local domain schema discovery or SCHEMAS for an installed packaged schema, without duplicating an owner; declares revision dependencies separately from requires.",
         "Preserves data and verifiable history on disable/uninstall; never runs absent pending scripts.",
         "Rejects an incompatible old target unless compatible_heads explicitly permits it."
+      ]
+    },
+    {
+      "id": "e2e-business-capability-plugin",
+      "prompt": "Build a stockroom delivery workflow in this Toolframe app, shared by an MCP command and a human form. Another business domain needs its stock summary. Show stop/recovery and preserve delivered stock.",
+      "assertions": [
+        "Reads plugins-and-data before choosing the capability boundary, including when there is no schema change.",
+        "Uses one meaningful business service Plugin with a public ServiceKey/Protocol, runtime requires and settings; retains model and schema ownership in the business domain.",
+        "Registers the definition in app/plugins.py and connects automatic domain.<name> with DOMAIN_PLUGINS; does not duplicate the host gate or create a plugin per entity/function.",
+        "MCP and UI lease the same business service; cross-domain callers import only its root public contract and declare runtime dependencies or hold a call-time lease.",
+        "Proves startup schema readiness, business validation, idempotent mutation, MCP/UI results, blocked automatic recovery, cascade intent and data preservation.",
+        "Keeps local capabilities in the app unless actual reuse/distribution warrants packaging; installing dependencies and catalog/schema discovery remain startup work."
+      ]
+    },
+    {
+      "id": "e2e-extend-existing-capability",
+      "prompt": "The existing stockroom plugin already owns delivery recording. Change its maximum allowed quantity and improve the form's validation message; no new workflow or external service is needed.",
+      "assertions": [
+        "Extends the existing business service/configuration and its shared error presentation rather than creating another plugin per function or field.",
+        "Keeps domain ownership, existing public contract, catalog binding and leases coherent; does not require a new package repository or PyPI release.",
+        "Tests the changed boundary through MCP and UI, preserves recorded deliveries and applied schema, and restarts for model/catalog source changes."
       ]
     }
   ],
@@ -224,7 +245,7 @@
       "assertions": [
         "Every public migration, dependency, domain API, model source, tool, and widget is validated before readiness.",
         "Public tool names are globally unique and filename/function/tool identity matches.",
-        "Deep cross-domain imports fail while same-domain internals and explicit root public functions pass.",
+        "Deep cross-domain imports fail while same-domain internals and explicit root service keys/contracts or lease-owning business functions pass.",
         "A broken public tool or widget aborts startup and is never omitted from a partial catalog.",
         "app/dashboard.py is compiled but its composition strategy is not restricted."
       ]
@@ -259,6 +280,15 @@
         "Nested mutations and SELECT INTO cannot use read declarations to mutate foreign tables.",
         "Partial legacy removal uses verified applied archives, while fresh gaps and absent pending archives fail.",
         "Independent providers implement public normalize_error and do not expose raw credentials in errors or logs."
+      ]
+    },
+    {
+      "id": "export-skill-without-overwrite",
+      "assertions": [
+        "The new packaged executable exports exact production skill bytes into a fresh requested directory, excluding evals, without starting a server or installing Python.",
+        "An existing directory, file or symlink is rejected without changing its contents.",
+        "Normal serve still installs once and preserves an existing edited skill; replacing a binary does not silently upgrade that copy.",
+        "Guidance exports to a fresh location then compares/merges personal changes explicitly."
       ]
     }
   ]

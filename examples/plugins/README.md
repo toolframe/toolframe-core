@@ -1,4 +1,13 @@
-# Business plugin with an owned schema
+# Plugin examples
+
+For a complete new business capability, start with the
+[Stockroom app template](../../skills/toolframe-business-app/assets/business-plugin/README.md).
+It is bundled with the development skill and can also be obtained using
+`toolframe export-skill <new-directory>`. It connects a domain-owned typed service
+to a catalog, automatic domain gate, SQLite/PostgreSQL schema, MCP tools and human
+form. The examples below focus on individual runtime mechanisms.
+
+## Business service with an owned schema
 
 Run `python examples/plugins/run.py` from the Toolframe checkout using its Python
 3.14 development environment. The script creates a disposable SQLite database,
@@ -11,8 +20,7 @@ re-enabling the service keeps the data. It cleans up its temporary directory.
 - `inventory.local`: this concrete service implementation.
 - `inventory`: the stable schema owner for `inventory_items`.
 
-In an installed application, make this example module importable (normally by
-packaging it as a dependency in `app/pyproject.toml`) and declare:
+In an installed application, make this example module importable and declare:
 
 ```python
 from inventory_plugin import PLUGIN, SCHEMA
@@ -21,6 +29,11 @@ PLUGINS = [PLUGIN]
 SCHEMAS = {PLUGIN.id: SCHEMA}
 DOMAIN_PLUGINS = {"entry_register": (PLUGIN.id,)}
 ```
+
+A separately distributed module goes in `app/pyproject.toml` dependencies.
+Local business capabilities can remain inside their owning domain, as Stockroom
+does; they do not require a package release. Local domain schema discovery also
+does not need the explicit `SCHEMAS` mapping used by this standalone example.
 
 Call `manager.lease(INVENTORY)` or `use_plugin(INVENTORY)` in business tools.
 Callers use `add_item()` rather than reaching into the other plugin's SQL tables.

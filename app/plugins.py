@@ -1,7 +1,8 @@
 """Optional plugin catalog. Loaded once per process, before serving requests.
 
-Add Python package dependencies to app/pyproject.toml and restart after source
-changes. Define Plugin objects here or import them from installed packages.
+Keep business Plugin definitions with their owning domain's model; import and
+bind them here. Supporting plugins may be defined here or in installed packages.
+Add extra Python dependencies to app/pyproject.toml and restart after source changes.
 See docs/plugins.md for setup, cleanup, configuration and service access.
 """
 

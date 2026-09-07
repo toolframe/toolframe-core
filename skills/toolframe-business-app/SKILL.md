@@ -32,7 +32,7 @@ Work only in this layout:
 ```text
 APP_CONTEXT.md
 DOMAIN_MODEL.md
-app/{dashboard.py,llms.txt,pyproject.toml}
+app/{dashboard.py,llms.txt,pyproject.toml,plugins.py}
 domains/<business_domain>/
   __init__.py
   llms/
@@ -44,13 +44,16 @@ domains/<business_domain>/
 
 - Do not recreate legacy root `dashboard/`, `tools/`, `migrations/`, or `llms/`
   trees and do not create a default `shared/` package.
+- Develop a complete business capability as one meaningful service plugin within
+  its owning domain. Keep entities, validation and ordinary functions in `model/`;
+  a small edit extends that capability rather than creating another plugin.
+  Local capabilities can stay in the app; separate packages are a distribution choice.
 - Keep one cohesive business capability in one domain. Use lower snake case for
   domain, tool, widget, and migration-description names.
-- Domain code may import its own internals. Cross-domain code may import only
-  explicit high-level business functions from the other domain's root
-  `__init__.py`, using `from domains.<domain> import <business_function>`, and
-  only when the dependency is genuinely needed. Deep cross-domain imports are
-  invalid.
+- Domain code may import its own internals. Across domains, import only explicit
+  business service keys/contracts or lease-owning business functions from the
+  provider's root `__init__.py`. Declare `requires` for services retained by a
+  plugin and hold a lease for call-time access. Deep model/storage imports are invalid.
 - `app/dashboard.py` is the unrestricted application composition root. The
   default registry is convenient, not mandatory.
 - Preserve user data and the exact bytes of applied migrations. Domain-owned
@@ -108,7 +111,9 @@ redesign. A peer connection request does not authorize adding tools.
 ## 3. Model before code
 
 For Develop, read
-[development-handbook.md](references/development-handbook.md). Reconcile
+[development-handbook.md](references/development-handbook.md) and
+[plugins-and-data.md](references/plugins-and-data.md), including when no schema
+change is needed. Reconcile
 `APP_CONTEXT.md` with the app-context asset and `DOMAIN_MODEL.md` with the
 domain-model asset. Keep the owner's terms, entities, invariants, states,
 actors, source ownership, and error meaning explicit.
@@ -124,20 +129,30 @@ language, invariants, and lifecycle form a real bounded business capability:
 ./toolframe scaffold domain <business_domain>
 ```
 
-## 4. Implement one vertical loop
+## 4. Connect one business plugin end to end
 
 Build in this order:
 
-1. Add an owner-scoped schema revision if durable state must change. Read
-   [plugins-and-data.md](references/plugins-and-data.md) for provider selection,
-   service dependencies, SQL variants, legacy preservation and lifecycle checks.
-2. Put business rules and persistence operations in that domain's `model/`.
-3. Add the smallest intent-shaped MCP command or bounded query in `tools/`.
-4. Add or update the human decision surface in `ui/` and compose it from
-   `app/dashboard.py` as needed.
-5. Update `app/llms.txt` only when its public reading path changes; update the
-   relevant linked domain document when the peer contract changes.
-6. Reconcile both private master-agent documents and tests in the same change.
+1. Define the domain's business service contract and stable `ServiceKey`. Record
+   its concrete Plugin ID, schema owner and required services. Finish when the
+   interface expresses the owner's complete business intent.
+2. Implement that service in `model/`, keeping authoritative rules and storage
+   there. Define one plugin entry, normally `model/plugin.py`, with `provides`,
+   `requires`, validated settings and owned-resource setup/cleanup as needed.
+3. Add an owner-scoped schema revision if needed; require `DATABASE` so host
+   migrations complete before business setup. Keep revision dependencies separate.
+4. Add needed packages to `app/pyproject.toml`, register the definition in
+   `app/plugins.py`, and bind the domain with `DOMAIN_PLUGINS`. The host already
+   creates `domain.<name>`; connect that gate to the business plugin instead of
+   defining a duplicate or disconnected empty plugin.
+5. Make narrow MCP tools and widgets lease the same business service. Keep the
+   domain's tools, UI and peer guide together; test their common business outcome.
+6. Reconcile private handoff docs and peer-facing changes. Finish the slice only
+   after startup, stop/blocked/recovery and retained-data checks pass.
+
+Follow the copyable [Stockroom example](assets/business-plugin/README.md) for the
+full assembly. Scaffolds create source skeletons; the developer completes and
+registers the real business service before calling the capability finished.
 
 Use the domain-aware scaffolds:
 
@@ -152,10 +167,10 @@ Business queries answer one bounded workflow question. Hide SQL, invariants,
 events, version/lease checks, idempotency, and transaction details behind that
 small interface.
 
-Use `toolframe_db.get_database()` instead of opening database drivers in public tools,
-`toolframe_idempotency.run_once()` for replay-safe mutations,
-`toolframe_artifacts.get_artifact_store()` for large durable outputs, and
-`toolframe_runtime.ToolframeError` for structured tool failures.
+Inject the host `DATABASE` service into persistence-owning business plugins and
+keep replay-safe mutations in its `run_once()` transaction. Public tools lease
+business services and use `ToolframeError` for structured failures; widgets use
+the same service and the core error card. See plugins-and-data for host helpers.
 
 ## 5. Keep document audiences separate
 
@@ -179,13 +194,14 @@ behavior must go through the master development agent.
 
 At minimum:
 
-1. Run focused domain, migration, tool, UI, and error-path tests.
+1. Run focused model, plugin, migration, MCP/UI and error-path tests.
 2. Run `./toolframe check --format json` and require `ok: true`.
 3. Start the real server and confirm it reaches readiness with every domain,
    migration, tool, widget, dependency, and linked LLMS document intact.
 4. Invoke representative tools against migrated state, including replay,
    stale-input, and error behavior when applicable.
-5. Complete the human path in the dashboard.
+5. Complete the human path through the same service. Stop its concrete plugin,
+   verify tools/widgets are blocked, restore it, and prove data/receipts remain.
 6. Give a peer the tested LAN `/llms.txt`, have it register same-origin `/mcp`
    through its client, and prove the connection by listing actual tools.
 7. Complete one end-to-end business outcome with its durable evidence visible.
@@ -201,8 +217,8 @@ business behavior, migration/data effect, published tool names, dashboard
 actions, peer guide URL, verification evidence, restart requirements, known
 limits, and the next human action.
 
-Finish Develop work only when `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, migrations,
-models, tools, UI, linked peer docs, and tests tell one coherent story. Finish a
+Finish Develop work only when `APP_CONTEXT.md`, `DOMAIN_MODEL.md`, catalog/bindings,
+service contracts, models/schema, tools, UI, peer docs and tests agree. Finish a
 Doctor repair only after the cause and requested fix are verified. Finish a
 Connect task only after actual tool listing proves MCP registration.
 
@@ -210,6 +226,8 @@ Connect task only after actual tool listing proves MCP registration.
 
 - Read [development-handbook.md](references/development-handbook.md) for any
   source or document change.
+- Read [plugins-and-data.md](references/plugins-and-data.md) for Develop work,
+  service recovery/configuration, schema/provider changes or target selection.
 - Read [operations-handbook.md](references/operations-handbook.md) for startup,
   LAN connection, backup, Doctor, failure, limits, or FAQ.
 - Read [job-domain-model.md](references/job-domain-model.md) only for owned Job

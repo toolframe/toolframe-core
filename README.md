@@ -62,6 +62,12 @@ same manager. See [Plugin development and operations](docs/plugins.md) for the
 `app/plugins.py` contract, service access and deployment behavior. Source/schema
 changes still require a restart; runtime configuration changes last until restart.
 
+New complete business capabilities normally expose one domain-owned service
+plugin, shared by their MCP tools and widgets. The bundled skill includes a
+[Stockroom app template](skills/toolframe-business-app/assets/business-plugin/README.md)
+with catalog registration, typed contract, schema and both entrances. Local
+capabilities do not need a separate package release.
+
 ## Start and inspect
 
 ```sh

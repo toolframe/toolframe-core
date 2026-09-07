@@ -15,7 +15,9 @@ in code and documentation.
 - Agent entrance: `<MCP tools and `/mcp` connection>`
 - Data source and database: `<selected provider/target and any external read-only references>`
 - Owning source domain(s): `<domains/<business_domain>>`
-- Cross-domain public APIs: `<explicit high-level functions exported from domain __init__.py, or none>`
+- Public business service: `<Protocol/ServiceKey exported from domain __init__.py>`
+- Concrete plugin / schema owner / host domain gate: `<distinct identities and app/plugins.py binding>`
+- Cross-domain consumers: `<public contract, business reason, requires/lease ownership, or none>`
 
 ## Ubiquitous language
 
@@ -104,8 +106,9 @@ expose generic field/status patching and arbitrary storage filters.
 | --- | --- | --- | --- | --- | --- |
 | `<intent-shaped name>` | `<query/command>` | `<decision or result sought>` | `<domain values, version/lease/idempotency when needed>` | `<state/view/version/event/next action>` | `<precondition, code, retryable?, recovery>` |
 
-Dashboard widgets project the same model for humans and use parameterized
-helpers. They must show validation, conflict, and retryable errors clearly; they
+Dashboard widgets and MCP tools lease the same business service, which owns the
+model rules and parameterized database operations. Both entrances must show
+validation, conflict, and retryable errors clearly; they
 must not accept arbitrary SQL from a browser. The app’s MCP endpoint is
 `/mcp`; confirm the printed LAN URL before handing it to a peer agent.
 

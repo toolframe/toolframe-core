@@ -26,7 +26,60 @@ their next render. An already rendered browser page is not forcibly refreshed.
 routes. Business domain exports and database migrations keep their existing
 ownership rules. Stopping a domain never drops its tables or removes its files.
 
-## Add a service plugin
+## Develop one business capability
+
+A complete new business capability normally supplies one business service plugin.
+Its domain still owns the business language, model, schema, tools, widgets and
+peer documentation. Entities and individual functions remain ordinary model code;
+small changes extend the existing capability. A local plugin needs no separate
+repository or PyPI package.
+
+Start from the [complete Stockroom example](../skills/toolframe-business-app/assets/business-plugin/README.md).
+It includes the service, app catalog, schema variants, human form, two MCP tools
+and handoff documents. Its four identities have different jobs:
+
+| Identity | Example | Responsibility |
+| --- | --- | --- |
+| Public ServiceKey and Protocol | `stockroom.service` / `Stockroom` | Business methods available to consumers |
+| Concrete Plugin | `stockroom.local` | Configuration, setup, dependencies and owned resource cleanup |
+| Domain/schema owner | `stockroom` | Business source and durable tables/history |
+| Automatic host gate | `domain.stockroom` | Availability of that domain's MCP tools and widgets |
+
+Define the contract/key in `domains/stockroom/model/contract.py` and export them
+from `domains/stockroom/__init__.py`. Keep the implementation in `model/service.py`
+and its Plugin definition in `model/plugin.py`. Setup requires `DATABASE` when
+the service persists data; local domain schemas are prepared before it starts.
+Register and connect it in the composition root:
+
+```python
+from domains.stockroom.model.plugin import PLUGIN
+
+PLUGINS = [PLUGIN]
+DOMAIN_PLUGINS = {"stockroom": (PLUGIN.id,)}
+SCHEMAS = {}  # The local domain's schema.json is discovered automatically.
+```
+
+Do not author another `domain.stockroom` plugin or leave the automatic gate
+disconnected from the real service. Add extra dependencies to `app/pyproject.toml`
+only when the capability needs them, then restart. MCP tools hold
+`use_plugin(STOCKROOM)` and widgets hold `context.plugins.lease(STOCKROOM)` while
+calling the same business methods. Persistence and idempotency stay inside that
+service. Register cleanup for resources it opens; do not close host resources.
+
+Across domains, import the key/Protocol from the owner's root public API.
+A consumer retaining another service declares `requires=(STOCKROOM,)` and obtains
+it with `ctx.require(STOCKROOM)` during setup. A call-time consumer holds a lease
+for the whole operation; a public convenience function owns its lease internally.
+Bind its domain to its actual service dependencies. Cross-domain deep imports
+into model, tools, UI or SQL remain forbidden.
+
+Finish with check/startup, one human and one MCP interaction, rejected invalid
+input, idempotent replay where relevant, and stop/recovery with retained data.
+The existing Entry Register app can still run through its automatic domain gate;
+this default guides new complete capabilities without forcing a plugin per old
+function or entity.
+
+## Add a supporting service plugin
 
 Create the optional `app/plugins.py` (newly scaffolded apps already include it):
 
@@ -176,9 +229,12 @@ the launcher may ultimately terminate an unresponsive process as before.
 - `toolframe serve` starts plugins before reporting readiness and closes them
   after MCP/Streamlit stop.
 
-Source files, installed packages, migrations, routes, and MCP schemas remain
-startup-loaded. This release does not hot-reload Python modules, dynamically run
-pip, coordinate multiple workers, isolate plugins, or provide a marketplace.
+Plugin catalogs, domain models/contracts, installed packages, migrations, routes
+and MCP schemas remain startup-loaded. The host prepares the domain namespace
+before catalog imports, including with a custom `--domains-dir`. Streamlit reruns
+reload UI modules while preserving live service and contract identities; model or
+catalog edits require restart. This release does not dynamically run pip,
+coordinate multiple workers, isolate plugins, or provide a marketplace.
 
 `manager.register()` and `unregister()` update the trusted service graph at runtime.
 They do not install packages, load new MCP tools/widgets, or discover/apply schemas.

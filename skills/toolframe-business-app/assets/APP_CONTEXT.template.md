@@ -88,23 +88,31 @@ has consciously accepted the local exposure.
 
 ## Source map
 
-Domain code may depend on another domain only through an explicit high-level
-business function exported by that domain's root `__init__.py`. Record each
-real dependency; leave the table empty rather than inventing a shared layer.
+Domain code consumes another capability through the root public service contract
+or a lease-owning business function. Record its runtime dependency/lease as well
+as the Python import; leave this empty when no cross-domain capability is needed.
 
-| Consumer domain | Provider domain/public function | Business reason |
-| --- | --- | --- |
-| [domain or none] | [`from domains.<domain> import <function>`] | [why this coupling is required] |
+| Consumer domain/plugin | Public contract | Runtime ownership | Business reason |
+| --- | --- | --- | --- |
+| [domain/plugin or none] | [`from domains.<domain> import KEY`] | [`requires`, `ctx.require` or complete call-time lease, and domain binding] | [why needed] |
 
 | Business capability | Source of truth | Notes for the next agent |
 | --- | --- | --- |
 | App composition | `app/dashboard.py` | [registry use or custom composition and visible app identity] |
+| Capability assembly | `app/plugins.py` | [PLUGINS, DOMAIN_PLUGINS, optional packaged SCHEMAS; automatic domain gate connected to its real business service] |
+| Business service | `domains/<domain>/model/{contract,service,plugin}.py`, root `__init__.py` | [public ServiceKey/Protocol, concrete Plugin ID, requires, config/lifecycle and shared MCP/UI methods] |
 | Shared dependencies | `app/pyproject.toml` | [why each app-wide package is required] |
 | Domain model/schema | `domains/<domain>/model/`, `domains/<domain>/migrations/` | [owning domain, schema target and legacy history, and immutable-history note] |
 | MCP tools | `domains/<domain>/tools/` | [narrow commands/queries, intents, and private `_*.py` helpers] |
 | Domain UI | `domains/<domain>/ui/` | [auto-loaded direct widgets and manual composition choices] |
 | LAN agent discovery | `app/llms.txt`, `domains/<domain>/llms/*.md` | [explicitly linked peer documents and last reconciliation] |
 | Large results/files | `workspace/artifacts/` | [artifact naming and retrieval convention] |
+
+For each capability, distinguish its ServiceKey, concrete Plugin ID, schema owner
+and automatic `domain.<name>` gate. Record stop/blocked/recovery and retained-data
+evidence. Local source is the default; record a package/version only when separately
+installed. Skill updates are export/compare/merge work: normal serve preserves an
+existing `.agents/skills/toolframe-business-app`, including personal modifications.
 
 ## Decisions and open issues
 
