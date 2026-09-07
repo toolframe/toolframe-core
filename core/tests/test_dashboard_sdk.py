@@ -858,8 +858,9 @@ class DefaultWidgetContractTests(unittest.TestCase):
     def test_example_widget_handles_expected_database_conditions(self):
         path = REPOSITORY_ROOT / "domains" / "entry_register" / "ui" / "entries.py"
         domains_root = REPOSITORY_ROOT / "domains"
-        dashboard._purge_domain_modules(domains_root)
-        dashboard._ensure_domain_namespace(domains_root)
+        from toolframe_domain_imports import prepare_domains
+
+        prepare_domains(domains_root, reset=True)
         spec = importlib.util.spec_from_file_location("default_example_card", path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)

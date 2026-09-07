@@ -48,6 +48,7 @@ from toolframe_artifacts import (
 from toolframe_database_config import DatabaseSettings
 from toolframe_database_host import database_snapshot as provider_database_snapshot
 from toolframe_database_service import create_provider
+from toolframe_domain_imports import prepare_domains
 from toolframe_logging import StructuredLogError, StructuredLogs, StructuredLogSettings
 from toolframe_plugins import configure_plugins, plugin_unavailable_details
 
@@ -1043,10 +1044,7 @@ def load_tools(
     app_root = domains_dir.parent
     if str(app_root) not in sys.path:
         sys.path.insert(0, str(app_root))
-    for module_name in tuple(sys.modules):
-        if module_name == "domains" or module_name.startswith("domains."):
-            sys.modules.pop(module_name, None)
-    importlib.invalidate_caches()
+    prepare_domains(domains_dir, reset=plugins is None)
 
     loaded: list[Tool] = []
     runtime_details: list[dict[str, Any]] = []

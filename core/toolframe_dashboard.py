@@ -35,6 +35,7 @@ from toolframe_database import (
     ExecuteResult,
     _dashboard_request_metadata,
 )
+from toolframe_domain_imports import prepare_domains, reload_domain_ui
 from toolframe_idempotency import (
     IdempotencyError,
     IdempotencyResult,
@@ -228,7 +229,7 @@ def _configure(
     with _configuration_lock:
         _configuration = _SdkConfiguration(app_path, domains_path, context)
         _ensure_import_path(app_path)
-        _ensure_domain_namespace(domains_path)
+        prepare_domains(domains_path)
     return context
 
 
@@ -279,9 +280,7 @@ def discover_domain_widgets(
 
     widgets: list[DashboardWidget] = []
     with _configuration_lock:
-        importlib.invalidate_caches()
-        _purge_domain_modules(domains_root)
-        _ensure_domain_namespace(domains_root)
+        reload_domain_ui(domains_root)
         for domain, domain_root, ui_directory in layouts:
             try:
                 importlib.import_module(f"domains.{domain}.ui")
@@ -466,16 +465,6 @@ def _ensure_import_path(root: Path) -> None:
         sys.path.insert(0, root_text)
 
 
-def _ensure_domain_namespace(domains_root: Path) -> None:
-    module = ModuleType("domains")
-    module.__package__ = "domains"
-    module.__path__ = [os.fspath(domains_root)]
-    module.__spec__ = importlib.util.spec_from_loader(
-        "domains", loader=None, is_package=True
-    )
-    sys.modules["domains"] = module
-
-
 def _discover_domain_layouts(root: Path) -> list[tuple[str, Path, Path]]:
     layouts: list[tuple[str, Path, Path]] = []
     try:
@@ -522,21 +511,6 @@ def _public_widget_paths(directory: Path) -> tuple[Path, ...]:
         _real_file(path, "domain widget")
         paths.append(path.resolve(strict=True))
     return tuple(paths)
-
-
-def _purge_domain_modules(root: Path) -> None:
-    for name, module in tuple(sys.modules.items()):
-        if name == "domains" or name.startswith("domains."):
-            sys.modules.pop(name, None)
-            continue
-        module_path = getattr(module, "__file__", None)
-        if not module_path:
-            continue
-        try:
-            Path(module_path).resolve(strict=False).relative_to(root)
-        except (OSError, ValueError):
-            continue
-        sys.modules.pop(name, None)
 
 
 def _load_widget(

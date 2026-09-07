@@ -21,7 +21,11 @@ const CORE_ARCHITECTURE: &str = include_str!("../core/toolframe_architecture.py"
 const CORE_DASHBOARD: &str = include_str!("../core/toolframe_dashboard.py");
 const CORE_DATABASE: &str = include_str!("../core/toolframe_db.py");
 const CORE_DATABASE_BACKEND: &str = include_str!("../core/toolframe_database.py");
-const DATABASE_MODULES: &[(&str, &str)] = &[
+const SUPPORT_MODULES: &[(&str, &str)] = &[
+    (
+        "toolframe_domain_imports.py",
+        include_str!("../core/toolframe_domain_imports.py"),
+    ),
     (
         "toolframe_migration_scaffold.py",
         include_str!("../core/toolframe_migration_scaffold.py"),
@@ -167,6 +171,120 @@ const EMBEDDED_DOMAINS_TREE: &[(&str, &str)] = &[
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const EMBEDDED_BUSINESS_SKILL_FILES: &[(&str, &[u8])] = &[
+    (
+        "assets/business-plugin/README.md",
+        include_bytes!("../skills/toolframe-business-app/assets/business-plugin/README.md"),
+    ),
+    (
+        "assets/business-plugin/APP_CONTEXT.md",
+        include_bytes!("../skills/toolframe-business-app/assets/business-plugin/APP_CONTEXT.md"),
+    ),
+    (
+        "assets/business-plugin/DOMAIN_MODEL.md",
+        include_bytes!("../skills/toolframe-business-app/assets/business-plugin/DOMAIN_MODEL.md"),
+    ),
+    (
+        "assets/business-plugin/app/dashboard.py",
+        include_bytes!("../skills/toolframe-business-app/assets/business-plugin/app/dashboard.py"),
+    ),
+    (
+        "assets/business-plugin/app/llms.txt",
+        include_bytes!("../skills/toolframe-business-app/assets/business-plugin/app/llms.txt"),
+    ),
+    (
+        "assets/business-plugin/app/plugins.py",
+        include_bytes!("../skills/toolframe-business-app/assets/business-plugin/app/plugins.py"),
+    ),
+    (
+        "assets/business-plugin/app/pyproject.toml",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/app/pyproject.toml"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/__init__.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/__init__.py"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/llms/workflow.md",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/llms/workflow.md"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/migrations/postgresql/0000_deliveries.sql",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/migrations/postgresql/0000_deliveries.sql"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/migrations/schema.json",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/migrations/schema.json"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/migrations/sqlite/0000_deliveries.sql",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/migrations/sqlite/0000_deliveries.sql"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/model/__init__.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/model/__init__.py"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/model/contract.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/model/contract.py"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/model/plugin.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/model/plugin.py"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/model/service.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/model/service.py"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/tools/__init__.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/tools/__init__.py"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/tools/stockroom_receive_delivery.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/tools/stockroom_receive_delivery.py"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/tools/stockroom_stock_levels.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/tools/stockroom_stock_levels.py"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/ui/__init__.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/ui/__init__.py"
+        ),
+    ),
+    (
+        "assets/business-plugin/domains/stockroom/ui/stockroom.py",
+        include_bytes!(
+            "../skills/toolframe-business-app/assets/business-plugin/domains/stockroom/ui/stockroom.py"
+        ),
+    ),
     (
         "SKILL.md",
         include_bytes!("../skills/toolframe-business-app/SKILL.md"),
@@ -563,7 +681,7 @@ pub fn prepare_runtime(
         PLUGIN_WHEEL,
         INFO_PAGE.as_bytes(),
     ];
-    for (name, source) in DATABASE_MODULES.iter().chain(EMBEDDED_PLUGIN_PACKAGE) {
+    for (name, source) in SUPPORT_MODULES.iter().chain(EMBEDDED_PLUGIN_PACKAGE) {
         core_sources.push(name.as_bytes());
         core_sources.push(source.as_bytes());
     }
@@ -596,7 +714,7 @@ pub fn prepare_runtime(
         &core_dir.join("toolframe_database.py"),
         CORE_DATABASE_BACKEND,
     )?;
-    for (name, source) in DATABASE_MODULES {
+    for (name, source) in SUPPORT_MODULES {
         write_managed(&core_dir.join(name), source)?;
     }
     write_managed(&idempotency, CORE_IDEMPOTENCY)?;
@@ -1291,7 +1409,7 @@ mod tests {
             fs::read_to_string(core.join("toolframe_plugins.py")).expect("read plugin support"),
             CORE_PLUGINS
         );
-        for (name, expected) in DATABASE_MODULES {
+        for (name, expected) in SUPPORT_MODULES {
             assert_eq!(
                 fs::read_to_string(core.join(name)).expect("read database provider module"),
                 *expected

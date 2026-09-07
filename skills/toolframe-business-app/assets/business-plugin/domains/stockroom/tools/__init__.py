@@ -1,0 +1,1 @@
+"""Public Stockroom MCP operations."""

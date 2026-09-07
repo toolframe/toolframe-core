@@ -14,6 +14,7 @@ from typing import Any
 import anyio
 from fastapi_cordis import Plugin, PluginError, PluginManager
 from toolframe_database_service import DATABASE, DatabaseProvider
+from toolframe_domain_imports import prepare_domains
 from toolframe_migrations import MigrationCoordinator, Schema, discover_domains
 
 _manager: PluginManager | None = None
@@ -130,6 +131,7 @@ def configure_plugins(
     are also exposed as host-owned services in the shared lifecycle graph.
     """
     global _manager
+    prepare_domains(domains_dir, reset=True)
     plugins, bindings, plugin_schemas = _read_catalog(app_dir)
     provider = getattr(database, "_backend", database)
     if not isinstance(provider, DatabaseProvider):

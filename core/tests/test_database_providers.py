@@ -415,11 +415,14 @@ def test_idempotent_reference_tool_uses_current_domain_and_portable_id(
 ):
     import runpy
 
+    from toolframe_domain_imports import prepare_domains
     from toolframe_idempotency import _configure
     from toolframe_migrations import MigrationCoordinator, discover_domains
 
     repository = Path(__file__).resolve().parents[2]
     monkeypatch.syspath_prepend(str(repository))
+    # Other host tests prepare different apps in this same Python process.
+    prepare_domains(repository / "domains", reset=True)
     schemas, legacy = discover_domains(repository / "domains")
     MigrationCoordinator(provider, schemas, legacy=legacy).apply()
     _configure(provider=provider)

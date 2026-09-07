@@ -269,14 +269,14 @@ def _validate_import(
             path,
             line,
             module,
-            "cross-domain imports must select explicit high-level business functions",
+            "cross-domain imports must select explicit business service contracts or lease-owning functions",
         )
 
 
 def _raise_import_error(path: Path, line: int, module: str, reason: str) -> None:
     raise SourceArchitectureError(
         f"{path}:{line}: invalid import from {module!r}: {reason}; use "
-        "`from domains.<domain> import <business_function>` only when needed"
+        "`from domains.<domain> import <public_business_api>` only when needed"
     )
 
 
