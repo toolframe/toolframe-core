@@ -339,3 +339,20 @@ and executable tests are skipped when their explicit test settings are absent.
 Run Ruff checks/format validation with `--target-version py311` across `core`,
 `examples`, `app` and `domains` to retain the embedded package's Python 3.11 syntax
 compatibility; the host runtime itself requires Python 3.14.
+
+### Review an updated bundled skill
+
+`serve` installs `.agents/skills/toolframe-business-app` only when absent and
+preserves an existing directory, including personal edits. A replacement binary
+does not upgrade that installed copy. Export the new bundle to a fresh destination:
+
+```sh
+./toolframe export-skill ./toolframe-business-app-new
+git diff --no-index .agents/skills/toolframe-business-app ./toolframe-business-app-new
+```
+
+The export is offline, starts no application services, and rejects existing
+destinations. Its parent directory must already exist. Review the differences
+and merge the relevant changes into the installed copy, preserving personal rules;
+`git diff --no-index` returns status 1 when there are differences. When no installed
+copy exists, the next normal `serve` installs the bundled version.

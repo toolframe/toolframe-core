@@ -321,6 +321,8 @@ struct Cli {
 enum CliCommand {
     /// Run the dashboard and MCP server (the default when omitted).
     Serve,
+    /// Export the bundled development skill to a new directory for review and merging.
+    ExportSkill { destination: PathBuf },
     /// Validate migrations, dependencies, tools, and dashboard code without starting a server.
     Check {
         /// Output format for the validation report.
@@ -399,6 +401,11 @@ async fn run(cli: Cli, console: ConsoleStyle) -> Result<i32> {
         Some(CliCommand::Check { format }) => run_check(&cli, *format).await,
         Some(CliCommand::Invoke { tool, json }) => run_invoke(&cli, tool, json).await,
         Some(CliCommand::Scaffold { command }) => run_scaffold(&cli, command).await,
+        Some(CliCommand::ExportSkill { destination }) => {
+            let exported = runtime::export_business_skill(destination)?;
+            println!("Exported business skill: {}", exported.display());
+            Ok(0)
+        }
     }
 }
 

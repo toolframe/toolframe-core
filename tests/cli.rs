@@ -102,3 +102,78 @@ fn non_server_commands_do_not_install_the_agent_skill() {
         assert!(!directory.path().join("APP_CONTEXT.md").exists());
     }
 }
+
+#[test]
+fn export_skill_is_offline_create_only_and_contains_production_files() {
+    let directory = tempfile::tempdir().expect("create test directory");
+    let executable = copied_binary(&directory);
+    let destination = directory.path().join("fresh-skill");
+    let output = Command::new(&executable)
+        .args(["--offline", "export-skill"])
+        .arg(&destination)
+        .output()
+        .expect("export skill");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(destination.join("SKILL.md")).unwrap(),
+        fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("skills/toolframe-business-app/SKILL.md")
+        )
+        .unwrap()
+    );
+    assert!(destination.join("references/plugins-and-data.md").is_file());
+    assert!(!destination.join("evals").exists());
+    assert!(!directory.path().join(".agents").exists());
+    assert!(!directory.path().join(".toolframe").exists());
+    assert!(!directory.path().join("data").exists());
+    fs::write(destination.join("SKILL.md"), "personal changes").unwrap();
+    let again = Command::new(&executable)
+        .arg("export-skill")
+        .arg(&destination)
+        .output()
+        .unwrap();
+    assert!(!again.status.success());
+    assert_eq!(
+        fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+        "personal changes"
+    );
+    let file = directory.path().join("existing-file");
+    fs::write(&file, "keep").unwrap();
+    assert!(
+        !Command::new(&executable)
+            .arg("export-skill")
+            .arg(&file)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(fs::read_to_string(file).unwrap(), "keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn export_skill_rejects_a_symlink_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = copied_binary(&directory);
+    let original = directory.path().join("personal");
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("SKILL.md"), "keep").unwrap();
+    let link = directory.path().join("linked-skill");
+    std::os::unix::fs::symlink(&original, &link).unwrap();
+    let output = Command::new(executable)
+        .arg("export-skill")
+        .arg(&link)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(original.join("SKILL.md")).unwrap(),
+        "keep"
+    );
+    assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
+}

@@ -265,6 +265,62 @@ pub fn executable_root() -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("the toolframe executable has no parent directory"))
 }
 
+/// Export an exact production skill into a new directory for review/merging.
+/// No Python environment or application services are started, and no existing
+/// destination is accepted, including an empty directory or a symlink.
+pub fn export_business_skill(destination: &Path) -> Result<PathBuf> {
+    let name = destination
+        .file_name()
+        .context("skill export needs a new directory name")?;
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if !matches!(inspect_skill_path(parent)?, SkillPathState::Directory) {
+        bail!(
+            "skill export parent must be an existing real directory: {}",
+            parent.display()
+        );
+    }
+    let parent = parent
+        .canonicalize()
+        .context("could not resolve skill export parent")?;
+    let target = parent.join(name);
+    if !matches!(inspect_skill_path(&target)?, SkillPathState::Missing) {
+        bail!(
+            "skill export destination already exists; choose a new directory: {}",
+            target.display()
+        );
+    }
+    let staging = tempfile::Builder::new()
+        .prefix(".toolframe-skill-export-")
+        .tempdir_in(parent)?;
+    write_business_skill_tree(staging.path())?;
+    if !rename_directory_if_absent(staging.path(), &target)? {
+        bail!(
+            "skill export destination appeared during export; nothing was replaced: {}",
+            target.display()
+        );
+    }
+    Ok(target)
+}
+
+fn write_business_skill_tree(root: &Path) -> Result<()> {
+    for (relative, content) in EMBEDDED_BUSINESS_SKILL_FILES {
+        let destination = root.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "could not create business skill directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+        write_embedded_skill_file(&destination, content)?;
+    }
+    Ok(())
+}
+
 /// Install the bundled, business-first skill beside the executable.
 ///
 /// The skill is deliberately a create-once artifact. A real existing target
@@ -316,18 +372,7 @@ pub fn install_business_skill(executable_root: &Path) -> Result<bool> {
     let staging = staging_directory.path().to_path_buf();
 
     let result = (|| -> Result<bool> {
-        for (relative, content) in EMBEDDED_BUSINESS_SKILL_FILES {
-            let destination = staging.join(relative);
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!(
-                        "could not create business skill directory {}",
-                        parent.display()
-                    )
-                })?;
-            }
-            write_embedded_skill_file(&destination, content)?;
-        }
+        write_business_skill_tree(&staging)?;
 
         // Publishing only happens after every file has been written and
         // synced. The platform-specific helper uses RENAME_EXCL/
