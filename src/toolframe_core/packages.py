@@ -586,7 +586,14 @@ class Packages:
                     "identity_mismatch",
                     "Worker definition/protocol does not match the installed entrypoint",
                 )
-            validate(definition.config_schema, config)
+            try:
+                validate(definition.config_schema, config)
+            except Exception as error:
+                raise PluginError(
+                    "config_invalid",
+                    "Configuration does not match the plugin schema",
+                    {"path": list(getattr(error, "absolute_path", ()))},
+                ) from error
         finally:
             try:
                 await worker.close(activated=False)

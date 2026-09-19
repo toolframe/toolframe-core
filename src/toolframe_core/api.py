@@ -21,6 +21,8 @@ from toolframe_sdk import PluginError
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from .redaction import redact_toml
+
 COOKIE = "toolframe_session"
 HOP_HEADERS = {
     "connection",
@@ -111,6 +113,7 @@ def provider_for(host, path):
     runtime = host.runtimes.get(name)
     if (
         not runtime
+        or not host.healthy_runtime(name)
         or not runtime.admitted
         or name in host.gated
         or runtime.epoch != host.epoch
@@ -176,12 +179,14 @@ def create_app(host, *, manage_lifespan=True):
             return await call_next(request)
         except PluginError as error:
             return JSONResponse(
-                {"error": error.as_dict()}, status_code=error_status(error)
+                {"error": host.redact(error.as_dict())}, status_code=error_status(error)
             )
 
     @app.exception_handler(PluginError)
     async def plugin_error(request, error):
-        return JSONResponse({"error": error.as_dict()}, status_code=error_status(error))
+        return JSONResponse(
+            {"error": host.redact(error.as_dict())}, status_code=error_status(error)
+        )
 
     @app.get("/healthz")
     async def health():
@@ -217,17 +222,28 @@ def create_app(host, *, manage_lifespan=True):
     async def status():
         return host.status()
 
+    @app.get("/_toolframe/v1/readiness")
+    async def readiness():
+        report = host.status()
+        return JSONResponse(report, status_code=200 if report["ready"] else 503)
+
     @app.get("/_toolframe/v1/composition")
     async def composition():
-        return {"toml": host.config.path.read_text(), "revision": host.config.revision}
+        try:
+            text = redact_toml(host.config.path.read_text(), host.redact)
+        except ValueError as error:
+            raise PluginError(
+                "configuration_invalid", "Repair invalid TOML before exporting"
+            ) from error
+        return {"toml": text, "revision": host.config.revision, "secrets": "redacted"}
 
     @app.get("/_toolframe/v1/operations")
     async def operations():
-        return host.state.operations()
+        return host.redact(host.state.operations())
 
     @app.get("/_toolframe/v1/operations/{identifier}")
     async def operation(identifier: str):
-        return host.state.operation(identifier)
+        return host.redact(host.state.operation(identifier))
 
     @app.post("/_toolframe/v1/operations/{identifier}/cancel")
     async def cancel(identifier: str):
@@ -240,29 +256,35 @@ def create_app(host, *, manage_lifespan=True):
 
     @app.post("/_toolframe/v1/operations", status_code=202)
     async def submit(request: Request, body: OperationRequest):
-        return host.submit(
-            body.action,
-            body.params,
-            idempotency=request.headers.get("idempotency-key"),
+        return host.redact(
+            host.submit(
+                body.action,
+                body.params,
+                idempotency=request.headers.get("idempotency-key"),
+            )
         )
 
     @app.post("/_toolframe/v1/plugins/{identifier}/{action}", status_code=202)
     async def plugin_operation(
         identifier: str, action: str, request: Request, body: dict
     ):
-        return host.submit(
-            action,
-            {**body, "id": identifier},
-            idempotency=request.headers.get("idempotency-key"),
+        return host.redact(
+            host.submit(
+                action,
+                {**body, "id": identifier},
+                idempotency=request.headers.get("idempotency-key"),
+            )
         )
 
     @app.get("/_toolframe/v1/plugins/{identifier}/logs")
     async def logs(identifier: str):
         runtime = host.runtimes.get(identifier)
-        return {
-            "plugin_id": identifier,
-            "lines": list(runtime.worker.logs) if runtime else [],
-        }
+        return host.redact(
+            {
+                "plugin_id": identifier,
+                "lines": list(runtime.worker.logs) if runtime else [],
+            }
+        )
 
     @app.post("/_toolframe/v1/services/{owner}/{service}/{method}")
     async def service_call(owner: str, service: str, method: str, request: Request):

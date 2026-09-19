@@ -85,6 +85,37 @@ async def test_reviewed_plan_is_immutable_and_rejects_stale_runtime(host, tmp_pa
     assert stale["error"]["code"] == "stale_plan"
 
 
+async def test_default_validation_checks_resources_and_reports_activation_blockers(
+    host, tmp_path
+):
+    source = fixture_source(tmp_path, "alpha")
+    assert (await operate(host, "add", source=str(source), enable=True))[
+        "status"
+    ] == "succeeded"
+    old = host.runtimes["alpha"].generation
+    module = source / "fixture/__init__.py"
+    module.write_text(
+        module.read_text()
+        + "\nfrom toolframe_sdk import Resource\nplugin=plugin.model_copy(update={'resources':(Resource(id='bad',kind='mcp.tool',data={'service':'undeclared','method':'read'}),)})\n"
+    )
+    invalid = await operate(host, "validate", id="alpha")
+    assert invalid["error"]["code"] == "resource_target_invalid", invalid
+    candidate = host.status()["plugins"][0]["candidate_status"]
+    assert candidate["validation"]["preflight"] == "failed"
+    assert candidate["validation"]["stages"]["dependency_graph"]["status"] == "failed"
+    assert host.runtimes["alpha"].generation == old
+    assert await host.call_service("alpha", "alpha.service", "echo", {}) == {
+        "version": "old"
+    }
+    fixture_source(tmp_path, "alpha", dependency="beta")
+    blocked = await operate(host, "validate", id="alpha")
+    assert blocked["status"] == "succeeded", blocked
+    validation = blocked["result"]["validation"]
+    assert validation["preflight"] == "passed" and not validation["ready_to_activate"]
+    assert validation["blockers"] == {"alpha": ["beta.service"]}
+    assert host.runtimes["alpha"].generation == old
+
+
 async def test_managed_storage_isolation_transaction_drain_scratch_and_retention(
     host, tmp_path
 ):
@@ -192,6 +223,62 @@ async def test_optional_provider_failure_keeps_business_running(host, tmp_path):
         "version": "old"
     }
     assert host.status()["application"] == "degraded"
+
+
+async def test_business_health_and_expiry_are_separate_from_core_and_optional_readiness(
+    host, tmp_path
+):
+    import time
+
+    source = fixture_source(tmp_path, "alpha")
+    module = source / "fixture/__init__.py"
+    module.write_text(
+        module.read_text().replace(
+            "        await asyncio.sleep",
+            "        self.unhealthy = params.get('unhealthy', False)\n        await asyncio.sleep",
+        )
+        + "\n    async def health(self):\n        return {'runtime':'ready', 'business':'failed' if getattr(self,'unhealthy',False) else 'ready'}\n"
+    )
+    assert (await operate(host, "add", source=str(source), enable=True))[
+        "status"
+    ] == "succeeded"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(create_app(host, manage_lifespan=False)),
+        base_url="http://127.0.0.1:9876",
+        headers={"Authorization": f"Bearer {host.token}"},
+    ) as client:
+        async with host.mutation:
+            host.runtimes["alpha"].observed = 0
+            stale = host.status()
+            assert stale["ready"] and stale["degraded"]
+            assert not stale["plugins"][0]["healthy"]
+            with pytest.raises(PluginError, match="unavailable"):
+                host.begin_root("alpha")
+            host.runtimes["alpha"].observed = time.time()
+        before = host.runtimes["alpha"].observed
+        host.composition.runtime.health_ttl = 0.4
+        async with host.mutation:
+            await asyncio.sleep(0.8)
+            assert host.runtimes["alpha"].observed > before
+            assert host.healthy_runtime("alpha")
+            assert await host.call_service("alpha", "alpha.service", "echo", {}) == {
+                "version": "old"
+            }
+        await host.call_service("alpha", "alpha.service", "echo", {"unhealthy": True})
+        await until(lambda: not host.runtimes["alpha"].admitted)
+        report = (await client.get("/_toolframe/v1/status")).json()
+        assert report["report_schema"] == 1
+        assert report["ready"] and report["degraded"]
+        assert report["plugins"][0]["runtime"]["health"]["business"] == "failed"
+        assert report["plugins"][0]["runtime"]["health"]["runtime"] == "ready"
+        composition = host.composition.model_copy(deep=True)
+        composition.required_capabilities = ["service:alpha.service"]
+        atomic_write(host.config.path, tomlkit.dumps(composition.model_dump()))
+        host.refresh()
+        required = await client.get("/_toolframe/v1/readiness")
+        assert required.status_code == 503
+        assert required.json()["missing_required"] == ["service:alpha.service"]
+        assert (await client.get("/healthz")).status_code == 200
 
 
 async def test_watch_debounces_and_never_enables_disabled_or_manually_stopped_plugin(

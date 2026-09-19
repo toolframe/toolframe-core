@@ -22,6 +22,7 @@ from .config import ConfigFile, HostLock, PluginRequest, atomic_write, managemen
 from .graph import Graph
 from .packages import Packages, source_files
 from .process import WorkerProcess, group_exists, process_inventory, stop_group
+from .redaction import redact, secret_values
 from .state import CoreState
 
 
@@ -90,6 +91,7 @@ class Host:
         self.scratch = scratch
         self.epoch = None
         self.publication = {}
+        self.health_publication_pending = False
         self.gateway_sessions = {}
         self.startup_error = None
         self.schema_changed = False
@@ -299,7 +301,9 @@ class Host:
                     if detail["code"] == "cancelled"
                     else "failed"
                 )
-                self.state.update_operation(identifier, status=status, error=detail)
+                self.state.update_operation(
+                    identifier, status=status, error=self.redact(detail)
+                )
             finally:
                 self.cancellations.discard(identifier)
 
@@ -391,6 +395,7 @@ class Host:
                 config=params.get("config", {}),
             )
             candidate = await self.packages.prepare(name, source, request.config)
+            await self.validate_candidate(candidate, operation)
             self.composition, self.revision = self.config.put_plugin(
                 name, request, self.revision
             )
@@ -444,6 +449,7 @@ class Host:
             }
         if action == "validate":
             candidate = await self._prepare(name, operation)
+            await self.validate_candidate(candidate, operation)
             if params.get("runtime"):
                 await self.runtime_validate(name, candidate)
                 candidate["validation"]["runtime"] = "passed_scratch"
@@ -588,6 +594,114 @@ class Host:
             await self.replace(proposed, changed, operation)
             return {"plugins": sorted(proposed)}
         raise PluginError("action_unknown", f"Unknown management action {action}")
+
+    async def validate_candidate(self, candidate, operation):
+        """Validate a hypothetical target without publishing or changing live stores."""
+        name = candidate["plugin_id"]
+        proposed = {**self.selected(), name: candidate}
+        validation = candidate["validation"]
+        stages = validation.setdefault("stages", {})
+        stage = "dependency_graph"
+        try:
+            self.phase(operation, "preflight", {"plugin_id": name})
+            graph = Graph(proposed, self.composition.bindings)
+            blockers = {
+                member: graph.missing[member]
+                for member in graph.closure(name)
+                if graph.missing[member]
+            }
+            stages[stage] = {
+                "status": "blocked" if blockers else "passed",
+                "reasons": blockers,
+            }
+            validation["blockers"] = blockers
+            definition = graph.definitions[name]
+            stage = "store_history"
+            stages[stage] = {"status": "skipped", "reason": "No managed store declared"}
+            requires_migration = False
+            if definition.store:
+                storage_owner = next(
+                    (
+                        owner
+                        for owner, service in graph.bindings[name].values()
+                        if service == "toolframe.storage.sql"
+                    ),
+                    None,
+                )
+                if storage_owner and self.healthy_runtime(storage_owner):
+                    plan = await self.admin(
+                        self.runtimes[storage_owner],
+                        "plan",
+                        {"owner": name, "schema": definition.store.model_dump()},
+                    )
+                    requires_migration = plan["requires_apply"]
+                    stages[stage] = {
+                        "status": "blocked" if requires_migration else "passed",
+                        "plan": plan,
+                    }
+                else:
+                    stages[stage] = {
+                        "status": "blocked",
+                        "reason": "Storage provider is unavailable",
+                    }
+                    blockers.setdefault(name, []).append("live_storage_history")
+            stage = "dashboard_environment"
+            stages[stage] = {"status": "skipped", "reason": "No Dashboard provider"}
+            dashboard = graph.providers.get("dashboard")
+            if dashboard:
+                cohort = [
+                    item
+                    for owner, item in proposed.items()
+                    if owner == dashboard
+                    or any(
+                        resource.kind == "dashboard.page"
+                        for resource in graph.definitions[owner].resources
+                    )
+                ]
+                environment = await self.packages.environment(cohort, ui=True)
+                proposed[dashboard] = {
+                    **proposed[dashboard],
+                    "ui_environment": environment,
+                }
+                stages[stage] = {"status": "passed", "environment": environment["id"]}
+            resources = graph.resources()
+            for kind, resource_kind in {
+                "dashboard": "dashboard.page",
+                "mcp": "mcp.tool",
+                "llms": "llms.document",
+            }.items():
+                stage = f"provider_{kind}"
+                owned = [
+                    resource
+                    for resource in resources
+                    if resource.resource.kind == resource_kind
+                ]
+                provider = graph.providers.get(kind)
+                if owned and provider:
+                    await self.prepare_provider(proposed[provider], owned)
+                    stages[stage] = {"status": "passed"}
+                else:
+                    stages[stage] = {
+                        "status": "skipped",
+                        "reason": "No matching resources or provider",
+                    }
+            if self.config.revision != self.revision:
+                raise PluginError("stale_plan", "Composition changed during validation")
+            self.check_cancel(operation)
+            validation.update(
+                preflight="passed",
+                ready_to_activate=not blockers and not requires_migration,
+                migration_required=requires_migration,
+                observed_at=time.time(),
+            )
+        except Exception as error:
+            stages[stage] = {"status": "failed", "reason": str(error)}
+            validation.update(
+                preflight="failed", ready_to_activate=False, observed_at=time.time()
+            )
+            raise
+        finally:
+            self.state.save_candidate(candidate)
 
     async def plan_basis(self):
         schemas = {}
@@ -1252,7 +1366,13 @@ class Host:
             resource
             for resource in self.graph.resources(generations)
             if resource.owner in generations
-            and self.runtimes[resource.owner].health.get("runtime") == "ready"
+            and all(
+                member in self.runtimes
+                and self.runtimes[member].health.get("runtime") == "ready"
+                and self.runtimes[member].health.get("business")
+                not in ("failed", "not_ready")
+                for member in self.graph.closure(resource.owner)
+            )
         ]
         self.epoch = epoch
         self.state.set_meta(
@@ -1355,6 +1475,7 @@ class Host:
                 if (
                     name in self.gated
                     or name not in self.runtimes
+                    or not self.healthy_runtime(name)
                     or self.runtimes[name].worker.process.returncode is not None
                 ):
                     raise PluginError(
@@ -1471,14 +1592,14 @@ class Host:
             if action == "status":
                 return self.status()
             if action == "operation":
-                return self.state.operation(params["params"]["id"])
+                return self.redact(self.state.operation(params["params"]["id"]))
             if action == "cancel":
                 identifier = params["params"]["id"]
                 self.state.operation(identifier)
                 self.cancellations.add(identifier)
                 self.changed.set()
                 return {"id": identifier, "requested": True}
-            return self.submit(action, params.get("params", {}))
+            return self.redact(self.submit(action, params.get("params", {})))
         if method == "resource.call":
             resource = next(
                 (
@@ -1642,19 +1763,49 @@ class Host:
     async def _health_loop(self):
         while True:
             await asyncio.sleep(self.composition.runtime.health_interval)
-            if self.mutation.locked():
-                continue
             for name, runtime in list(self.runtimes.items()):
+                # Preparation may take minutes. Keep probing unrelated admitted
+                # workers while the mutation writer owns its operation lock.
+                members = self.graph.closure(
+                    name, optional=True, available=self.runtimes
+                )
+                if any(
+                    member in self.gated
+                    or member not in self.runtimes
+                    or not self.runtimes[member].admitted
+                    for member in members
+                ):
+                    continue
                 try:
                     health = await self.probe(runtime)
-                    if health.get("runtime") != "ready":
+                    if (
+                        self.runtimes.get(name) is not runtime
+                        or name in self.gated
+                        or not runtime.admitted
+                    ):
+                        continue
+                    if health.get("runtime") != "ready" or health.get("business") in (
+                        "failed",
+                        "not_ready",
+                    ):
                         raise PluginError(
                             "health_failed", "Worker probe is not ready", health
                         )
                     runtime.health, runtime.observed = health, time.time()
                     self.record(runtime, "active" if runtime.admitted else "gated")
                 except Exception as error:  # noqa: BLE001 - failed workers stay repairable via core
-                    runtime.health = {"runtime": "failed", "error": str(error)}
+                    if (
+                        self.runtimes.get(name) is not runtime
+                        or name in self.gated
+                        or not runtime.admitted
+                    ):
+                        continue
+                    runtime.health = (
+                        {**error.details, "error": str(error)}
+                        if isinstance(error, PluginError)
+                        and error.code == "health_failed"
+                        else {"runtime": "failed", "error": str(error)}
+                    )
                     runtime.observed = time.time()
                     affected = self.graph.dependents({name})
                     self.gated.update(affected)
@@ -1665,7 +1816,11 @@ class Host:
                                 self.runtimes[member],
                                 "failed" if member == name else "blocked",
                             )
+                    self.health_publication_pending = True
+            if self.health_publication_pending and not self.mutation.locked():
+                async with self.mutation:
                     await self.publish()
+                    self.health_publication_pending = False
 
     async def _exit_loop(self):
         while True:
@@ -1751,6 +1906,41 @@ class Host:
                 )
                 self.submit(action, {"id": name, "watch": True})
 
+    def redact(self, value):
+        secrets = {self.token}
+        for name, request in self.composition.plugins.items():
+            definition = self.graph.definitions.get(name)
+            secrets.update(
+                secret_values(
+                    request.config, definition.config_schema if definition else {}
+                )
+            )
+        for row in self.state.plugins():
+            for key in ("last_candidate", "current_candidate", "previous_candidate"):
+                if row[key]:
+                    candidate = self.state.candidate(row[key])
+                    secrets.update(
+                        secret_values(
+                            candidate.get("config", {}),
+                            candidate.get("definition", {}).get("config_schema", {}),
+                        )
+                    )
+        for operation in self.state.operations():
+            secrets.update(secret_values(operation["request"]))
+        return redact(value, secrets)
+
+    def healthy_runtime(self, name):
+        runtime = self.runtimes.get(name)
+        return bool(
+            runtime
+            and runtime.admitted
+            and name not in self.gated
+            and time.time() - runtime.observed <= self.composition.runtime.health_ttl
+            and runtime.health.get("runtime") == "ready"
+            and runtime.health.get("business") not in ("failed", "not_ready")
+            and runtime.worker.process.returncode is None
+        )
+
     def status(self):
         try:
             self.config.read()
@@ -1779,12 +1969,23 @@ class Host:
                     "active": runtime.candidate["id"]
                     if runtime and runtime.admitted and name not in self.gated
                     else None,
+                    "active_status": {
+                        "version": runtime.candidate["version"],
+                        "artifact_hash": runtime.candidate["artifact_hash"],
+                        "environment": runtime.candidate["environment"]["id"],
+                        "generation": runtime.generation,
+                    }
+                    if runtime
+                    else None,
+                    "source_condition": "not_checked",
                     "candidate": row["last_candidate"],
                     "candidate_status": {
                         key: candidate[key]
                         for key in (
+                            "distribution",
                             "version",
                             "artifact_hash",
+                            "source",
                             "environment",
                             "validation",
                         )
@@ -1799,16 +2000,12 @@ class Host:
                         and time.time() - runtime.observed
                         <= self.composition.runtime.health_ttl
                     ),
+                    "healthy": self.healthy_runtime(name),
                 }
             )
         available = set()
         for name, runtime in self.runtimes.items():
-            if (
-                runtime.admitted
-                and name not in self.gated
-                and time.time() - runtime.observed
-                <= self.composition.runtime.health_ttl
-            ):
+            if self.healthy_runtime(name):
                 available.add(f"plugin:{name}")
                 for service in self.graph.definitions[name].services:
                     available.add(f"service:{service}")
@@ -1818,7 +2015,11 @@ class Host:
                         "mcp.tool": "mcp",
                         "llms.document": "llms",
                     }[resource.kind]
-                    if self.publication.get(kind, {}).get("state") == "available":
+                    if self.publication.get(kind, {}).get(
+                        "state"
+                    ) == "available" and self.healthy_runtime(
+                        self.graph.providers.get(kind)
+                    ):
                         available.add(f"{name}/{resource.kind}/{resource.id}")
         missing = sorted(set(self.composition.required_capabilities) - available)
         needed_presentations = {
@@ -1829,33 +2030,41 @@ class Host:
         }
         degraded = any(
             self.publication.get(kind, {}).get("state") != "available"
+            or not self.healthy_runtime(self.graph.providers.get(kind))
             for kind in needed_presentations
         ) or any(
-            request.enabled
-            and (name not in self.runtimes or not self.runtimes[name].admitted)
+            request.enabled and not self.healthy_runtime(name)
             for name, request in self.composition.plugins.items()
         )
-        return {
-            "core": "ready",
-            "configuration_error": self.configuration_error,
-            "orphaned_workers": self.orphans,
-            "forward_repair": self.state.meta("forward_repair"),
-            "host_run": self.host_run,
-            "pid": os.getpid(),
-            "desired_revision": self.config.revision,
-            "observed_revision": self.state.meta("desired_revision"),
-            "catalog_epoch": self.epoch,
-            "application": "not_ready"
-            if missing
+        ready = not (
+            missing
             or self.configuration_error
             or self.orphans
             or self.state.meta("forward_repair")
-            else "degraded"
-            if degraded
-            else "ready",
-            "missing_required": missing,
-            "plugins": plugins,
-            "presentations": self.publication,
-            "operations": self.state.operations(),
-            "cordis": self.manager.snapshot(),
-        }
+        )
+        return self.redact(
+            {
+                "report_schema": 1,
+                "core": "ready",
+                "ready": ready,
+                "degraded": degraded,
+                "configuration_error": self.configuration_error,
+                "orphaned_workers": self.orphans,
+                "forward_repair": self.state.meta("forward_repair"),
+                "host_run": self.host_run,
+                "pid": os.getpid(),
+                "desired_revision": self.config.revision,
+                "observed_revision": self.state.meta("desired_revision"),
+                "catalog_epoch": self.epoch,
+                "application": "not_ready"
+                if not ready
+                else "degraded"
+                if degraded
+                else "ready",
+                "missing_required": missing,
+                "plugins": plugins,
+                "presentations": self.publication,
+                "operations": self.state.operations(),
+                "cordis": self.manager.snapshot(),
+            }
+        )

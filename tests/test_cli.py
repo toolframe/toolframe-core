@@ -145,6 +145,8 @@ def test_status_check_and_operation_error_exit_codes(tmp_path, monkeypatch, caps
     capsys.readouterr()
     assert cli.main(["--home", str(home), "operation", "status", "operation-1"]) == 5
     assert json.loads(capsys.readouterr().out)["status"] == "failed"
+    assert cli._status_check({"ready": True, "degraded": True}) == 0
+    assert cli._status_check({"ready": False, "degraded": True}) == 3
 
 
 def test_http_error_uses_error_object_and_status_mapping(tmp_path, monkeypatch, capsys):

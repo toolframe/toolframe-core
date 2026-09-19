@@ -331,6 +331,8 @@ def _status_check(result, *, plugin=False):
         return 3
     if result.get("configuration_error"):
         return 3
+    if "ready" in result:
+        return 0 if result["ready"] is True else 3
     if result.get("application") in ("not_ready", "degraded"):
         return 3
     if result.get("application") == "ready":
