@@ -48,7 +48,13 @@ async fn main() -> Result<()> {
     fs::create_dir_all(&root)?;
     let resolved = uv::resolve(uv_path.as_deref(), &root.join("uv"), offline).await?;
     let mut fingerprint = Sha256::new();
-    fingerprint.update(b"toolframe-core==0.2.0;python3.14;bootstrap1");
+    let python_request = format!(
+        "cpython-3.14.7-{}-{}-none",
+        env::consts::OS,
+        env::consts::ARCH
+    );
+    fingerprint.update(b"toolframe-core==0.2.0;bootstrap2");
+    fingerprint.update(python_request.as_bytes());
     let bundles = root.join("wheels");
     fs::create_dir_all(&bundles)?;
     for (name, content) in WHEELS {
@@ -98,7 +104,7 @@ async fn main() -> Result<()> {
         }
         let mut create = Command::new(&resolved.path);
         create
-            .args(["--no-config", "venv", "--python", "3.14"])
+            .args(["--no-config", "venv", "--python", &python_request])
             .arg(&environment);
         if offline {
             create.arg("--offline");
@@ -132,7 +138,8 @@ async fn main() -> Result<()> {
             .arg(&python)
             .arg("--output-file")
             .arg(&lockfile)
-            .arg(&input);
+            .arg(&input)
+            .stdout(Stdio::null());
         if let Some(path) = &wheelhouse {
             compile.arg("--find-links").arg(path);
         }
@@ -171,6 +178,16 @@ async fn main() -> Result<()> {
     command.env("PATH", env::join_paths(paths)?);
     if let Some(path) = wheelhouse {
         command.env("TOOLFRAME_WHEELHOUSE", path.canonicalize()?);
+    }
+    for (name, content) in WHEELS {
+        if name.starts_with("toolframe_sdk-") {
+            command.env(
+                "TOOLFRAME_SDK_WHEEL",
+                bundles
+                    .join(format!("{:x}", Sha256::digest(content)))
+                    .join(name),
+            );
+        }
     }
     if offline {
         command.env("TOOLFRAME_OFFLINE", "1");

@@ -20,7 +20,6 @@ use std::fs::OpenOptions;
 const RELEASE_MANIFEST: &str = include_str!("../uv-release-manifest.txt");
 const UV_RELEASE_BASE_URL: &str = "https://github.com/astral-sh/uv/releases/download";
 const MINIMUM_UV_VERSION: (u64, u64, u64) = (0, 12, 8);
-pub const MINIMUM_MACOS_VERSION: &str = "12.0";
 const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;

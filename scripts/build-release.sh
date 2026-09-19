@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export MACOSX_DEPLOYMENT_TARGET=12.0
 toolframe_workspace="$(cd "$(dirname "$0")/../.." && pwd)"
 toolframe_core="$toolframe_workspace/toolframe-core"
 toolframe_bundle="$toolframe_core/build/bootstrap-wheels"
