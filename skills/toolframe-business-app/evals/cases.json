@@ -118,6 +118,131 @@
         "evals/cases.json"
       ],
       "forbidden": []
+    },
+    {
+      "id": "read-data-model-before-schema",
+      "prompt": "Design a small Toolframe sales register from order-line CSVs. I need a monthly summary now and different groupings later; no queue or scheduled jobs are involved.",
+      "expected": [
+        "references/development-handbook.md",
+        "references/plugins-and-data.md",
+        "assets/DOMAIN_MODEL.template.md"
+      ],
+      "forbidden": [
+        "references/job-domain-model.md",
+        "references/product-decisions.md",
+        "evals/cases.json",
+        "evals/schema-design-results.json"
+      ],
+      "assertions": [
+        "Records applicable table grain, identity, relationship, history and input-recovery decisions in DOMAIN_MODEL.md before writing migration SQL."
+      ]
+    }
+  ],
+  "data_model": [
+    {
+      "id": "facts-under-business-views",
+      "prompt": "Build a Toolframe sales register from CSV order lines with source order/line IDs, customer IDs, product SKUs, quantities, prices at sale, and sale dates. Today I only need a monthly sales dashboard and an agent tool to summarize it, but I may ask different questions later. Keep the app simple and business-focused.",
+      "assertions": [
+        "Before writing the migration, DOMAIN_MODEL.md states what one row represents in each authoritative table and records stable internal/source identities and relationships.",
+        "Orders and individual order lines remain available with product/customer relationships and prices at sale; monthly totals are not the only durable representation of the detailed input.",
+        "Every relationship records one-to-one/one-to-many/many-to-many multiplicity, optionality, keys, uniqueness, update/delete behavior, and any rule requiring a guarded transaction; cross-record consistency is enforced rather than assumed from separate foreign keys.",
+        "The dashboard and business summary tool derive their output through queries or views over authoritative facts. An aggregate cache, if justified, identifies its source, grain, refresh owner, and rebuild path.",
+        "An isolated database check reproduces monthly totals and also answers quantities by product without reimporting source data, with fixtures that cannot be distinguished from dashboard totals alone.",
+        "Invalid references, duplicates, relevant deletion rules, and lost-detail regressions are tested; the API stays intent-shaped and the non-queue app does not inherit the Job model."
+      ]
+    },
+    {
+      "id": "derived-cache-and-historical-snapshot",
+      "prompt": "Our Toolframe dashboard needs a faster monthly sales summary. Product names and prices can change, but existing issued orders must show the original quantities and agreed prices. Design the storage change.",
+      "assertions": [
+        "The agent checks the actual read bottleneck and tries appropriate queries/indexes before adding a stored summary solely for dashboard convenience.",
+        "Any stored summary is explicitly derived, with a refresh/consistency owner and a tested rebuild from retained facts; rebuilding changes no authoritative data.",
+        "Prices and other values agreed when the order was issued are preserved as historical business facts even when the current product record changes; they are not treated as disposable duplicates.",
+        "The design preserves the existing migration history and verifies original issued values, a changed grouping, and cache rebuild behavior where a cache exists."
+      ]
+    },
+    {
+      "id": "source-retention-and-aggregate-only-input",
+      "prompt": "An external system only sends monthly totals to my small Toolframe reporting app. I might get detailed line exports later. Should we keep every raw response forever and build an ingestion platform now?",
+      "assertions": [
+        "The model honestly records monthly totals as the finest available source grain and identifies analyses that need unavailable detail; it does not invent underlying transactions.",
+        "Source identity, period, import time, and known transformation/version information are preserved, with a clear path to relate later detailed input to its source.",
+        "Original payload retention is chosen for provenance/reprocessing needs with a recorded retention policy; the guide does not force indefinite storage of every field or secret.",
+        "The agent keeps the solution within one app with a selected SQLite or PostgreSQL database, without requiring a warehouse, event-sourcing platform, generic EAV schema, public SQL/CRUD API, or unrelated Job tables."
+      ]
+    },
+    {
+      "id": "observed-events-and-repeated-interactions",
+      "prompt": "Design a Toolframe outreach register. The imported row says Brand A is confirmed and Last Contact is 2026-09-10; no earlier event dates are supplied. Today two different conversations with that brand happen on the same day. I need the current funnel, daily contacted-company counts, and a way to investigate response timing later.",
+      "assertions": [
+        "The imported row is retained as evidence of state at capture/import time; separate historical contact/reply/interest/confirmation times are not fabricated from Last Contact or the current stage.",
+        "Observed, inferred, and unknown facts can be distinguished, and recorded/import time is distinct from known occurrence time and its precision.",
+        "Two distinct same-day interactions retain both details with separate identities; replay of one occurrence is idempotent without suppressing the other.",
+        "Daily distinct-target counts and current-stage funnels are queries over retained facts; exact response-time calculations disclose unavailable dates."
+      ]
+    },
+    {
+      "id": "entity-identity-and-participation",
+      "prompt": "Our Toolframe outreach lists have the same brand in both the SME and partnership programs, with different statuses and contact people. CSV row numbers can change on the next export. Design how to keep the register useful when we add another program.",
+      "assertions": [
+        "The model declares whether identity refers to the organization, contact, program enrollment, or outreach opportunity; independent lifecycles have appropriate separate identities and links.",
+        "Source list/row keys identify imported records rather than acting as the sole durable identity of the real-world organization; stable source IDs are used when provided.",
+        "Existing same-name or same-handle rows are not automatically merged without sufficient identity evidence; ambiguous matches remain explicit.",
+        "A company can participate in two programs with independent state while shared facts remain consistently addressable; joins avoid double-counting organizations."
+      ]
+    },
+    {
+      "id": "report-revisions-and-recoverable-inputs",
+      "prompt": "Our Toolframe editorial app receives weekly performance reports from an external script. A correction replaces last week's numbers; categories and cost rules also change. Post P1 can belong to two categories. The original laptop may be unavailable when we hand the app folder to another person. Design storage that lets us explain old reports and calculate new groupings.",
+      "assertions": [
+        "The design records who owns detailed source retention and exactly which retained or versioned external inputs make reconstruction possible; a mutable path to the original laptop is not sufficient evidence.",
+        "Each meaningful report revision retains its values or immutable payload, linked to input snapshot, classification, and calculation versions where needed; a receipt or incrementing counter alone is not treated as history.",
+        "A canonical post identity and explicit category membership avoid accidental double-counting; allocation or deduplication rules are explicit.",
+        "The isolated proof can read an old revision after correction and reproduce relevant results from packaged inputs without the original machine, or precisely records the unavailable inputs and blocked analyses.",
+        "Existing migration bytes remain unchanged and a source with genuinely aggregate-only input is documented honestly rather than inventing posts or requiring unrelated infrastructure."
+      ]
+    },
+    {
+      "id": "sent-snapshots-and-evidence-retention",
+      "prompt": "In our Toolframe outreach app, templates can be edited after messages are sent. The owner may delete completed research jobs while keeping approved prospects. We want to compare which wording worked and retain why a prospect was admitted. Design the data lifecycle.",
+      "assertions": [
+        "Each send records the actual content or immutable content reference, recipient/interaction identity, and template revision when used; later template or contact edits preserve the sent fact.",
+        "A version used for optimistic concurrency is distinguished from retained historical versions.",
+        "Source evidence required by surviving prospects has a lifecycle independent of disposable job records, or deletion consequences and the owner's policy are explicitly documented.",
+        "Retention is scoped to the stated business need and owner policy; it does not mandate permanent retention of every log, payload, or secret."
+      ]
+    },
+    {
+      "id": "scope-constraints-and-honest-legacy-migration",
+      "prompt": "Improve a legacy Toolframe schema where a metric row stores week_id and ingestion_run_id, and each run belongs to a week. Both references are foreign keys. Existing reports must still work; old event dates are sometimes unknown.",
+      "assertions": [
+        "An isolated negative test rejects a row referencing a run from another week, even though both referenced rows exist; foreign keys being enabled alone is not accepted as proof.",
+        "Stable constraints enforce business identity and parent scope where supported; any transaction-only invariant names its write owner and test.",
+        "The migration is additive or provides a reviewed compatibility path, preserves applied migration checksums, and labels unavailable or inferred legacy detail honestly.",
+        "Meaningful numeric and deletion invariants are tested against an isolated migrated database without altering a returned user database."
+      ]
+    },
+    {
+      "id": "data-model-plugin-provider-boundaries",
+      "prompt": "Add a monthly sales report to this Toolframe app. The existing sales plugin owns orders and lines, another domain needs the report through its business API, and the owner may stop the sales plugin or switch from SQLite to PostgreSQL. Preserve the ability to investigate individual sales.",
+      "assertions": [
+        "Extends the existing meaningful sales capability and keeps authoritative records, queries, and constraints in its owning domain; a report does not create a plugin per table or function.",
+        "MCP, UI, and cross-domain consumers use the public leased business service or declared requires, without deep imports or bypassing the provider through direct storage access.",
+        "Any new schema uses the domain-prefixed tables, owner-local schema.json revision and required provider SQL variants; applied revisions and original legacy history stay immutable.",
+        "Records same-record relationship rules and verifies them on each supported provider with disposable data; a PostgreSQL read-only check is not presented as an executed migration.",
+        "Stopping or uninstalling the service preserves business facts, snapshots and receipts; switching targets does not copy rows and a transfer needs a separately scoped plan.",
+        "Monthly outputs and any justified cache remain traceable to retained detailed inputs; no public SQL, warehouse, extra database or unrelated Job model is introduced."
+      ]
+    },
+    {
+      "id": "evidence-scope-with-unspecified-participation",
+      "prompt": "Harbor Studio is in both SME (confirmed) and Partnerships (target). Current messages concern Partnerships. A completed research job found a public listing for Harbor Studio and recorded that it provides event services; the evidence does not name a program. Model retention when completed jobs are removed and prospects remain.",
+      "assertions": [
+        "Keeps the observed claim at its supported organization scope; recent Partnerships activity does not establish which enrollment was qualified or admitted.",
+        "Leaves an unspecified program/qualification association unresolved, or records an explicit later owner decision separately from the original observation.",
+        "Deleting the completed job preserves the retained claim, original subject, provenance and observed time without inventing admission history.",
+        "An explicit future qualification association enforces consistent organization identity through supported constraints or its owning service transaction."
+      ]
     }
   ],
   "end_to_end": [

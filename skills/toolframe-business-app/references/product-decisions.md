@@ -657,3 +657,26 @@ The older answers remain here as historical evidence, not current instructions.
 - **Rationale/tradeoff:** Operators never mistake an incomplete business app
   for a healthy one. Recovery requires the master agent to fix source before
   service resumes.
+
+## Data preservation guidance — 2026-09-19
+
+- **Owner direction:** Adopt lite-mcp's data-modeling guidance, expanded private
+  domain-model template and evaluation cases on the current Toolframe branch.
+- **Policy:** The development handbook owns the data-model gate: preserve
+  meaningful available facts, relationships, source/revision evidence and
+  historical values independently of today's dashboard or tool response. Derive
+  summaries from recoverable inputs and record deliberate loss or unavailable
+  detail. Retention follows business need and owner policy, not an indefinite
+  obligation to save every payload or secret.
+- **Integration:** Keep the current complete business service per capability,
+  leased public contracts, domain-prefixed tables, owner-scoped schema revisions,
+  provider SQL variants and preserved legacy history. Data design changes no
+  runtime authority or automatic target-transfer behavior. The root skill routes
+  to the gate, the template captures decisions, and source-only evals exercise it.
+- **Delivery:** Existing installed skills remain user-owned. Use the current
+  `export-skill` workflow to compare and merge a new production copy; updating
+  guidance neither upgrades a business schema nor recovers missing historical
+  inputs automatically.
+- **Evidence:** See `evals/baseline.md`, `evals/cases.json` and `evals/evidence.md`
+  for the previous-version comparison and the scope of measured checks. Results
+  from lite-mcp are source context, not measurements of Toolframe.

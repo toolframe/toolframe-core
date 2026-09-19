@@ -118,6 +118,13 @@ change is needed. Reconcile
 domain-model asset. Keep the owner's terms, entities, invariants, states,
 actors, source ownership, and error meaning explicit.
 
+Before implementation, record each table's grain (what one row represents),
+identity, relationship rules and recoverable inputs for derived views. For
+history, distinguish observed events from inference and state which past values
+survive correction or deletion. Complete the applicable decisions in the
+handbook's [data-model gate](references/development-handbook.md#model-durable-facts-before-implementation)
+before writing migration SQL; expose unavailable detail rather than inventing it.
+
 Read [job-domain-model.md](references/job-domain-model.md) only when the app
 owns queued, claimed, leased, retried, or human-reviewed agent work. Do not
 force the Job vocabulary onto an ordinary register, lookup, or report.
@@ -194,7 +201,8 @@ behavior must go through the master development agent.
 
 At minimum:
 
-1. Run focused model, plugin, migration, MCP/UI and error-path tests.
+1. Run focused model, data-preservation, plugin, migration, MCP/UI and error-path
+   tests.
 2. Run `./toolframe check --format json` and require `ok: true`.
 3. Start the real server and confirm it reaches readiness with every domain,
    migration, tool, widget, dependency, and linked LLMS document intact.

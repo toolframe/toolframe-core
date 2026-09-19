@@ -68,7 +68,12 @@ internal and must not be edited by a user migration.
 
 Use foreign keys where the chosen schema permits them, indexes for pending
 selection (`status`, `available_at`, `priority`), and an index for each
-history lookup (`job_id`, event/result/review time). Store timestamps in a
+history lookup (`job_id`, event/result/review time). Apply the development
+handbook's [relationship rules](development-handbook.md#model-durable-facts-before-implementation):
+when a row stores `job_id` alongside an Attempt, ContextVersion or Result
+reference, enforce that the referenced record belongs to that same Job.
+Dashboard counts and combined workbench rows derive from the retained context,
+attempt, result, review and event records. Store timestamps in a
 consistent UTC representation. Keep human-facing text separate from machine
 state values. The presented lease token may be returned to the current
 Attempt, but persist only its hash plus a fencing value; neither is an

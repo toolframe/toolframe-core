@@ -14,6 +14,8 @@ in code and documentation.
 - Human entrance: `<dashboard pages/widgets>`
 - Agent entrance: `<MCP tools and `/mcp` connection>`
 - Data source and database: `<selected provider/target and any external read-only references>`
+- Input-retention owner: `<this app or named upstream; snapshot/access/backup needed at handoff>`
+- Future questions supported / unavailable: `<what retained detail enables; known limits>`
 - Owning source domain(s): `<domains/<business_domain>>`
 - Public business service: `<Protocol/ServiceKey exported from domain __init__.py>`
 - Concrete plugin / schema owner / host domain gate: `<distinct identities and app/plugins.py binding>`
@@ -39,9 +41,17 @@ them.
 
 Describe each entity in one sentence, then record its identity and lifecycle.
 
-| Entity | Identity | Required fields | Relationships | Lifecycle owner |
+| Entity | Grain: one record means | Identity | Required fields | Lifecycle owner |
 | --- | --- | --- | --- | --- |
-| `<entity>` | `<stable id>` | `<fields>` | `<belongs to / references>` | `<human / agent / system>` |
+| `<entity>` | `<one organization / enrollment / order / occurrence>` | `<stable key; source identity; ambiguous-match policy>` | `<fields>` | `<human / agent / system>` |
+
+Apply the bundled skill's data-model rules before writing a migration.
+Record each relationship's integrity and lifecycle, including any same-parent
+rule that separate foreign keys cannot establish.
+
+| Relationship | Multiplicity and optionality | Keys / uniqueness / link table | Update/delete rule | Enforcement |
+| --- | --- | --- | --- | --- |
+| `<parent → child>` | `<1:1 / 1:many / many:many; required or optional>` | `<foreign key, unique key, junction if needed>` | `<restrict / cascade / null / archive, with reason>` | `<supported constraint or owning service's guarded transaction; test>` |
 
 Rules that must remain true across every write:
 
@@ -60,6 +70,37 @@ and new target for upgrades. `_toolframe_*` tables belong to the Python runtime.
 | --- | --- | --- | --- |
 | `<business_domain>_<entity>` | `<columns, nullability, checks, foreign keys, version>` | `<business query indexes>` | `<owner@revision>` |
 | `<business_domain>_<entity>_events` | `<append-only event columns>` | `<history indexes>` | `<owner@revision>` |
+
+### Facts, sources, and derived views
+
+Use the handbook's data-model rules to distinguish authoritative records,
+presentation and caches. Keep service/schema ownership above in force for all
+retained inputs and derived data.
+
+| Stored data | Role | Source / identity / transformation | Retention or historical meaning |
+| --- | --- | --- | --- |
+| `<table or artifact>` | `<observed fact / inferred state / source copy / issued snapshot>` | `<source ID, supported subject/relationships, unresolved associations, import time, input/classification/rule revisions>` | `<retained values per revision; deletion policy; unavailable detail>` |
+
+| Business view or derived cache | Grain | Authoritative inputs and calculation | Refresh / rebuild |
+| --- | --- | --- | --- |
+| `<dashboard card / query / cache>` | `<one output row means>` | `<recoverable tables/snapshots; calculation; overlapping-membership rule>` | `<query at read time, or justified cache owner/freshness/rebuild>` |
+
+For activity or history, record the applicable time and evidence semantics:
+
+| Record | Occurrence identity and retry key | Time meaning | Evidence and history |
+| --- | --- | --- | --- |
+| `<interaction / observation / issued report>` | `<one actual occurrence; distinct same-day records allowed>` | `<occurred at and precision/unknown; recorded at>` | `<observed/inferred; past payload retained; surviving evidence after deletion>` |
+
+For upstream inputs, record the retained snapshot/version, owner, retrieval
+location and backup/handoff coverage. A version fence protects a write; state
+separately where historical values are retained. Cross-domain inputs use the
+provider's public business service and an explicit retention agreement.
+
+The model is ready for implementation when every authoritative table has a
+declared grain and identity, relationships have integrity and lifecycle rules,
+and derived views trace to recoverable inputs. Record the consequence of
+inferred or unavailable detail and one additional grouping or join the retained
+facts support beyond the initial dashboard.
 
 Use UTC timestamps, bound parameters, and short transactions. Large outputs
 belong in managed artifact references rather than oversized JSON columns.
@@ -127,6 +168,7 @@ cannot be composed to bypass an invariant. Then run
 an MCP/tool call. Record the date, command, and observed evidence here:
 
 - Migration/check evidence: `<...>`
+- Data-preservation evidence: `<provider actually exercised; wrong-parent links/duplicates/deletion; original view and additional query; applicable history, unknown-date, retry, revision and input-recovery checks>`
 - MCP evidence: `<...>`
 - Dashboard evidence: `<...>`
 - LAN peer evidence: `<...>`

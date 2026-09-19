@@ -112,6 +112,103 @@ automatic widget registry, select part of it, or compose UI directly.
 
 ## 5. Build one vertical business loop
 
+### Model durable facts before implementation
+
+Business RPC and dashboard design constrain what callers see; the underlying
+database preserves the detail needed to ask other questions about the same
+business. Use a normalized relational model by default: each fact has an
+authoritative home, and related records connect through stable keys. Define who
+retains the inputs before accepting a summary-only boundary: name which future
+questions the retained data can answer and which need unavailable detail. Keep
+the model within the agreed business scope; no speculative enterprise model is
+required.
+
+The owning domain and business service retain authority over these records.
+Across domains, consume public business services; migration access and provider
+SQL follow [plugins-and-data.md](plugins-and-data.md). Relationships and reporting
+needs do not authorize deep imports or bypassing a service through its tables.
+
+Before implementation or writing SQL, complete the data model using these rules:
+
+1. **State the grain.** Describe what one row represents in every table, such
+   as one order, one order line, or one payment. Preserve the finest meaningful
+   detail available from the agreed input, including quantities, units, relevant
+   timestamps, stable source IDs, and facts needed for later joins. If the source
+   supplies only monthly totals, record that limitation; never invent line data.
+   Distinguish an enduring entity from its participation in a list, program, or
+   transaction when those have independent state. An import row number locates
+   source evidence; it is not by itself a durable real-world identity. Resolve
+   ambiguous identity with evidence, preserving uncertain matches for review.
+2. **Define relationships.** Record one-to-one, one-to-many, or many-to-many
+   multiplicity, optionality, keys, uniqueness, and update/delete behavior.
+   Use link tables for many-to-many relationships and relational columns for
+   fields used in joins, filters, and constraints. JSON may hold flexible source
+   payloads or metadata; it does not replace known business relationships.
+   Enforce local rules with keys/checks and cross-row rules with constraints
+   supported by the selected provider or guarded transactions in the owning
+   business service. Separate foreign keys alone do not prove that two
+   referenced rows belong to the same business record.
+   Evidence supports only the relationships its source establishes. If the
+   relevant parent or participation is unspecified, keep that association
+   unresolved; nearby activity is not evidence for assigning it. Record a later
+   owner decision separately from the original observation.
+3. **Preserve occurrence meaning.** Separate current state, observed events,
+   and inferred milestones. A later stage can imply funnel membership without
+   establishing when earlier stages happened. Store known occurrence time and
+   its precision separately from recording/import time; preserve unknown dates
+   and label inference. Give distinct interactions their own identities, even
+   when they share a type and day. A retry key identifies one occurrence; daily
+   unique-person counts belong in a query rather than an event uniqueness rule.
+4. **Trace recoverable inputs.** Record where imported facts came from, their source
+   identity, import time, and transformation/version information when available.
+   Retain original imports when audit or reprocessing needs them, especially
+   when normalization drops relevant source detail; use managed artifact
+   references for files. Document retained/discarded data and retention rules.
+   “Raw” does not mandate storing every field or secret forever.
+   When input retention belongs to another system, record its owner, immutable
+   snapshot/version reference, retrieval path, and retention/backup contract.
+   Verify that the needed inputs can be retrieved or travel with the handoff;
+   a mutable path on the original machine alone does not prove reproducibility.
+   Include upstream stores and retained artifacts in the ownership/backup map;
+   the app still uses one selected database service.
+5. **Derive business views.** Build totals, display labels, combined rows, and
+   dashboard/API shapes with queries or SQL views over retained facts. Keep the
+   public API focused on business intent. Add a stored derived table only for
+   an evidenced need; document its grain, sources, calculation, freshness rule,
+   refresh owner, and complete rebuild path. It is never the only copy of the
+   facts used to create it.
+   For overlapping memberships, state whether a measure counts distinct
+   entities or allocates values across groups so joins do not inflate totals.
+6. **Preserve historical business facts.** An issued order's agreed price, an
+   approved calculation with its inputs/rule version, or an immutable instruction
+   snapshot has meaning at a specific time. Retain it even when today's master
+   data changes. Distinguish these records from disposable display caches;
+   derivation at creation time does not make an issued fact disposable.
+   A concurrency counter or receipt is not a copy of past values. When revisions
+   matter, retain the values or immutable payload for each revision and link it
+   to the input, classification, and rule versions used. For sent or issued
+   content, retain the actual content and recipient/context at that time; a
+   reference to the current template cannot reconstruct a past message.
+7. **Set evidence lifecycles.** Separate disposable workflow records from
+   evidence still required by surviving business records. Record what deletion
+   removes, restricts, archives, or retains independently, according to the
+   owner's retention policy. Apply this explicitly to imported source evidence,
+   historical values, and artifacts as well as ordinary child rows.
+
+For example, a monthly sales card can read a grouped query over `sales_orders`
+and `sales_order_lines`, with customer/product relationships and prices at sale.
+Those same records can later answer quantities sold by product. Saving only
+`(month, sales_total, order_count)` would lose that ability. Start with queries
+and appropriate indexes; this policy requires neither a data warehouse nor a
+separate event-sourcing system.
+
+**Schema design gate:** every authoritative table has a declared grain and
+identity; every relationship has explicit integrity and lifecycle rules; every
+derived view traces to recoverable inputs; and unavailable detail, inference,
+or intentional data loss has a recorded consequence. History-bearing records
+state their time meaning and retained revision values. Proceed to migration
+only after the applicable decisions are present in `DOMAIN_MODEL.md`.
+
 ### A. Define and register a meaningful business service
 
 Read [plugins-and-data.md](plugins-and-data.md) before every new capability or
@@ -171,9 +268,12 @@ administration out of MCP and the dashboard. Do not put transaction control,
 connection PRAGMAs, attached databases, or triggers in migration source; the
 Python coordinator owns migration execution and durable artifacts/history.
 
-Prefer durable business history: stable identities, UTC timestamps, actor
-labels, explicit versions, and append-only events/results when reconstruction
-matters. Back up the selected database before destructive data work; include sidecars for SQLite.
+Apply the completed data model through these owner-scoped revisions. For legacy
+models, retain source values, label inference or missing detail, and reconcile
+business outputs on an isolated migrated copy before cutover. Further evidence
+must come from actual retained sources; schema changes cannot reconstruct
+uncaptured events. Back up the selected database before destructive data work;
+include sidecars for SQLite.
 
 ### D. Publish narrow Business RPC tools
 
@@ -274,7 +374,24 @@ Doctor flow:
 
 ## 7. Verify and hand off
 
-Run focused tests plus the repository's formatter/linter. Then require:
+Run focused tests plus the repository's formatter/linter. Verify applicable
+preservation rules on isolated data using the supported provider, recording
+which provider and execution level were actually tested:
+
+- Reject wrong-parent references even when both referenced rows exist; exercise
+  duplicate business keys, meaningful numeric bounds and the chosen deletion rules.
+- Reproduce the initial business view and an additional grouping or join from
+  retained facts without reimporting. Include inputs with equal dashboard totals
+  but different underlying detail so the extra query proves preservation.
+- Where history matters, retain two distinct same-day occurrences while a retry
+  stays idempotent, keep unknown dates unknown, and preserve issued values and
+  sent content after corrections or template/contact edits.
+- Rebuild any derived cache without changing authoritative records. If handoff or
+  reprocessing is promised, reproduce it from retained inputs without the original
+  machine, or name the unavailable input and the analysis it blocks. Verify that
+  deletion preserves evidence needed by surviving records under the agreed policy.
+
+Then require:
 
 1. `./toolframe check --format json` succeeds.
 2. Real startup reaches readiness and applies pending migrations.

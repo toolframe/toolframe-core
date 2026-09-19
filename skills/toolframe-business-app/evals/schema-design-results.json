@@ -1,0 +1,433 @@
+{
+  "version": 1,
+  "date": "2026-09-19",
+  "baseline_commit": "a095bbe87636bfe460b87b2f5b605ef787778cfb",
+  "scope": "One independent paired scratch-schema exercise and one fresh focused refinement exercise. Parent replay and negative SQL probes are separate observations, not model success-rate measurements.",
+  "local_artifact_root": ".toolframe/data-model-eval-q_9enu7o",
+  "artifact_retention": "Generated examples, production snapshots and replay outputs are retained in this ignored local directory. Portable requests and this measured summary are source-controlled; raw examples are not installed or exported with the production skill.",
+  "requests": [
+    {
+      "path": "evals/schema-design-exercise.md",
+      "sha256": "a53d93073bc0cec07d44539f2c936d36d81bd784b3411805ba37bd6a45d268c3",
+      "supplied_copy": {
+        "path": "request.md",
+        "sha256": "a53d93073bc0cec07d44539f2c936d36d81bd784b3411805ba37bd6a45d268c3"
+      },
+      "sessions": [
+        "previous",
+        "initial_port"
+      ]
+    },
+    {
+      "path": "evals/evidence-scope-exercise.md",
+      "sha256": "935d41a54ce74af10dc52685b1fe0e88d435d202fb80e67e27896aae89852495",
+      "supplied_copy": {
+        "path": "scope-request.md",
+        "sha256": "935d41a54ce74af10dc52685b1fe0e88d435d202fb80e67e27896aae89852495"
+      },
+      "sessions": [
+        "final_refinement"
+      ]
+    }
+  ],
+  "isolation": {
+    "inputs": "Each session received its production-only skill snapshot, raw request and own output directory. No expected answers, audit conclusions or other session outputs were supplied.",
+    "read_observation": "Self-reported read logs; not instrumented activation or routing traces.",
+    "production_reads": [
+      "SKILL.md",
+      "references/development-handbook.md",
+      "references/plugins-and-data.md",
+      "assets/DOMAIN_MODEL.template.md"
+    ],
+    "read_logs": [
+      {
+        "path": "previous-output/reads.json",
+        "sha256": "ff368ff0f34d81a66ec0ede5936eafb9699c96356a7d2cbbb00f0502c07bf2ee"
+      },
+      {
+        "path": "revised-output/reads.json",
+        "sha256": "60aecd47aca813bdbe51f4db4d6e9d5f96ee6872b2e138c5094dcabe651902d8"
+      },
+      {
+        "path": "scope-output/reads.json",
+        "sha256": "665bb19e765e7822b7d2b1e249e499b51fb1460deb71f69030593a7aac6b07dc"
+      }
+    ]
+  },
+  "snapshots": {
+    "previous": {
+      "production_file_count": 32,
+      "manifest": {
+        "path": "previous-manifest.json",
+        "sha256": "ffe9ebede1555225f39b930275377b2457784bc68f4b17651ef0c8069c1d337e"
+      },
+      "manifest_format": "JSON object mapping production-relative paths to SHA-256 file digests; evaluation resources excluded",
+      "changed_instruction_sha256": {
+        "SKILL.md": "8015dd9173aae32552d09d09945310e84f06f6542b5c2cc05f5324e12bbb0e08",
+        "assets/DOMAIN_MODEL.template.md": "a29662fc0ce2b73529311dcc107412d885e85059ab9c873cfb4f9c8bd128f97c",
+        "references/development-handbook.md": "5517972c92da51967d527f08af8413e1c523a2edada0a4bffba80427f6e73c43",
+        "references/job-domain-model.md": "7bc66930c94e66ea6f836914989d4ce8e6e79589db67dd0fc215557ec20f834c",
+        "references/product-decisions.md": "779be9f5a93814022676079f631c130b7cf42533b403f0eb320f493a075633b3"
+      }
+    },
+    "initial_port": {
+      "production_file_count": 32,
+      "manifest": {
+        "path": "revised-manifest.json",
+        "sha256": "a1391abb5e7453cdfbf07be2e7f21db84de6e198f1faff7f6eff02c7574e5389"
+      },
+      "manifest_format": "JSON object mapping production-relative paths to SHA-256 file digests; evaluation resources excluded",
+      "changed_instruction_sha256": {
+        "SKILL.md": "7f9cf142ef28a1bdb2dd95499a518d1ee1d20ef23d422c294c43a29041d34703",
+        "assets/DOMAIN_MODEL.template.md": "8143d21316bb0eff33c924b3581e9fdb922c2611f922e325071f28fc105f0868",
+        "references/development-handbook.md": "efe322d2934627d942303f3fd9a3b4761d3b4b90aedfafac0f385a8c1e209439",
+        "references/job-domain-model.md": "66b32495b0bdd9a05cdec3f11218bafaa77d5b92dcde853234830ebfa89fefe9",
+        "references/product-decisions.md": "f0037db2fece732b1d9b2b426717ca65e0adcafeda27b74759c71c1484af5215"
+      }
+    },
+    "final_refinement": {
+      "production_file_count": 32,
+      "manifest": {
+        "path": "final-manifest.json",
+        "sha256": "e6728a4397758fa9a14868223217181b846300ef65e9aef0213469939eddd635"
+      },
+      "manifest_format": "JSON object mapping production-relative paths to SHA-256 file digests; evaluation resources excluded",
+      "changed_instruction_sha256": {
+        "SKILL.md": "7f9cf142ef28a1bdb2dd95499a518d1ee1d20ef23d422c294c43a29041d34703",
+        "assets/DOMAIN_MODEL.template.md": "441fe5f510455f72de5038a5b7c592c8cbb9e870c7eb1c3defd621c0cbc77b9b",
+        "references/development-handbook.md": "617c263661ed74914fc119fbe32a141a13211dd2f5c0f493224b440e8f007507",
+        "references/job-domain-model.md": "66b32495b0bdd9a05cdec3f11218bafaa77d5b92dcde853234830ebfa89fefe9",
+        "references/product-decisions.md": "f0037db2fece732b1d9b2b426717ca65e0adcafeda27b74759c71c1484af5215"
+      }
+    }
+  },
+  "paired_exercise": {
+    "runs": [
+      {
+        "guide": "previous",
+        "app": "outreach",
+        "generated_artifacts": [
+          {
+            "path": "previous-output/outreach_register/DOMAIN_MODEL.md",
+            "sha256": "8d181bb707a3f9d087e4a415976d2020bb6bbf1b178f70a0e9b08afaffcc701c"
+          },
+          {
+            "path": "previous-output/outreach_register/schema.sql",
+            "sha256": "255343fe1c8cdc8dd68a1f1d12b98aff07fc3f104adec665b2238ede41e3a78f"
+          },
+          {
+            "path": "previous-output/outreach_register/exercise.py",
+            "sha256": "537a51ff520bd69f12b889fb8676971d91aa00a973c4ffc4486bc949ae691edf"
+          },
+          {
+            "path": "previous-output/outreach_register/results.json",
+            "sha256": "d02e2ee25771f34a956aa8908f3126e0a1e7fed79345581ed6eac4c971fa509d"
+          }
+        ],
+        "self_authored_checks": 12,
+        "all_self_checks_passed": true,
+        "original_sqlite_version": "3.53.1",
+        "parent_replay": {
+          "exit_code": 0,
+          "all_self_checks_passed": true,
+          "sqlite_version": "3.53.1",
+          "result": {
+            "path": "parent-reruns/previous/outreach_register/parent-results.json",
+            "sha256": "d02e2ee25771f34a956aa8908f3126e0a1e7fed79345581ed6eac4c971fa509d"
+          }
+        }
+      },
+      {
+        "guide": "previous",
+        "app": "editorial",
+        "generated_artifacts": [
+          {
+            "path": "previous-output/editorial_reporting/DOMAIN_MODEL.md",
+            "sha256": "4200d07d8a01c5c200ccb343c5a8e06a0893c74be782619b21309ba3261a517f"
+          },
+          {
+            "path": "previous-output/editorial_reporting/schema.sql",
+            "sha256": "da8b2316e032c9b615bf38b0705041b2f88ec7b83931ccd576ab414edafb6f9b"
+          },
+          {
+            "path": "previous-output/editorial_reporting/exercise.py",
+            "sha256": "14486769b6522b2cfb83831e2f6f88b201590ff81ab25219b47a853de670ebaa"
+          },
+          {
+            "path": "previous-output/editorial_reporting/results.json",
+            "sha256": "fac1a1116f2f683fb8d1c3861620909d83e0524c503a9f394adc62a328684137"
+          }
+        ],
+        "self_authored_checks": 19,
+        "all_self_checks_passed": true,
+        "original_sqlite_version": "3.53.1",
+        "parent_replay": {
+          "exit_code": 0,
+          "all_self_checks_passed": true,
+          "sqlite_version": "3.53.1",
+          "result": {
+            "path": "parent-reruns/previous/editorial_reporting/parent-results.json",
+            "sha256": "fac1a1116f2f683fb8d1c3861620909d83e0524c503a9f394adc62a328684137"
+          }
+        }
+      },
+      {
+        "guide": "initial_port",
+        "app": "outreach",
+        "generated_artifacts": [
+          {
+            "path": "revised-output/outreach/DOMAIN_MODEL.md",
+            "sha256": "8bdd5ebfaa00e2596c9843c5140d8db1c2f3dabfbbb0efec7b599a55f02b9043"
+          },
+          {
+            "path": "revised-output/outreach/schema.sql",
+            "sha256": "e200be236ef8af22ae7452b0866d6ee4f31327e50ca517c525efc0ddc681db63"
+          },
+          {
+            "path": "revised-output/outreach/exercise.py",
+            "sha256": "c9075b82e5165b039294f40b0753436eec9b3cf4858aa4dfd639f27bfe04061d"
+          },
+          {
+            "path": "revised-output/outreach/results.json",
+            "sha256": "534009971d26b2ae688879a68bfdb7556d03b98dbef9b11d8fa5622d0a741103"
+          }
+        ],
+        "self_authored_checks": 22,
+        "all_self_checks_passed": true,
+        "original_sqlite_version": "3.53.1",
+        "parent_replay": {
+          "exit_code": 0,
+          "all_self_checks_passed": true,
+          "sqlite_version": "3.53.1",
+          "result": {
+            "path": "parent-reruns/initial-revised/outreach/parent-results.json",
+            "sha256": "9cad3114e13afd072924aee5e9bab66130481d465c59398dbb14fe3bf8868653"
+          }
+        }
+      },
+      {
+        "guide": "initial_port",
+        "app": "editorial",
+        "generated_artifacts": [
+          {
+            "path": "revised-output/editorial/DOMAIN_MODEL.md",
+            "sha256": "d2b4d22c48f7976320490dded7f7ed669ae1b9d4f231b68d7f23e347535690a3"
+          },
+          {
+            "path": "revised-output/editorial/schema.sql",
+            "sha256": "34fccdec316a1a36d7dd0ac9c549dd474879c31bacf76f30f4e6c42c4583b0d6"
+          },
+          {
+            "path": "revised-output/editorial/exercise.py",
+            "sha256": "5ac5c2713434a8c31e8609be9118b5c11b449dbdbc3324800c2ef6c511d6f0b0"
+          },
+          {
+            "path": "revised-output/editorial/results.json",
+            "sha256": "29cc252aecc7a812098813a1921dea65ff42c505f9229b8f83c65229c2ceab6a"
+          }
+        ],
+        "self_authored_checks": 23,
+        "all_self_checks_passed": true,
+        "original_sqlite_version": "3.53.1",
+        "parent_replay": {
+          "exit_code": 0,
+          "all_self_checks_passed": true,
+          "sqlite_version": "3.53.1",
+          "result": {
+            "path": "parent-reruns/initial-revised/editorial/parent-results.json",
+            "sha256": "f0f0ee5a57c002243cd2aa874cb1e2d2b20cc93e69310cfd54310542a3ebc5fe"
+          }
+        }
+      }
+    ],
+    "interpretation": "The checks were authored by each session and differ in scope. Counts are execution facts, not comparable scores or proof that every evaluation assertion passed.",
+    "common_observations": {
+      "outreach": {
+        "organizations": 1,
+        "independent_program_participations": 2,
+        "retained_messages_after_retry": 3,
+        "same_day_outbound_messages": 2,
+        "same_day_contacted_companies": 1,
+        "original_sent_wording_survives_template_edit": true,
+        "missing_pre_import_messages_not_fabricated": true
+      },
+      "editorial": {
+        "historical_reports": [
+          {
+            "earning_cents": 1500,
+            "cost_cents": 200,
+            "post_count": 2
+          },
+          {
+            "earning_cents": 1700,
+            "cost_cents": 200,
+            "post_count": 2
+          }
+        ],
+        "current_totals": {
+          "earning_cents": 1700,
+          "cost_cents": 300,
+          "post_count": 2
+        },
+        "category_overlap_does_not_inflate_whole_week_total": true,
+        "retained_inputs_reconstruct_reports_without_original_laptop": true,
+        "aggregate_only_source": {
+          "earning_cents": 9000,
+          "post_count": null,
+          "cost_cents": null,
+          "underlying_post_detail_available": false
+        }
+      }
+    },
+    "additional_initial_port_observations": [
+      "Historical message recipient survives contact edits.",
+      "Equal whole-week totals with different category memberships retain distinguishable category results.",
+      "Generated checks reject existing-but-wrong-parent links and roll back failed multiwrite operations."
+    ],
+    "parent_constraint_probes": {
+      "script": {
+        "path": "parent_probes.py",
+        "sha256": "945def70c1e5c09e09621738b45e0d009ee1b3dfc589c1015972ffa23e042862"
+      },
+      "result": {
+        "path": "parent-probes.json",
+        "sha256": "8032ebcd2fd2d948af784c720dfdb9ff2c3749b3a7752a08a5aaef3176798449"
+      },
+      "observed": {
+        "scope": "Scratch SQLite constraints only; not provider or deployed-service validation.",
+        "previous": {
+          "foreign_keys_enabled": true,
+          "wrong_week_current_pointer_rejected": false,
+          "wrong_source_predecessor_rejected": false,
+          "wrong_week_predecessor_rejected": false
+        },
+        "initial_revised": {
+          "foreign_keys_enabled": true,
+          "wrong_week_current_pointer_rejected": true,
+          "wrong_source_predecessor_rejected": true,
+          "wrong_week_predecessor_rejected": true
+        }
+      }
+    },
+    "semantic_failure": {
+      "affected_guides": [
+        "previous",
+        "initial_port"
+      ],
+      "finding": "Both outreach examples assign company-level research evidence to the Partnerships enrollment although the request does not establish a program association. Passing self-checks do not validate that association.",
+      "observed_associations": {
+        "previous": "prospect_partnerships_harbor",
+        "initial_port": "harbor_partners"
+      },
+      "disposition": "Retain original outputs; add the evidence-scope case before refining the handbook relationship rule and source/relationship fields in the template."
+    }
+  },
+  "final_focused_exercise": {
+    "case": "evidence-scope-with-unspecified-participation",
+    "guide": "final_refinement",
+    "generated_artifacts": [
+      {
+        "path": "scope-output/DOMAIN_MODEL.md",
+        "sha256": "599fac4aee707b5275747c84fc981672bb744be97ceafb1a9915d77634c1098a"
+      },
+      {
+        "path": "scope-output/schema.sql",
+        "sha256": "77e8c60b1f8e913c4025f1811ddf0fca46b4a7082f45cc23caf20e1de45b56c2"
+      },
+      {
+        "path": "scope-output/exercise.py",
+        "sha256": "9ff6518532f5bb855d12e599ce0f1c629218371e894b7efefb586b5e4afed105"
+      },
+      {
+        "path": "scope-output/results.json",
+        "sha256": "a3a7160e549090fc392f0d2f90333099904460da6ba11ba71481c0ffa24ca79f"
+      }
+    ],
+    "original_sqlite_version": "3.43.2",
+    "self_authored_checks": 11,
+    "all_self_checks_passed": true,
+    "check_names": [
+      "exact_replay_idempotent_and_changed_replay_rejected",
+      "duplicate_participation",
+      "orphan_interaction",
+      "attached_job_deletion",
+      "referenced_company_deletion",
+      "wrong_company_job_link",
+      "wrong_company_attribution",
+      "attributed_evidence_deletion",
+      "fixture_same_company_attribution_and_rationale_survive_job_deletion",
+      "equal_totals_preserve_different_detail",
+      "retention_unknown_years_and_fixture_rollback"
+    ],
+    "parent_replay": {
+      "exit_code": 0,
+      "sqlite_version": "3.53.1",
+      "result": {
+        "path": "parent-reruns/final-scope/results.json",
+        "sha256": "711e057889a99c9fd235dc26b4632ed93d1735e6a2cd78c2d6ba3d7e8c41c9d6"
+      },
+      "summary": {
+        "passed": true,
+        "checks": 11,
+        "company_count": 1,
+        "participations": 2,
+        "interactions": 3,
+        "remaining_jobs": 0,
+        "surviving_evidence": 1,
+        "program_attributions": 0
+      }
+    },
+    "observations": {
+      "program_evidence_counts": [
+        {
+          "program": "Partnerships",
+          "observations": 0
+        },
+        {
+          "program": "SME",
+          "observations": 0
+        }
+      ],
+      "supplied_company_observation_retained_without_program_association": true,
+      "evidence_subject_content_provenance_and_observation_time_unchanged_after_job_deletion": true,
+      "live_job_link_after_deletion": null,
+      "unsupported_observation_year": null,
+      "foreign_key_violations": [],
+      "hypothetical_owner_attribution": "A separately labeled fictional owner decision exercises same-company constraints and deletion retention inside a rolled-back fixture; it is absent from final supplied-data query results."
+    },
+    "interpretation": "A fresh focused example follows the final scope rule. The complete paired request was not rerun after the final refinement."
+  },
+  "delivery_checks": {
+    "strict_skill_validation": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "quick_skill_validation": "passed",
+    "production_markdown_links_resolved": 20,
+    "frontmatter_unchanged": true,
+    "existing_routing_end_to_end_and_runtime_contract_cases_unchanged": true,
+    "evaluation_case_ids": 44,
+    "new_data_model_cases": 10,
+    "new_progressive_read_cases": 1,
+    "rust_tests": {
+      "command": "cargo test --all-targets skill",
+      "passed": 8,
+      "runtime_unit_tests": 5,
+      "cli_integration_tests": 3,
+      "scope": "Production skill installation/export, preservation, path rejection, concurrency and embedded/source parity; evaluation resources excluded."
+    },
+    "git_diff_check": "passed"
+  },
+  "replay": {
+    "generated_examples": "Copy a generated app output directory to disposable scratch storage, then run python3 -B exercise.py from that copy. Compare query values and invariant outcomes rather than generated timestamps.",
+    "parent_probes": "python3 .toolframe/data-model-eval-q_9enu7o/parent_probes.py",
+    "new_model_session": "Use the corresponding portable request and production-only skill snapshot in a fresh session, without this result file, cases.json or earlier outputs."
+  },
+  "unmeasured": [
+    "Repeated-run or cross-model reliability and activation/routing scores.",
+    "Full execution of all ten new data-model cases or the new progressive-read case.",
+    "The complete two-app request against the final relationship-scope refinement.",
+    "Deployed Toolframe business services, provider adapters, migrations, MCP or dashboard acceptance for these scratch examples.",
+    "PostgreSQL execution, target transfer, recovery of uncaptured historical values or changes to live databases."
+  ]
+}
