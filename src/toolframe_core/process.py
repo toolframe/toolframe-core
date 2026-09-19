@@ -23,7 +23,9 @@ class WorkerProcess:
         self.log_task = asyncio.create_task(self._logs())
 
     @classmethod
-    async def start(cls, python, entrypoint, handler, *, cwd, log_callback=None):
+    async def start(
+        cls, python, entrypoint, handler, *, cwd, log_callback=None, host_token=None
+    ):
         environment = {
             key: value
             for key, value in os.environ.items()
@@ -37,6 +39,7 @@ class WorkerProcess:
             "toolframe_sdk.worker",
             "--entrypoint",
             entrypoint,
+            *(["--host-token", host_token] if host_token else []),
             cwd=cwd,
             env=environment,
             stdin=asyncio.subprocess.PIPE,
@@ -81,7 +84,16 @@ class WorkerProcess:
                     {"pid": self.pid},
                 ) from error
         await self.peer.close()
-        await asyncio.gather(self.reader_task, self.log_task, return_exceptions=True)
+        if group_exists(self.pid):
+            raise PluginError(
+                "cleanup_failed",
+                "Worker process group still has descendants",
+                {"pgid": self.pid},
+            )
+        await asyncio.wait_for(
+            asyncio.gather(self.reader_task, self.log_task, return_exceptions=True),
+            timeout,
+        )
         if self.process.returncode not in (0, None):
             raise PluginError(
                 "cleanup_failed",
@@ -91,14 +103,46 @@ class WorkerProcess:
 
     async def force_stop(self):
         self.expected_exit = True
+        await stop_group(self.pid)
         if self.process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(self.pid, signal.SIGTERM)
-            try:
-                await asyncio.wait_for(self.process.wait(), 2)
-            except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(self.pid, signal.SIGKILL)
-                await self.process.wait()
+            await asyncio.wait_for(self.process.wait(), 5)
         await self.peer.close()
-        await asyncio.gather(self.reader_task, self.log_task, return_exceptions=True)
+        await asyncio.wait_for(
+            asyncio.gather(self.reader_task, self.log_task, return_exceptions=True), 5
+        )
+
+
+def group_exists(pid):
+    try:
+        os.killpg(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+async def stop_group(pid):
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if group_exists(pid):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(pid, sig)
+            deadline = asyncio.get_running_loop().time() + 2
+            while group_exists(pid) and asyncio.get_running_loop().time() < deadline:
+                await asyncio.sleep(0.05)
+    if group_exists(pid):
+        raise PluginError(
+            "cleanup_failed",
+            "Process group did not exit after forced stop",
+            {"pgid": pid},
+        )
+
+
+async def process_inventory():
+    process = await asyncio.create_subprocess_exec(
+        "ps", "-axo", "pid=,pgid=,command=", stdout=asyncio.subprocess.PIPE
+    )
+    output, _ = await process.communicate()
+    return {
+        int(parts[0]): {"pgid": int(parts[1]), "command": parts[2]}
+        for line in output.decode().splitlines()
+        if len(parts := line.split(None, 2)) == 3
+    }

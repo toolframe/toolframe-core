@@ -154,7 +154,7 @@ class CoreState:
             )
         return result
 
-    def new_operation(self, kind, target, request, idempotency=None):
+    def idempotent_operation(self, kind, target, request, idempotency=None):
         if idempotency:
             row = self.connection.execute(
                 "SELECT id FROM operations WHERE idempotency=?", (idempotency,)
@@ -169,7 +169,13 @@ class CoreState:
                     raise PluginError(
                         "idempotency_conflict", "Key already belongs to another request"
                     )
-                return existing, False
+                return existing
+        return None
+
+    def new_operation(self, kind, target, request, idempotency=None):
+        existing = self.idempotent_operation(kind, target, request, idempotency)
+        if existing is not None:
+            return existing, False
         identifier = uuid.uuid4().hex
         now = time.time()
         with self.connection:

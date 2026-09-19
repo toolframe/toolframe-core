@@ -477,9 +477,13 @@ class Packages:
                     "artifact_hash_mismatch", "Captured wheel was modified"
                 )
             requirements.append(f"{name}{suffix} @ {path.as_uri()}")
-        # The unpublished development SDK is supplied explicitly through the configured wheelhouse.
+        # A release supplies its SDK wheel; development may provide it through a wheelhouse.
         if "toolframe-sdk" not in names:
-            for link in self.settings.find_links:
+            sdk_wheel = os.environ.get("TOOLFRAME_SDK_WHEEL")
+            links = (
+                [str(Path(sdk_wheel).parent)] if sdk_wheel else []
+            ) + self.settings.find_links
+            for link in links:
                 if "://" in link:
                     continue
                 matches = sorted((self.home / link).glob("toolframe_sdk-0.1.0-*.whl"))

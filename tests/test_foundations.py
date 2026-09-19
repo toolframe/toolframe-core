@@ -110,6 +110,7 @@ packages = ["fixture"]
 
 
 async def test_git_branch_wheel_index_and_offline_cached_resolution(tmp_path):
+    import asyncio
     import shutil
     import subprocess
 
@@ -132,7 +133,9 @@ async def test_git_branch_wheel_index_and_offline_cached_resolution(tmp_path):
         ],
         ["git", "branch", "feature/plugin"],
     ):
-        subprocess.run(arguments, cwd=source, check=True, capture_output=True)
+        await asyncio.to_thread(
+            subprocess.run, arguments, cwd=source, check=True, capture_output=True
+        )
     package = Packages(
         tmp_path / "home",
         PackageSettings(find_links=[str(workspace / "toolframe-sdk/dist")]),

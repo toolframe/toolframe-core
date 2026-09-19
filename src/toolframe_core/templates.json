@@ -1,0 +1,6 @@
+{
+  "entry-register": {
+    "source": "pypi:toolframe-demo-entry-register==0.1.0",
+    "asset": "toolframe_demo_entry_register/templates/entry-register.toml"
+  }
+}

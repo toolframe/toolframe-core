@@ -21,7 +21,7 @@ from toolframe_sdk import PluginError, digest
 from .config import ConfigFile, HostLock, PluginRequest, atomic_write, management_token
 from .graph import Graph
 from .packages import Packages, source_files
-from .process import WorkerProcess
+from .process import WorkerProcess, group_exists, process_inventory, stop_group
 from .state import CoreState
 
 
@@ -52,11 +52,24 @@ class Host:
     def __init__(self, home, *, scratch=False):
         self.home = Path(home).resolve()
         self.config = ConfigFile(self.home)
-        self.composition, self.revision = self.config.read()
+        self.state = CoreState(self.home)
+        self.configuration_error = None
+        try:
+            self.composition, self.revision = self.config.read()
+        except PluginError as error:
+            from .config import Application, Composition
+
+            self.configuration_error = error.as_dict()
+            previous = self.state.meta("last_valid_composition")
+            self.composition = (
+                Composition.model_validate(previous)
+                if previous
+                else Composition(application=Application(id="unconfigured"))
+            )
+            self.revision = self.config.revision
         self.initial_application = self.composition.application.model_dump()
         self.host_run = uuid.uuid4().hex
         self.lock = HostLock(self.home)
-        self.state = CoreState(self.home)
         self.token = management_token(self.home)
         self.packages = Packages(self.home, self.composition.packages)
         self._package_overrides()
@@ -79,19 +92,95 @@ class Host:
         self.publication = {}
         self.gateway_sessions = {}
         self.startup_error = None
+        self.schema_changed = False
+        self.schema_events = []
+        self.optional_failures = {}
+        self.optional_new = set()
+        self.orphans = {}
+        self.failed_roots = set()
+        self.cleanup_blocked = set()
+        self.worker_owners = self.state.meta("worker_owners", {})
 
-    async def start(self, *, apply=True):
+    async def start(self, *, apply=True, wait=True):
         self.lock.acquire()
+        await self.reconcile_workers()
         self.state.reconcile_startup(self.host_run)
+        self.state.set_meta("host_run", self.host_run)
         await self.manager.start()
+        atomic_write(
+            self.home / ".toolframe/endpoint.json",
+            json.dumps(
+                {
+                    "host": self.composition.application.host,
+                    "port": self.composition.application.port,
+                }
+            ),
+        )
         if apply:
-            operation = self.submit("apply", {})
-            await self.wait_operation(operation["id"])
+            operation = self.submit("apply", {"startup": True})
+            if wait:
+                await self.wait_operation(operation["id"])
         if not self.scratch:
             self.tasks = [
                 asyncio.create_task(self._health_loop()),
                 asyncio.create_task(self._watch_loop()),
+                asyncio.create_task(self._exit_loop()),
             ]
+
+    async def reconcile_workers(self):
+        previous_run = self.state.meta("host_run")
+        inventory = await process_inventory()
+        # Also find the narrow spawn-before-journal window using the previous run's
+        # token, which is durable before any worker is launched.
+        if previous_run:
+            for pid, item in inventory.items():
+                marker = f"--host-token {previous_run}/"
+                if (
+                    "toolframe_sdk.worker" in item["command"]
+                    and marker in item["command"]
+                ):
+                    token = item["command"].split("--host-token ", 1)[1].split()[0]
+                    self.worker_owners[str(pid)] = {
+                        "name": token.split("/")[1],
+                        "token": token,
+                    }
+        if any(group_exists(int(pid)) for pid in self.worker_owners):
+            deadline = (
+                asyncio.get_running_loop().time()
+                + self.composition.runtime.disposal_timeout
+            )
+            while (
+                any(group_exists(int(pid)) for pid in self.worker_owners)
+                and asyncio.get_running_loop().time() < deadline
+            ):
+                await asyncio.sleep(
+                    0.1
+                )  # EOF cleanup is cooperative, never an implicit kill.
+        for pid, owner in list(self.worker_owners.items()):
+            if group_exists(int(pid)):
+                self.orphans[owner["name"]] = {"pid": int(pid), **owner}
+            else:
+                self.worker_owners.pop(pid)
+        self.state.set_meta("worker_owners", self.worker_owners)
+
+    async def stop_orphan(self, name):
+        orphan = self.orphans[name]
+        current = (await process_inventory()).get(orphan["pid"])
+        if group_exists(orphan["pid"]):
+            if (
+                not current
+                or f"--host-token {orphan['token']}" not in current["command"]
+            ):
+                raise PluginError(
+                    "ownership_unproven",
+                    "Surviving process ownership cannot be verified; resolve it before retrying",
+                    orphan,
+                )
+            await stop_group(orphan["pid"])
+        self.orphans.pop(name)
+        self.worker_owners.pop(str(orphan["pid"]), None)
+        self.state.set_meta("worker_owners", self.worker_owners)
+        self.state.stopped(name, True)
 
     async def close(self):
         self.closing = True
@@ -114,6 +203,51 @@ class Host:
     def submit(self, action, params, *, idempotency=None):
         if self.closing:
             raise PluginError("host_closing", "Core is shutting down")
+        actions = {
+            "add",
+            "validate",
+            "update",
+            "reload",
+            "enable",
+            "disable",
+            "remove",
+            "stop",
+            "apply",
+            "plan",
+            "migrate-plan",
+            "migrate-apply",
+        }
+        if (
+            not isinstance(action, str)
+            or action not in actions
+            or not isinstance(params, dict)
+        ):
+            raise PluginError(
+                "invalid_request", "Supply a known action and object parameters"
+            )
+        for flag in ("force", "runtime", "enable", "watch", "startup"):
+            if flag in params and not isinstance(params[flag], bool):
+                raise PluginError("invalid_request", f"{flag} must be boolean")
+        if action not in {"add", "apply", "plan"} and not isinstance(
+            params.get("id"), str
+        ):
+            raise PluginError("invalid_request", "This action requires a plugin ID")
+        if action == "add" and not isinstance(params.get("source"), str):
+            raise PluginError("invalid_request", "Add requires a package source")
+        # A retry refers to the original operation, whose own successful write
+        # may already have changed the desired revision.
+        existing = self.state.idempotent_operation(
+            action, params.get("id"), params, idempotency
+        )
+        if existing is not None:
+            return existing
+        if (
+            params.get("expected_revision")
+            and params["expected_revision"] != self.config.revision
+        ):
+            raise PluginError(
+                "stale_revision", "Composition changed; refresh before submitting"
+            )
         operation, created = self.state.new_operation(
             action, params.get("id"), params, idempotency
         )
@@ -177,9 +311,11 @@ class Host:
                 "Application identity/listen configuration changed; restart core explicitly",
             )
         self.composition, self.revision = composition, revision
+        self.configuration_error = None
         self.packages.settings = composition.packages
         self._package_overrides()
         self.manager.drain_timeout = composition.runtime.drain_timeout
+        self.state.set_meta("last_valid_composition", composition.model_dump())
 
     def _package_overrides(self):
         wheelhouse = os.environ.get("TOOLFRAME_WHEELHOUSE")
@@ -212,6 +348,34 @@ class Host:
     async def _dispatch(self, action, params, operation):
         self.refresh()
         name = params.get("id")
+        if params.get("startup") and self.state.meta("forward_repair"):
+            raise PluginError(
+                "forward_repair_required",
+                "Interrupted schema operation requires explicit inspection and repair",
+                self.state.meta("forward_repair"),
+            )
+        if (
+            params.get("expected_revision")
+            and params["expected_revision"] != self.revision
+        ):
+            raise PluginError(
+                "stale_revision", "Composition changed before operation started"
+            )
+        if action == "plan":
+            return await self.plan(params, operation)
+        approved = None
+        if params.get("plan_id") and action != "migrate-apply":
+            approved = self.state.meta(f"plan/{params['plan_id']}")
+            if (
+                not approved
+                or approved["action"] != action
+                or approved.get("target") != name
+                or approved["basis"] != await self.plan_basis()
+            ):
+                raise PluginError(
+                    "stale_plan",
+                    "Review a fresh plan; composition, runtime or schema changed",
+                )
         if action == "add":
             source = params["source"]
             if not name:
@@ -245,6 +409,7 @@ class Host:
             action
             in (
                 "validate",
+                "update",
                 "reload",
                 "enable",
                 "disable",
@@ -258,6 +423,25 @@ class Host:
             raise PluginError(
                 "plugin_missing", "Plugin is not declared in toolframe.toml"
             )
+        if action == "update":
+            request = self.composition.plugins[name]
+            source = params.get("source", request.source)
+            candidate = await self.packages.prepare(name, source, request.config)
+            if source != request.source:
+                self.composition, self.revision = self.config.put_plugin(
+                    name, request.model_copy(update={"source": source}), self.revision
+                )
+            elif self.config.revision != self.revision:
+                raise PluginError(
+                    "stale_plan", "Composition changed while staging update"
+                )
+            self.state.save_candidate(candidate)
+            self.write_lock()
+            return {
+                "candidate": candidate["id"],
+                "validation": candidate["validation"],
+                "activated": False,
+            }
         if action == "validate":
             candidate = await self._prepare(name, operation)
             if params.get("runtime"):
@@ -267,6 +451,9 @@ class Host:
             self.write_lock()
             return {"candidate": candidate["id"], "validation": candidate["validation"]}
         if action == "stop" and params.get("force"):
+            if name in self.orphans:
+                await self.stop_orphan(name)
+                return {"plugin_id": name, "orphan_stopped": True}
             affected = self.graph.affected(self.graph, {name})
             self.gated.update(affected)
             for member in affected:
@@ -274,6 +461,9 @@ class Host:
                 if runtime:
                     runtime.admitted = False
                     await runtime.worker.force_stop()
+                    # A failed Cordis disposer has already consumed its scope;
+                    # record confirmed termination even when it cannot run again.
+                    await self._dispose(runtime)
                 self.state.stopped(member, True)
             for root in list(self.roots.values()):
                 if affected & root.runtimes.keys():
@@ -345,7 +535,13 @@ class Host:
             proposed = self.selected()
             if action in ("reload", "enable"):
                 self.state.stopped(name, False)
-                candidate = await self._prepare(name, operation)
+                candidate = (
+                    self.state.candidate(
+                        approved.get("target_candidate") or approved["candidates"][name]
+                    )
+                    if approved
+                    else await self._prepare(name, operation)
+                )
                 if self.composition.plugins[name].enabled:
                     proposed[name] = candidate
             else:
@@ -358,7 +554,11 @@ class Host:
                 self.check_cancel(operation)
                 self.state.stopped(member, False)
                 existing = self.state.plugin(member)
-                previous = existing["current_candidate"] or existing["last_candidate"]
+                previous = (
+                    approved["candidates"].get(member)
+                    if approved
+                    else existing["last_candidate"] or existing["current_candidate"]
+                )
                 candidate = self.state.candidate(previous) if previous else None
                 if (
                     not candidate
@@ -388,6 +588,87 @@ class Host:
             await self.replace(proposed, changed, operation)
             return {"plugins": sorted(proposed)}
         raise PluginError("action_unknown", f"Unknown management action {action}")
+
+    async def plan_basis(self):
+        schemas = {}
+        for name, definition in self.graph.definitions.items():
+            if definition.store and name in self.runtimes:
+                schemas[name] = await self.admin(
+                    self._storage_runtime(name), "inspect", {"owner": name}
+                )
+        return {
+            "revision": self.config.revision,
+            "generations": {
+                name: item.generation for name, item in self.runtimes.items()
+            },
+            "epoch": self.epoch,
+            "schemas": schemas,
+            "stopped": sorted(
+                row["id"] for row in self.state.plugins() if row["stopped"]
+            ),
+        }
+
+    async def plan(self, params, operation):
+        action, name = params.get("action", "apply"), params.get("id")
+        if action not in {"apply", "reload", "enable", "disable", "remove", "stop"}:
+            raise PluginError("invalid_request", "This action cannot be planned")
+        if action != "apply" and name not in self.composition.plugins:
+            raise PluginError("plugin_missing", "Plan requires a declared plugin ID")
+        basis = await self.plan_basis()
+        proposed = self.selected()
+        if action == "apply":
+            proposed = {}
+            for member, request in self.composition.plugins.items():
+                if request.enabled:
+                    proposed[member] = await self._prepare(member, operation)
+        elif action in {"reload", "enable"}:
+            candidate = await self._prepare(name, operation)
+            if action == "enable" or self.composition.plugins[name].enabled:
+                proposed[name] = candidate
+        else:
+            proposed.pop(name, None)
+        replacement = Graph(proposed, self.composition.bindings)
+        changed = {
+            member
+            for member in proposed.keys() | self.graph.candidates.keys()
+            if proposed.get(member, {}).get("id")
+            != self.graph.candidates.get(member, {}).get("id")
+            or replacement.bindings.get(member) != self.graph.bindings.get(member)
+            or member not in self.runtimes
+            or not self.runtimes[member].admitted
+        }
+        if name:
+            changed.add(name)
+        result = {
+            "action": action,
+            "target": name,
+            "basis": basis,
+            "candidates": {
+                member: candidate["id"] for member, candidate in proposed.items()
+            },
+            "affected": sorted(self.graph.affected(replacement, changed)),
+            "missing_dependencies": {
+                member: missing
+                for member, missing in replacement.missing.items()
+                if missing
+            },
+            "migrations": {},
+        }
+        if action in {"reload", "enable"}:
+            result["target_candidate"] = candidate["id"]
+        for member in changed & proposed.keys():
+            definition = replacement.definitions[member]
+            if definition.store and member in self.runtimes:
+                result["migrations"][member] = await self.admin(
+                    self._storage_runtime(member),
+                    "plan",
+                    {"owner": member, "schema": definition.store.model_dump()},
+                )
+        if basis != await self.plan_basis():
+            raise PluginError("stale_plan", "Runtime changed while planning")
+        result["plan_id"] = digest(result)
+        self.state.set_meta(f"plan/{result['plan_id']}", result)
+        return result
 
     def _storage_runtime(self, owner):
         binding = next(
@@ -422,6 +703,44 @@ class Host:
             timeout=self.composition.runtime.activation_timeout,
         )
 
+    async def change_schema(self, storage, method, params):
+        owner = params["owner"]
+        before = await self.admin(storage, "inspect", {"owner": owner})
+        previous_repair = self.state.meta("forward_repair")
+        self.state.set_meta(
+            "forward_repair",
+            {
+                "owner": owner,
+                "before": before,
+                "target": params["schema"],
+                "state": "in_progress",
+            },
+        )
+        try:
+            result = await self.admin(storage, method, params)
+        except BaseException:
+            try:
+                after = await self.admin(storage, "inspect", {"owner": owner})
+                changed = after["history"] != before["history"]
+            except BaseException:  # noqa: BLE001 - unverified commit forbids automatic rollback
+                changed = (
+                    True  # Lost acknowledgements never authorize an old-code restart.
+                )
+            if changed:
+                self.schema_changed = True
+                self.schema_events.append(
+                    {"owner": owner, "state": "committed_or_unknown"}
+                )
+            else:
+                self.state.set_meta("forward_repair", previous_repair)
+            raise
+        if result.get("committed"):
+            self.schema_changed = True
+            self.schema_events.append({"owner": owner, "state": "committed", **result})
+        else:
+            self.state.set_meta("forward_repair", previous_repair)
+        return result
+
     async def _activate(self, name, context):
         candidate = self.graph.candidates[name]
         generation = uuid.uuid4().hex
@@ -436,10 +755,17 @@ class Host:
             candidate["entrypoint"],
             lambda method, params: self.worker_call(runtime, method, params),
             cwd=self.home,
+            host_token=f"{self.host_run}/{name}/{generation}",
         )
+        self.worker_owners[str(runtime.worker.pid)] = {
+            "name": name,
+            "token": f"{self.host_run}/{name}/{generation}",
+        }
+        self.state.set_meta("worker_owners", self.worker_owners)
+        self.record(runtime, "starting")
         await runtime.worker.request("runtime.describe")
         if definition.store:
-            await self.admin(
+            await self.change_schema(
                 self._storage_runtime(name),
                 "ensure_store",
                 {"owner": name, "schema": definition.store.model_dump()},
@@ -466,8 +792,11 @@ class Host:
         return runtime
 
     async def probe(self, runtime, method="runtime.health", params=None):
-        members = self.graph.closure(runtime.name, optional=True)
+        members = self.graph.closure(
+            runtime.name, optional=True, available=self.runtimes
+        )
         leases = ExitStack()
+        root = None
         try:
             for name in members - {runtime.name}:
                 leases.enter_context(self.manager.lease(name))
@@ -496,7 +825,8 @@ class Host:
             finally:
                 await self.end_root(root)
         finally:
-            leases.close()
+            if root is None or root.id not in self.roots:
+                leases.close()
 
     async def _dispose(self, runtime):
         runtime.admitted = False
@@ -507,6 +837,7 @@ class Host:
                 if (
                     runtime.worker.expected_exit
                     and runtime.worker.process.returncode is not None
+                    and not group_exists(runtime.worker.pid)
                 ):
                     await runtime.worker.peer.close()
                 else:
@@ -517,6 +848,9 @@ class Host:
             self.record(runtime, "cleanup_failed")
             raise
         else:
+            if runtime.worker:
+                self.worker_owners.pop(str(runtime.worker.pid), None)
+                self.state.set_meta("worker_owners", self.worker_owners)
             if self.runtimes.get(runtime.name) is runtime:
                 self.runtimes.pop(runtime.name)
             self.record(runtime, "stopped")
@@ -538,7 +872,7 @@ class Host:
 
     async def _register_set(self, names):
         for name in self.graph.order:
-            if name not in names:
+            if name not in names or name in self.optional_failures:
                 continue
             missing = tuple(
                 f"missing:{name}:{service}" for service in self.graph.missing[name]
@@ -551,12 +885,29 @@ class Host:
                         requires=tuple(self.graph.dependencies[name]) + missing,
                     )
                 )
+            except Exception as error:
+                if (
+                    self.graph.definitions[name].provider_kind
+                    not in {"dashboard", "mcp", "llms"}
+                    or name not in self.optional_new
+                ):
+                    raise
+                # A newly installed presentation must not prevent independent
+                # business services from starting. Cleanup still has to succeed.
+                if name in {item["name"] for item in self.manager.snapshot()}:
+                    await self.manager.unregister(name)
+                self.optional_failures[name] = str(error)
+                self.state.runtime(
+                    name,
+                    {"state": "failed", "error": str(error), "host_run": self.host_run},
+                )
             finally:
                 # Registration remains present when setup raises; cleanup/recovery must remove it.
                 self.registered = {item["name"] for item in self.manager.snapshot()}
             runtime = self.runtimes.get(name)
             if (
-                not self.graph.missing[name]
+                name not in self.optional_failures
+                and not self.graph.missing[name]
                 and all(
                     dependency in self.runtimes
                     for dependency in self.graph.dependencies[name]
@@ -595,17 +946,39 @@ class Host:
             if runtime:
                 try:
                     await runtime.worker.request("runtime.resume")
-                    runtime.admitted = True
-                    self.record(runtime, "active")
-                    self.gated.discard(name)
                 except Exception as error:  # noqa: BLE001
                     errors[name] = str(error)
         if errors:
             raise PluginError("resume_failed", "Some workers could not resume", errors)
+        # All acknowledgements precede a single admission barrier. No partial cohort
+        # may write while another member can still cause pre-admission recovery.
+        for name in affected:
+            runtime = self.runtimes.get(name)
+            if runtime:
+                runtime.admitted = True
+                self.record(runtime, "active")
+                if name not in self.cleanup_blocked:
+                    self.gated.discard(name)
+        self.changed.set()
 
     async def replace(self, proposed, changed, operation, *, migration=None):
+        self.schema_changed = bool(self.state.meta("forward_repair"))
+        self.schema_events = []
+        if self.orphans:
+            raise PluginError(
+                "cleanup_failed",
+                "Previous worker ownership has not been released; use explicit stop --force for verified survivors",
+                self.orphans,
+            )
         replacement = Graph(proposed, self.composition.bindings)
         old_graph = self.graph
+        self.optional_new = {
+            name
+            for name, definition in replacement.definitions.items()
+            if definition.provider_kind in {"dashboard", "mcp", "llms"}
+            and name not in self.runtimes
+        }
+        self.optional_failures = {}
         affected = old_graph.affected(replacement, changed)
         for name, definition in replacement.definitions.items():
             if definition.provider_kind == "dashboard" and (
@@ -620,11 +993,67 @@ class Host:
                         for resource in replacement.definitions[owner].resources
                     )
                 ]
-                proposed[name] = {
-                    **proposed[name],
-                    "ui_environment": await self.packages.environment(cohort, ui=True),
-                }
+                try:
+                    cohort_ids = {item["plugin_id"]: item["id"] for item in cohort}
+                    prior = proposed[name]
+                    environment = prior.get("ui_environment")
+                    if (
+                        not environment
+                        or prior.get("ui_cohort") != cohort_ids
+                        or not (self.home / environment["python"]).is_file()
+                    ):
+                        environment = await self.packages.environment(cohort, ui=True)
+                    proposed[name] = {
+                        **prior,
+                        "ui_environment": environment,
+                        "ui_cohort": cohort_ids,
+                    }
+                except Exception as error:
+                    if name not in self.optional_new:
+                        raise
+                    self.optional_failures[name] = str(error)
+                    self.state.runtime(
+                        name,
+                        {
+                            "state": "failed",
+                            "error": str(error),
+                            "host_run": self.host_run,
+                        },
+                    )
         replacement = Graph(proposed, self.composition.bindings)
+        self.phase(operation, "prepare_resources")
+        for kind, provider in replacement.providers.items():
+            if kind == "storage" or provider in self.optional_failures:
+                continue
+            resource_kind = {
+                "dashboard": "dashboard.page",
+                "mcp": "mcp.tool",
+                "llms": "llms.document",
+            }[kind]
+            if provider in affected or old_graph.descriptor_digest(
+                resource_kind
+            ) != replacement.descriptor_digest(resource_kind):
+                try:
+                    await self.prepare_provider(
+                        proposed[provider],
+                        [
+                            resource
+                            for resource in replacement.resources()
+                            if resource.resource.kind == resource_kind
+                        ],
+                    )
+                except Exception as error:
+                    if provider not in self.optional_new:
+                        raise
+                    self.optional_failures[provider] = str(error)
+                    self.state.runtime(
+                        provider,
+                        {
+                            "state": "failed",
+                            "error": str(error),
+                            "host_run": self.host_run,
+                        },
+                    )
         # Existing stores are inspected before quiescence. A schema change is never hidden in reload.
         for name in changed & replacement.candidates.keys():
             definition = replacement.definitions[name]
@@ -666,6 +1095,11 @@ class Host:
                 affected, self.composition.runtime.drain_timeout, operation
             )
             self.check_cancel(operation)
+            if self.config.revision != self.revision:
+                raise PluginError(
+                    "stale_plan",
+                    "Composition changed while draining; old workers are retained",
+                )
         except BaseException:
             await self._resume(affected)
             raise
@@ -681,13 +1115,11 @@ class Host:
                         "Old worker cleanup failed; affected admission remains closed",
                         {"plugin_id": name, "error": str(error)},
                     ) from error
-        schema_committed = False
         try:
             if migration:
                 self.phase(operation, "migrating")
                 storage = self._storage_runtime(migration["owner"])
-                result = await self.admin(storage, "apply", migration)
-                schema_committed = result["committed"]
+                result = await self.change_schema(storage, "apply", migration)
                 self.phase(operation, "migration_committed", result)
             self.graph = replacement
             self.phase(operation, "activating")
@@ -701,6 +1133,7 @@ class Host:
             self.write_lock()
             await self._resume(affected | (set(proposed) - set(old_graph.candidates)))
             self.gated.difference_update(affected - self.runtimes.keys())
+            self.state.set_meta("forward_repair", None)
         except Exception as failure:
             self.gated.update(affected)
             for name in reversed(self.graph.order):
@@ -714,11 +1147,21 @@ class Host:
                             "Candidate cleanup could not be proven",
                             {"error": str(cleanup)},
                         ) from cleanup
-            if schema_committed:
+            if self.schema_changed:
+                self.state.set_meta(
+                    "forward_repair",
+                    {
+                        "operation": operation,
+                        "schemas": self.schema_events,
+                        "candidates": {
+                            name: item["id"] for name, item in proposed.items()
+                        },
+                    },
+                )
                 raise PluginError(
                     "forward_repair_required",
-                    "Schema committed; data retained and old code was not restarted",
-                    {"error": str(failure)},
+                    "Schema committed or acknowledgement is unknown; data retained and old code was not restarted",
+                    {"error": str(failure), "schemas": self.schema_events},
                 ) from failure
             self.graph = old_graph
             recover = affected & old_graph.candidates.keys()
@@ -745,6 +1188,60 @@ class Host:
                 "Candidate failed; the old snapshot cohort was restarted once",
                 {"error": str(failure), "affected": sorted(recover)},
             ) from failure
+        if self.optional_failures:
+            raise PluginError(
+                "optional_provider_failed",
+                "Business services started; some presentation providers need repair",
+                self.optional_failures,
+            )
+        failures = {
+            kind: status
+            for kind, status in self.publication.items()
+            if status["state"] == "failed"
+        }
+        if failures:
+            raise PluginError(
+                "publication_failed",
+                "Business services are selected; failed presentation entrances remain unavailable",
+                failures,
+            )
+
+    async def prepare_provider(self, candidate, resources):
+        async def unavailable(method, params):
+            raise PluginError(
+                "validation_only",
+                "Resource preparation cannot call application services",
+            )
+
+        environment = candidate.get("ui_environment", candidate["environment"])
+        worker = await WorkerProcess.start(
+            self.home / environment["python"],
+            candidate["entrypoint"],
+            unavailable,
+            cwd=self.home,
+        )
+        activated = False
+        try:
+            await worker.request("runtime.describe")
+            await worker.request(
+                "runtime.activate",
+                {"generation": "preflight", "config": candidate["config"]},
+            )
+            activated = True
+            await worker.request(
+                "provider.prepare",
+                {
+                    "resources": [resource.model_dump() for resource in resources],
+                    "epoch": "preflight",
+                },
+            )
+            await worker.request("provider.abort", {"epoch": "preflight"})
+        finally:
+            try:
+                await worker.close(activated=activated)
+            except BaseException:
+                await worker.force_stop()  # validation has no live service/data access
+                raise
 
     async def publish(self):
         epoch = uuid.uuid4().hex
@@ -842,6 +1339,7 @@ class Host:
             + "\n",
         )
         self.state.set_meta("desired_revision", self.revision)
+        self.state.set_meta("last_valid_composition", self.composition.model_dump())
 
     def begin_root(self, owner, *, deadline=None):
         if (
@@ -850,11 +1348,15 @@ class Host:
             or not self.runtimes[owner].admitted
         ):
             raise PluginError("plugin_reloading", f"{owner} is not admitting new calls")
-        members = self.graph.closure(owner, optional=True)
+        members = self.graph.closure(owner, optional=True, available=self.runtimes)
         leases = ExitStack()
         try:
             for name in members:
-                if name in self.gated or name not in self.runtimes:
+                if (
+                    name in self.gated
+                    or name not in self.runtimes
+                    or self.runtimes[name].worker.process.returncode is not None
+                ):
                     raise PluginError(
                         "dependency_unavailable", f"{name} is unavailable"
                     )
@@ -873,7 +1375,7 @@ class Host:
             raise
 
     async def end_root(self, root):
-        if self.roots.pop(root.id, None) is None:
+        if root.id not in self.roots:
             return
         try:
             for runtime in root.runtimes.values():
@@ -882,7 +1384,18 @@ class Host:
                     and runtime.worker.process.returncode is None
                 ):
                     await self.admin(runtime, "cleanup_root", {"root_id": root.id})
-        finally:
+        except BaseException:
+            self.failed_roots.add(root.id)
+            self.cleanup_blocked.add(root.owner)
+            self.gated.add(root.owner)
+            raise
+        else:
+            self.roots.pop(root.id, None)
+            self.failed_roots.discard(root.id)
+            if not any(
+                self.roots[item].owner == root.owner for item in self.failed_roots
+            ):
+                self.cleanup_blocked.discard(root.owner)
             root.leases.close()
             self.changed.set()
 
@@ -912,7 +1425,7 @@ class Host:
             )
         path = (*chain, target)
         root.paths[path] = root.paths.get(path, 0) + 1
-        source = root.runtimes.get(owner or target, runtime)
+        source = root.runtimes.get(owner or root.owner, runtime)
         try:
             return await runtime.worker.request(
                 "runtime.invoke",
@@ -998,7 +1511,7 @@ class Host:
                         "undeclared_method",
                         "MCP tool may call only its declared method",
                     )
-                version = 1
+                version = None  # The declared target service owns the tool's contract version.
             else:
                 qualified, _, name = params["method"].partition("/")
                 service, _, version = qualified.partition("@")
@@ -1017,7 +1530,10 @@ class Host:
                         "Page/tool owner did not declare this service",
                     )
                 target = options[0][0]
-            if self.graph.definitions[target].services[service].version != version:
+            if (
+                version is not None
+                and self.graph.definitions[target].services[service].version != version
+            ):
                 raise PluginError(
                     "service_version_mismatch",
                     "Requested service version is unavailable",
@@ -1030,6 +1546,14 @@ class Host:
             finally:
                 await self.end_root(root)
         if method == "task.begin":
+            async with asyncio.timeout(self.composition.runtime.activation_timeout):
+                while runtime.name in self.gated or not runtime.admitted:
+                    if self.runtimes.get(runtime.name) is not runtime:
+                        raise PluginError(
+                            "stale_generation", "Task belongs to a withdrawn generation"
+                        )
+                    self.changed.clear()
+                    await self.changed.wait()
             root = self.begin_root(runtime.name)
             root.paths[(runtime.name,)] = 1
             return {
@@ -1143,8 +1667,44 @@ class Host:
                             )
                     await self.publish()
 
+    async def _exit_loop(self):
+        while True:
+            await asyncio.sleep(0.1)
+            if self.mutation.locked():
+                continue
+            for root_id in list(self.failed_roots):
+                root = self.roots[root_id]
+                try:
+                    await self.end_root(root)
+                except Exception:  # noqa: BLE001 - lease remains held for a later cleanup acknowledgement
+                    self.state.set_meta("cleanup_pending", sorted(self.failed_roots))
+                    continue
+                runtime = self.runtimes.get(root.owner)
+                if (
+                    runtime
+                    and runtime.admitted
+                    and root.owner not in self.cleanup_blocked
+                ):
+                    self.gated.discard(root.owner)
+            failed = {
+                name
+                for name, runtime in self.runtimes.items()
+                if runtime.admitted and runtime.worker.process.returncode is not None
+            }
+            if failed:
+                for name in self.graph.dependents(failed):
+                    self.gated.add(name)
+                    if runtime := self.runtimes.get(name):
+                        runtime.admitted = False
+                        runtime.health = {
+                            "runtime": "failed",
+                            "error": "Worker or required dependency exited",
+                        }
+                        self.record(runtime, "failed" if name in failed else "blocked")
+                await self.publish()
+
     async def _watch_loop(self):
-        seen = {}
+        seen, pending = {}, {}
         while True:
             await asyncio.sleep(self.composition.runtime.watch_debounce_ms / 1000)
             if self.mutation.locked():
@@ -1161,10 +1721,29 @@ class Host:
                     current = digest(await asyncio.to_thread(source_files, root))
                 except OSError, PluginError:
                     continue
-                previous = seen.get(name)
-                seen[name] = current
-                if previous is None or current == previous:
+                if name not in seen:
+                    candidate_id = self.state.plugin(name)["last_candidate"]
+                    seen[name] = (
+                        self.state.candidate(candidate_id)["source"].get(
+                            "source_hash", current
+                        )
+                        if candidate_id
+                        else current
+                    )
+                if current == seen[name]:
+                    pending.pop(name, None)
                     continue
+                observed, since = pending.get(name, (None, 0))
+                if current != observed:
+                    pending[name] = (current, time.monotonic())
+                    continue
+                if (
+                    time.monotonic() - since
+                    < self.composition.runtime.watch_debounce_ms / 1000
+                ):
+                    continue
+                seen[name] = current
+                pending.pop(name, None)
                 action = (
                     "reload"
                     if request.enabled and not self.state.plugin(name)["stopped"]
@@ -1173,6 +1752,11 @@ class Host:
                 self.submit(action, {"id": name, "watch": True})
 
     def status(self):
+        try:
+            self.config.read()
+            self.configuration_error = None
+        except PluginError as error:
+            self.configuration_error = error.as_dict()
         plugins = []
         for name in sorted(
             set(self.composition.plugins) | {row["id"] for row in self.state.plugins()}
@@ -1180,6 +1764,11 @@ class Host:
             row = self.state.plugin(name)
             request = self.composition.plugins.get(name)
             runtime = self.runtimes.get(name)
+            candidate = (
+                self.state.candidate(row["last_candidate"])
+                if row["last_candidate"]
+                else None
+            )
             plugins.append(
                 {
                     "id": name,
@@ -1188,9 +1777,20 @@ class Host:
                     else {"installed": False},
                     "installed": row["last_candidate"],
                     "active": runtime.candidate["id"]
-                    if runtime and runtime.admitted
+                    if runtime and runtime.admitted and name not in self.gated
                     else None,
                     "candidate": row["last_candidate"],
+                    "candidate_status": {
+                        key: candidate[key]
+                        for key in (
+                            "version",
+                            "artifact_hash",
+                            "environment",
+                            "validation",
+                        )
+                    }
+                    if candidate
+                    else None,
                     "runtime": row["runtime"],
                     "stopped_override": row["stopped"],
                     "blocked_by": self.graph.missing.get(name, []),
@@ -1221,13 +1821,25 @@ class Host:
                     if self.publication.get(kind, {}).get("state") == "available":
                         available.add(f"{name}/{resource.kind}/{resource.id}")
         missing = sorted(set(self.composition.required_capabilities) - available)
-        degraded = (
-            any(item["state"] != "available" for item in self.publication.values())
-            if self.graph.candidates
-            else False
+        needed_presentations = {
+            {"dashboard.page": "dashboard", "mcp.tool": "mcp", "llms.document": "llms"}[
+                resource.resource.kind
+            ]
+            for resource in self.graph.resources()
+        }
+        degraded = any(
+            self.publication.get(kind, {}).get("state") != "available"
+            for kind in needed_presentations
+        ) or any(
+            request.enabled
+            and (name not in self.runtimes or not self.runtimes[name].admitted)
+            for name, request in self.composition.plugins.items()
         )
         return {
             "core": "ready",
+            "configuration_error": self.configuration_error,
+            "orphaned_workers": self.orphans,
+            "forward_repair": self.state.meta("forward_repair"),
             "host_run": self.host_run,
             "pid": os.getpid(),
             "desired_revision": self.config.revision,
@@ -1235,6 +1847,9 @@ class Host:
             "catalog_epoch": self.epoch,
             "application": "not_ready"
             if missing
+            or self.configuration_error
+            or self.orphans
+            or self.state.meta("forward_repair")
             else "degraded"
             if degraded
             else "ready",

@@ -86,7 +86,7 @@ class Graph:
                 "dependency_cycle", "Required service dependencies contain a cycle"
             ) from error
 
-    def closure(self, name, *, optional=False):
+    def closure(self, name, *, optional=False, available=None):
         result = set()
 
         def visit(owner):
@@ -97,7 +97,8 @@ class Graph:
                 visit(dependency)
             if optional:
                 for dependency, _ in self.bindings.get(owner, {}).values():
-                    visit(dependency)
+                    if available is None or dependency in available:
+                        visit(dependency)
 
         visit(name)
         return result

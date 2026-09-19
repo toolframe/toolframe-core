@@ -15,6 +15,7 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 from toolframe_sdk import PluginError
 from websockets.asyncio.client import connect
@@ -33,6 +34,45 @@ HOP_HEADERS = {
     "host",
     "content-length",
 }
+
+
+class OperationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: str
+    params: dict = Field(default_factory=dict)
+
+
+def error_status(error):
+    code = error.code
+    if code in {
+        "stale_plan",
+        "stale_revision",
+        "idempotency_conflict",
+        "already_installed",
+        "mutation_conflict",
+    }:
+        return 409
+    if code in {"plugin_missing", "operation_missing", "candidate_missing"}:
+        return 404
+    if code == "forbidden":
+        return 403
+    if code in {
+        "invalid_request",
+        "action_unknown",
+        "configuration_invalid",
+        "config_invalid",
+    }:
+        return 422
+    if code in {
+        "host_closing",
+        "plugin_reloading",
+        "dependency_unavailable",
+        "presentation_unavailable",
+        "peer_closed",
+        "cleanup_failed",
+    }:
+        return 503
+    return 400
 
 
 def trusted(headers):
@@ -90,7 +130,7 @@ def create_app(host, *, manage_lifespan=True):
     @asynccontextmanager
     async def lifespan(app):
         if manage_lifespan:
-            await host.start()
+            await host.start(wait=False)
         try:
             yield
         finally:
@@ -135,11 +175,13 @@ def create_app(host, *, manage_lifespan=True):
         try:
             return await call_next(request)
         except PluginError as error:
-            return JSONResponse({"error": error.as_dict()}, status_code=503)
+            return JSONResponse(
+                {"error": error.as_dict()}, status_code=error_status(error)
+            )
 
     @app.exception_handler(PluginError)
     async def plugin_error(request, error):
-        return JSONResponse({"error": error.as_dict()}, status_code=400)
+        return JSONResponse({"error": error.as_dict()}, status_code=error_status(error))
 
     @app.get("/healthz")
     async def health():
@@ -171,19 +213,23 @@ def create_app(host, *, manage_lifespan=True):
             "<button>Open Dashboard</button></form><p>Run <code>toolframe open</code> for a local sign-in link.</p>"
         )
 
-    @app.get("/_toolframe/status")
+    @app.get("/_toolframe/v1/status")
     async def status():
         return host.status()
 
-    @app.get("/_toolframe/operations")
+    @app.get("/_toolframe/v1/composition")
+    async def composition():
+        return {"toml": host.config.path.read_text(), "revision": host.config.revision}
+
+    @app.get("/_toolframe/v1/operations")
     async def operations():
         return host.state.operations()
 
-    @app.get("/_toolframe/operations/{identifier}")
+    @app.get("/_toolframe/v1/operations/{identifier}")
     async def operation(identifier: str):
         return host.state.operation(identifier)
 
-    @app.post("/_toolframe/operations/{identifier}/cancel")
+    @app.post("/_toolframe/v1/operations/{identifier}/cancel")
     async def cancel(identifier: str):
         current = host.state.operation(identifier)
         if current["status"] not in ("queued", "running"):
@@ -192,25 +238,25 @@ def create_app(host, *, manage_lifespan=True):
         host.changed.set()
         return {"id": identifier, "requested": True, "phase": current["phase"]}
 
-    @app.post("/_toolframe/operations", status_code=202)
-    async def submit(request: Request):
-        body = await request.json()
+    @app.post("/_toolframe/v1/operations", status_code=202)
+    async def submit(request: Request, body: OperationRequest):
         return host.submit(
-            body["action"],
-            body.get("params", {}),
+            body.action,
+            body.params,
             idempotency=request.headers.get("idempotency-key"),
         )
 
-    @app.post("/_toolframe/plugins/{identifier}/{action}", status_code=202)
-    async def plugin_operation(identifier: str, action: str, request: Request):
-        body = await request.json()
+    @app.post("/_toolframe/v1/plugins/{identifier}/{action}", status_code=202)
+    async def plugin_operation(
+        identifier: str, action: str, request: Request, body: dict
+    ):
         return host.submit(
             action,
             {**body, "id": identifier},
             idempotency=request.headers.get("idempotency-key"),
         )
 
-    @app.get("/_toolframe/plugins/{identifier}/logs")
+    @app.get("/_toolframe/v1/plugins/{identifier}/logs")
     async def logs(identifier: str):
         runtime = host.runtimes.get(identifier)
         return {
@@ -218,7 +264,7 @@ def create_app(host, *, manage_lifespan=True):
             "lines": list(runtime.worker.logs) if runtime else [],
         }
 
-    @app.post("/_toolframe/services/{owner}/{service}/{method}")
+    @app.post("/_toolframe/v1/services/{owner}/{service}/{method}")
     async def service_call(owner: str, service: str, method: str, request: Request):
         if service == "toolframe.storage.admin":
             raise PluginError("forbidden", "Use reviewed migration operations")
@@ -236,7 +282,7 @@ def create_app(host, *, manage_lifespan=True):
                 {
                     "name": host.composition.application.name,
                     "core": "ready",
-                    "management": "/_toolframe/status",
+                    "management": "/_toolframe/v1/status",
                     "dashboard": "not_installed",
                 }
             )

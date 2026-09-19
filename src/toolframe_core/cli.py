@@ -1,6 +1,9 @@
 """One operator surface over the same persistent management operations."""
 
+from __future__ import annotations
+
 import argparse
+import asyncio
 import json
 import sys
 import time
@@ -11,29 +14,85 @@ import httpx
 import uvicorn
 from toolframe_sdk import PluginError
 
-from .config import ConfigFile, management_token
+from .config import Application, ConfigFile, management_token
+
+_SOURCE_PREFIXES = ("git+", "pypi:", "https://", "path:", "wheel:")
+_PENDING_OPERATION_STATES = ("queued", "running", "cancelling")
+
+
+def _add_json_option(command):
+    # Every parser owns the option so it works before or after any subcommand.
+    # Suppressed defaults keep a value supplied by a parent parser intact.
+    command.add_argument(
+        "--json", dest="json", action="store_true", default=argparse.SUPPRESS
+    )
+
+
+def _add_no_wait(command):
+    command.add_argument("--no-wait", action="store_true")
+
+
+def _add_expected_revision(command):
+    command.add_argument("--expected-revision")
 
 
 def parser():
     result = argparse.ArgumentParser(prog="toolframe")
     result.add_argument("--home", type=Path, default=Path.cwd())
+    _add_json_option(result)
     commands = result.add_subparsers(dest="command", required=True)
+
     initialize = commands.add_parser("init")
-    initialize.add_argument("--name", default="Toolframe")
+    _add_json_option(initialize)
+    initialize.add_argument("--name")
+    initialize.add_argument("--template")
     initialize.add_argument("--port", type=int, default=9876)
-    commands.add_parser("serve")
-    commands.add_parser("status")
-    commands.add_parser("open")
+
+    serve = commands.add_parser("serve")
+    _add_json_option(serve)
+
+    status = commands.add_parser("status")
+    _add_json_option(status)
+    status.add_argument("--check", action="store_true")
+
+    open_command = commands.add_parser("open")
+    _add_json_option(open_command)
+
+    plan = commands.add_parser("plan")
+    _add_json_option(plan)
+    plan.add_argument(
+        "--action",
+        choices=("apply", "reload", "enable", "disable", "remove", "stop"),
+        default="apply",
+    )
+    plan.add_argument("--id")
+    _add_no_wait(plan)
+
+    export = commands.add_parser("export")
+    _add_json_option(export)
+    export.add_argument("--output", type=Path)
+
     apply = commands.add_parser("apply")
-    apply.add_argument("--no-wait", action="store_true")
-    plugin = commands.add_parser("plugin").add_subparsers(dest="action", required=True)
-    add = plugin.add_parser("add")
+    _add_json_option(apply)
+    apply.add_argument("--plan-id")
+    _add_expected_revision(apply)
+    _add_no_wait(apply)
+
+    plugin = commands.add_parser("plugin")
+    _add_json_option(plugin)
+    plugin_commands = plugin.add_subparsers(dest="action", required=True)
+
+    add = plugin_commands.add_parser("add")
+    _add_json_option(add)
     add.add_argument("source")
     add.add_argument("--id")
     add.add_argument("--enable", action="store_true")
-    add.add_argument("--no-wait", action="store_true")
-    for name in (
+    _add_expected_revision(add)
+    _add_no_wait(add)
+
+    plugin_action_names = (
         "validate",
+        "update",
         "reload",
         "enable",
         "disable",
@@ -41,142 +100,422 @@ def parser():
         "stop",
         "status",
         "logs",
-    ):
-        command = plugin.add_parser(name)
+    )
+    for name in plugin_action_names:
+        command = plugin_commands.add_parser(name)
+        _add_json_option(command)
         command.add_argument("id", nargs="?" if name == "status" else None)
-        command.add_argument("--no-wait", action="store_true")
         if name == "validate":
             command.add_argument("--runtime", action="store_true")
+        if name == "update":
+            command.add_argument("--source")
+        if name in ("reload", "enable", "disable", "remove", "stop"):
+            command.add_argument("--plan-id")
         if name == "stop":
             command.add_argument("--force", action="store_true")
-    migration = commands.add_parser("migrate").add_subparsers(
-        dest="action", required=True
-    )
-    for name in ("plan", "apply"):
-        command = migration.add_parser(name)
-        command.add_argument("id")
-        if name == "apply":
-            command.add_argument("--plan-id", required=True)
-    operation = commands.add_parser("operation").add_subparsers(
-        dest="action", required=True
-    )
+        if name == "status":
+            command.add_argument("--check", action="store_true")
+        if name not in ("status", "logs"):
+            _add_expected_revision(command)
+            _add_no_wait(command)
+
+    migration = commands.add_parser("migrate")
+    _add_json_option(migration)
+    migration_commands = migration.add_subparsers(dest="action", required=True)
+    migration_plan = migration_commands.add_parser("plan")
+    _add_json_option(migration_plan)
+    migration_plan.add_argument("id")
+    _add_no_wait(migration_plan)
+    migration_apply = migration_commands.add_parser("apply")
+    _add_json_option(migration_apply)
+    migration_apply.add_argument("id")
+    migration_apply.add_argument("--plan-id", required=True)
+    _add_expected_revision(migration_apply)
+    _add_no_wait(migration_apply)
+
+    operation = commands.add_parser("operation")
+    _add_json_option(operation)
+    operation_commands = operation.add_subparsers(dest="action", required=True)
     for name in ("status", "cancel"):
-        operation.add_parser(name).add_argument("id")
+        command = operation_commands.add_parser(name)
+        _add_json_option(command)
+        command.add_argument("id")
+
     return result
 
 
-def main(argv=None):
-    arguments = parser().parse_args(argv)
+def _normalize_source(source):
+    if source and not source.startswith(_SOURCE_PREFIXES):
+        return str(Path(source).resolve())
+    return source
+
+
+def _read_endpoint_file(config):
+    fallback = ("127.0.0.1", 9876)
     try:
-        return run(arguments)
-    except (PluginError, httpx.HTTPError, OSError, ValueError) as error:
-        value = (
-            error.as_dict()
-            if isinstance(error, PluginError)
-            else {"code": "command_failed", "message": str(error)}
+        value = json.loads((config.home / ".toolframe" / "endpoint.json").read_text())
+        host = value["host"]
+        port = int(value["port"])
+        endpoint = Application(id="endpoint", host=host, port=port)
+        return endpoint.host, endpoint.port
+    except OSError, TypeError, ValueError, KeyError, json.JSONDecodeError:
+        return fallback
+
+
+def _endpoint(config):
+    if (config.home / ".toolframe/endpoint.json").exists():
+        return _read_endpoint_file(config)
+    try:
+        composition, _ = config.read()
+    except PluginError:
+        return _read_endpoint_file(config)
+    application = composition.application
+    return application.host, application.port
+
+
+def _base_url(config):
+    host, port = _endpoint(config)
+    authority = f"[{host}]" if ":" in host else host
+    return f"http://{authority}:{port}"
+
+
+def _emit_json(value):
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def _error_code(error):
+    if isinstance(error, PluginError):
+        return error.code
+    if isinstance(error, httpx.HTTPStatusError):
+        response = error.response
+        if response.status_code == 409:
+            return "idempotency_conflict"
+        if response.status_code == 422:
+            return "malformed_input"
+        if response.status_code == 503:
+            return "runtime"
+        payload = _http_error_payload(response)
+        return payload.get("code", "http_error")
+    if isinstance(error, ValueError):
+        return "malformed_input"
+    return "runtime"
+
+
+def _exit_code(code):
+    if code in {
+        "invalid_config",
+        "configuration_invalid",
+        "configuration_exists",
+        "config_invalid",
+        "config_missing",
+        "malformed_input",
+        "invalid_input",
+        "invalid_request",
+    }:
+        return 2
+    if code in {
+        "validation",
+        "eligibility",
+        "migration_required",
+        "dependency",
+        "dependency_unavailable",
+        "storage_unavailable",
+        "schema",
+        "store_not_declared",
+        "plugin_missing",
+        "source_invalid",
+        "identity_mismatch",
+        "package_command_failed",
+        "provider_conflict",
+        "service_ambiguous",
+        "resource_target_invalid",
+    } or code.startswith(("validation_", "eligibility_", "dependency_", "schema_")):
+        return 3
+    if code in {
+        "runtime",
+        "cleanup",
+        "forward_repair",
+        "failed_recovered",
+        "interrupted",
+        "operation_failed",
+    } or code.startswith(("runtime_", "cleanup_", "forward_repair_")):
+        return 4
+    if code in {
+        "stale_plan",
+        "stale_revision",
+        "idempotency_conflict",
+        "already_installed",
+    }:
+        return 5
+    if code == "cancelled":
+        return 130
+    return 4
+
+
+def _http_error_payload(response):
+    try:
+        payload = response.json()
+    except TypeError, ValueError:
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+        return payload["error"]
+    message = getattr(response, "text", "") or f"HTTP {response.status_code}"
+    return {"code": "http_error", "message": message, "details": {}}
+
+
+def _failure_payload(error):
+    if isinstance(error, PluginError):
+        return error.as_dict()
+    if isinstance(error, httpx.HTTPStatusError):
+        return _http_error_payload(error.response)
+    if isinstance(error, httpx.HTTPError):
+        return {"code": "connection_error", "message": str(error), "details": {}}
+    if isinstance(error, ValueError):
+        return {"code": "malformed_input", "message": str(error), "details": {}}
+    if isinstance(error, OSError):
+        return {"code": "io_error", "message": str(error), "details": {}}
+    return {"code": "runtime", "message": str(error), "details": {}}
+
+
+def _response_json(response):
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError as error:
+        raise ValueError("Management API returned malformed JSON") from error
+
+
+def _wait_for_operation(client, result):
+    while (
+        isinstance(result, dict) and result.get("status") in _PENDING_OPERATION_STATES
+    ):
+        time.sleep(0.2)
+        result = _response_json(client.get(f"/_toolframe/v1/operations/{result['id']}"))
+    return result
+
+
+def _operation_exit_code(result, *, no_wait=False):
+    if not isinstance(result, dict):
+        return 4
+    status = result.get("status")
+    if status == "succeeded":
+        return 0
+    if no_wait and status in _PENDING_OPERATION_STATES:
+        return 0
+    if status == "cancelled":
+        return 130
+    if status in ("failed_recovered", "interrupted"):
+        return 4
+    if status == "failed":
+        error = result.get("error") or {}
+        return _exit_code(error.get("code", "runtime"))
+    return 4
+
+
+def _status_check(result, *, plugin=False):
+    if plugin:
+        rows = result if isinstance(result, list) else [result]
+        return (
+            0
+            if rows
+            and all(
+                bool(row.get("active"))
+                and isinstance(row.get("runtime"), dict)
+                and row["runtime"].get("state") == "active"
+                and row.get("health_fresh") is True
+                for row in rows
+            )
+            else 3
         )
-        print(json.dumps({"error": value}, ensure_ascii=False), file=sys.stderr)
-        raise SystemExit(1) from None
+    if not isinstance(result, dict):
+        return 3
+    if result.get("configuration_error"):
+        return 3
+    if result.get("application") in ("not_ready", "degraded"):
+        return 3
+    if result.get("application") == "ready":
+        return 0
+    return 3
+
+
+def _serve(config):
+    # Host owns the invalid-config fallback and is the only host constructed by
+    # the CLI. Its application is therefore the source of the listen address.
+    from .api import create_app
+    from .host import Host
+
+    control = Host(config.home)
+    application = control.composition.application
+    host = application.host
+    authority = f"[{host}]" if ":" in host else host
+    print(
+        f"Toolframe: http://{authority}:{application.port} · management token: "
+        f"{config.home / '.toolframe/management.token'}",
+        flush=True,
+    )
+    uvicorn.run(
+        create_app(control),
+        host=host,
+        port=application.port,
+        log_level="info",
+        access_log=False,
+    )
+    return 0
+
+
+def _operation_params(arguments, *, exclude=()):
+    excluded = {
+        "home",
+        "command",
+        "action",
+        "no_wait",
+        "json",
+        "check",
+        *exclude,
+    }
+    params = {
+        key: value
+        for key, value in vars(arguments).items()
+        if key not in excluded and value is not None
+    }
+    if "source" in params:
+        params["source"] = _normalize_source(params["source"])
+    return params
 
 
 def run(arguments):
     config = ConfigFile(arguments.home)
     if arguments.command == "init":
-        config.initialize(name=arguments.name, port=arguments.port)
+        if arguments.template:
+            from .templates import initialize_template
+
+            asyncio.run(
+                initialize_template(
+                    config,
+                    arguments.template,
+                    name=arguments.name,
+                    port=arguments.port,
+                )
+            )
+        else:
+            config.initialize(name=arguments.name or "Toolframe", port=arguments.port)
         print(f"Initialized {config.path}. Run toolframe --home {config.home} serve")
-        return
-    composition, _ = config.read()
-    host = composition.application.host
-    authority = f"[{host}]" if ":" in host else host
-    base = f"http://{authority}:{composition.application.port}"
+        return 0
+    if arguments.command == "serve":
+        return _serve(config)
+
+    base = _base_url(config)
     token = management_token(config.home)
     if arguments.command == "open":
         print(f"{base}/_toolframe/session?token={urllib.parse.quote(token)}")
-        return
-    if arguments.command == "serve":
-        from .api import create_app
-        from .host import Host
+        return 0
 
-        control = Host(config.home)
-        print(
-            f"Toolframe: {base} · management token: {config.home / '.toolframe/management.token'}",
-            flush=True,
-        )
-        uvicorn.run(
-            create_app(control),
-            host=host,
-            port=composition.application.port,
-            log_level="info",
-        )
-        return
     with httpx.Client(
         base_url=base,
         headers={"Authorization": f"Bearer {token}"},
         timeout=30,
         trust_env=False,
     ) as client:
+        if arguments.command == "export":
+            payload = _response_json(client.get("/_toolframe/v1/composition"))
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("toml"), str
+            ):
+                raise ValueError("Composition response did not contain TOML")
+            text = payload["toml"]
+            if arguments.output:
+                try:
+                    with arguments.output.open("x", encoding="utf-8") as handle:
+                        handle.write(text)
+                except OSError as error:
+                    raise ValueError(
+                        f"Refusing to overwrite or create output {arguments.output}"
+                    ) from error
+            else:
+                sys.stdout.write(text)
+            return 0
+
         if arguments.command == "status" or (
             arguments.command == "plugin" and arguments.action == "status"
         ):
-            response = client.get("/_toolframe/status")
-            response.raise_for_status()
-            result = response.json()
-            if getattr(arguments, "id", None):
+            result = _response_json(client.get("/_toolframe/v1/status"))
+            plugin_status = arguments.command == "plugin"
+            if plugin_status and getattr(arguments, "id", None):
                 result = next(
-                    (item for item in result["plugins"] if item["id"] == arguments.id),
+                    (
+                        item
+                        for item in result.get("plugins", [])
+                        if item["id"] == arguments.id
+                    ),
                     {},
                 )
-        elif arguments.command == "plugin" and arguments.action == "logs":
-            response = client.get(f"/_toolframe/plugins/{arguments.id}/logs")
-            response.raise_for_status()
-            result = response.json()
-        elif arguments.command == "operation":
-            path = f"/_toolframe/operations/{arguments.id}"
-            response = (
-                client.post(path + "/cancel")
-                if arguments.action == "cancel"
-                else client.get(path)
+            _emit_json(result)
+            if getattr(arguments, "check", False):
+                if plugin_status and not getattr(arguments, "id", None):
+                    result = result.get("plugins", [])
+                return _status_check(result, plugin=plugin_status)
+            return 0
+
+        if arguments.command == "plugin" and arguments.action == "logs":
+            result = _response_json(
+                client.get(f"/_toolframe/v1/plugins/{arguments.id}/logs")
             )
-            response.raise_for_status()
-            result = response.json()
-        else:
-            action = (
-                "apply"
-                if arguments.command == "apply"
-                else f"migrate-{arguments.action}"
-                if arguments.command == "migrate"
-                else arguments.action
-            )
-            params = {
-                key: value
-                for key, value in vars(arguments).items()
-                if key not in ("home", "command", "action", "no_wait")
-                and value is not None
-            }
-            if "source" in params and not params["source"].startswith(
-                ("git+", "pypi:", "https://", "path:", "wheel:")
+            _emit_json(result)
+            return 0
+
+        if arguments.command == "operation":
+            path = f"/_toolframe/v1/operations/{arguments.id}"
+            if arguments.action == "cancel":
+                result = _response_json(client.post(path + "/cancel"))
+                _emit_json(result)
+                return 0
+            result = _response_json(client.get(path))
+            _emit_json(result)
+            if (
+                isinstance(result, dict)
+                and result.get("status") in _PENDING_OPERATION_STATES
             ):
-                params["source"] = str(Path(params["source"]).resolve())
-            response = client.post(
-                "/_toolframe/operations", json={"action": action, "params": params}
+                return 0
+            return _operation_exit_code(result)
+
+        if arguments.command == "plan":
+            params = {"action": arguments.action}
+            if arguments.id is not None:
+                params["id"] = arguments.id
+            action = "plan"
+        elif arguments.command == "apply":
+            params = _operation_params(arguments)
+            action = "apply"
+        elif arguments.command == "plugin":
+            params = _operation_params(arguments)
+            action = arguments.action
+        elif arguments.command == "migrate":
+            params = _operation_params(arguments)
+            action = f"migrate-{arguments.action}"
+        else:
+            raise ValueError(f"Unsupported command {arguments.command}")
+
+        result = _response_json(
+            client.post(
+                "/_toolframe/v1/operations", json={"action": action, "params": params}
             )
-            response.raise_for_status()
-            result = response.json()
-            if not getattr(arguments, "no_wait", False):
-                while result["status"] in ("queued", "running", "cancelling"):
-                    time.sleep(0.2)
-                    response = client.get(f"/_toolframe/operations/{result['id']}")
-                    response.raise_for_status()
-                    result = response.json()
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        if isinstance(result, dict) and result.get("status") in (
-            "failed",
-            "failed_recovered",
-            "cancelled",
-            "interrupted",
-        ):
-            raise SystemExit(1)
+        )
+        no_wait = getattr(arguments, "no_wait", False)
+        if not no_wait:
+            result = _wait_for_operation(client, result)
+        _emit_json(result)
+        return _operation_exit_code(result, no_wait=no_wait)
+
+
+def main(argv=None):
+    try:
+        arguments = parser().parse_args(argv)
+        return run(arguments)
+    except (PluginError, httpx.HTTPError, OSError, ValueError) as error:
+        value = _failure_payload(error)
+        print(json.dumps({"error": value}, ensure_ascii=False), file=sys.stderr)
+        return _exit_code(_error_code(error))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

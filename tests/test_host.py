@@ -203,14 +203,14 @@ async def test_management_auth_origin_and_empty_gateway(host):
     ) as client:
         assert (await client.get("/healthz")).json()["core"] == "ready"
         assert (await client.get("/")).json()["dashboard"] == "not_installed"
-        assert (await client.get("/_toolframe/status")).status_code == 401
+        assert (await client.get("/_toolframe/v1/status")).status_code == 401
         headers = {"Authorization": f"Bearer {host.token}"}
         assert (
-            await client.get("/_toolframe/status", headers=headers)
+            await client.get("/_toolframe/v1/status", headers=headers)
         ).status_code == 200
         assert (
             await client.get(
-                "/_toolframe/status",
+                "/_toolframe/v1/status",
                 headers={**headers, "Origin": "https://attacker.example"},
             )
         ).status_code == 403
@@ -222,9 +222,9 @@ async def test_management_auth_origin_and_empty_gateway(host):
             login.status_code == 303
             and "httponly" in login.headers["set-cookie"].lower()
         )
-        assert (await client.get("/_toolframe/status")).status_code == 200
+        assert (await client.get("/_toolframe/v1/status")).status_code == 200
         response = await client.post(
-            "/_toolframe/operations",
+            "/_toolframe/v1/operations",
             headers={**headers, "Idempotency-Key": "apply-once"},
             json={"action": "apply"},
         )
@@ -232,7 +232,7 @@ async def test_management_auth_origin_and_empty_gateway(host):
         assert response.status_code == 202
         await host.wait_operation(identifier)
         repeated = await client.post(
-            "/_toolframe/operations",
+            "/_toolframe/v1/operations",
             headers={**headers, "Idempotency-Key": "apply-once"},
             json={"action": "apply"},
         )
