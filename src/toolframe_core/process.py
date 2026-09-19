@@ -118,12 +118,16 @@ def group_exists(pid):
         return True
     except ProcessLookupError:
         return False
+    except PermissionError:
+        # EPERM does not prove absence. Darwin can also return it while the
+        # group's last descendants are zombies awaiting collection.
+        return True
 
 
 async def stop_group(pid):
     for sig in (signal.SIGTERM, signal.SIGKILL):
         if group_exists(pid):
-            with contextlib.suppress(ProcessLookupError):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, sig)
             deadline = asyncio.get_running_loop().time() + 2
             while group_exists(pid) and asyncio.get_running_loop().time() < deadline:
