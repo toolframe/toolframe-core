@@ -1,6 +1,0 @@
-[project]
-name = "toolframe-app"
-version = "0.0.0"
-requires-python = ">=3.14,<3.15"
-# This local plugin needs only Toolframe's managed core dependencies.
-dependencies = []

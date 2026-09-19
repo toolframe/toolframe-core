@@ -1,364 +1,50 @@
-# Toolframe
+# Toolframe core
 
-Toolframe is a local-first runtime for small, agent-built business apps. One
-Rust launcher runs a Streamlit dashboard, a FastMCP Streamable HTTP endpoint,
-and one configured database on a trusted LAN. SQLite is the default;
-PostgreSQL uses the same business data interface.
-
-The editable source is organized by business domain. Toolframe owns discovery,
-validation, migrations, dependency setup, and process lifecycle; the master
-development agent owns the business model and source.
-
-> Toolframe has no authentication or Python sandbox. Anyone who can reach the
-> LAN service can use the dashboard and published MCP tools. Run only trusted
-> code and do not expose it to the public Internet.
-
-## Editable source contract
-
-There is no legacy root `dashboard/`, `tools/`, `migrations/`, or `llms/`
-source contract. The only source-root overrides are `--app-dir` and
-`--domains-dir`.
-
-## How loading works
-
-Startup is intentionally fail-closed:
-
-1. Resolve `app/`, `domains/`, the database, workspace, and private runtime.
-2. On `serve` only, create a complete source scaffold when an entire source
-   root is absent.
-3. Discover every direct public domain and require its root `__init__.py` plus
-   `llms`, `migrations`, `model`, `tools`, and `ui` directories.
-4. Resolve the selected provider and its typed database settings in Python.
-5. Discover every direct public `domains/*/tools/*.py` file, validate its PEP
-   723 metadata, merge dependencies, and build an immutable startup manifest.
-6. Prepare the pinned UV/Python 3.14 environment from `app/pyproject.toml` and
-   public tool dependencies.
-7. Validate `app/llms.txt`, only the domain documents it explicitly links,
-   `app/dashboard.py`, every public domain model file, public tool, and public
-   widget. Domain import boundaries are checked before tool import.
-8. Import every public tool, materialize every MCP schema, then import and
-   validate every public widget.
-9. Start the database plugin: validate history and ownership, archive migration
-   artifacts, and apply the installed schema targets. Start dependent plugins,
-   enter the server lifespans and report readiness after all setup succeeds.
-
-Any broken public migration, dependency, tool, widget, domain API, or required
-app file stops startup. Toolframe never serves a partial tool catalog or skips a
-broken domain. The terminal error identifies the failing path and phase so the
-master development agent can fix the source.
-
-`toolframe check --format json` follows the same discovery and Python loading
-path without binding a port or applying pending migrations to the configured
-database. SQLite migrations run on a temporary filesystem copy. PostgreSQL checks
-history, artifacts and the plan through read-only connections; it does not
-trial-execute PostgreSQL DDL. The report states the validation level. Trusted
-Python imports must remain free of side effects; supported database helpers
-reject application writes during check.
-
-Toolframe embeds `fastapi-cordis` for dynamic service lifecycles and domain
-availability. Open `/info` to enable/stop plugins, or use `/api/plugins` for
-configuration and dependency-aware operations. MCP tools and widgets share the
-same manager. See [Plugin development and operations](docs/plugins.md) for the
-`app/plugins.py` contract, service access and deployment behavior. Source/schema
-changes still require a restart; runtime configuration changes last until restart.
-
-New complete business capabilities normally expose one domain-owned service
-plugin, shared by their MCP tools and widgets. The bundled skill includes a
-[Stockroom app template](skills/toolframe-business-app/assets/business-plugin/README.md)
-with catalog registration, typed contract, schema and both entrances. Local
-capabilities do not need a separate package release.
-
-## Start and inspect
+A persistent local control host for replaceable Python plugins. Core has no
+Streamlit, FastMCP, business schema or demo imports. It starts empty, keeps its
+management database in `data/core.sqlite`, and runs each plugin/provider in an
+immutable environment and separate process under fastapi-cordis.
 
 ```sh
-./toolframe check --format json
-./toolframe
+uv sync --group dev
+uv run toolframe-core --home /path/to/app init
+uv run toolframe-core --home /path/to/app serve
+# Another terminal:
+uv run toolframe-core --home /path/to/app plugin add /path/to/plugin
+uv run toolframe-core --home /path/to/app plugin enable plugin-id
+uv run toolframe-core --home /path/to/app plugin validate plugin-id
+uv run toolframe-core --home /path/to/app plugin reload plugin-id
 ```
 
-`./toolframe serve` is the explicit form of the second command. The launcher
-prints loopback URLs for this computer and one preferred LAN URL for another
-computer. Give a peer agent the LAN URL ending in `/llms.txt`; give an MCP
-client the same origin ending in `/mcp`.
+`toolframe.toml` is desired authority. `toolframe.lock` records exact artifacts and
+resolved environments; SQLite records observed generations, candidates and the
+operation journal. Installing defaults to disabled. Existing-data migrations use
+`migrate plan ID` then `migrate apply ID --plan-id HASH`. Disable/remove preserve
+business databases. Failed updates do not silently rewrite desired configuration.
 
-Useful development commands:
+Local path, Git (`git+URL@ref#subdirectory=path`), wheel paths/HTTPS and
+`pypi:distribution==version` sources share capture/build/validation. Git references
+resolve to commits. Local source changes get new content identities even at the
+same package version. Wheels must export one `toolframe.plugins` entry point and
+use the public SDK. Providers are sibling repositories, not bundled source.
 
-```sh
-./toolframe scaffold domain order_fulfillment
-./toolframe scaffold migration order_fulfillment add_delivery_window
-./toolframe scaffold tool order_fulfillment order_fulfillment_list_due_orders
-./toolframe scaffold widget order_fulfillment due_orders
-./toolframe invoke entry_register_list_entries --json '{"limit": 20}'
-```
+Management API: authenticated `/_toolframe/status`, `/_toolframe/operations`,
+`/_toolframe/operations/{id}`, and explicit cancellation. Operations survive client
+disconnects. `toolframe open` prints a local Dashboard sign-in link. The token is
+stored with owner-only permissions in `.toolframe/management.token`. Version 1
+binds loopback only; the gateway validates Host/Origin and protects management and
+Dashboard access. `/healthz` is core liveness, separately from application readiness.
 
-Names must be lower snake case and cannot be Python keywords. Scaffolding
-refuses to overwrite an existing path. A tool, widget, or migration scaffold
-requires an existing complete domain.
+The SDK, SQLite provider, llms provider, MCP provider, Dashboard and Entry Register
+each live in their own repository. For unpublished local packages, configure
+`[packages] find_links=["/absolute/wheelhouse"]` containing their built wheels.
+Source checkouts are used only to build captured wheels; no live editable plugin
+is installed into a worker.
 
-## Domain boundaries
-
-Keep one business capability cohesive inside one domain. Domain-owned code may
-import its own internals directly or relatively. Code in one domain may reach
-another domain only through an explicit high-level function exported by the
-other domain's root `__init__.py`:
-
-```python
-from domains.order_fulfillment import promise_delivery
-```
-
-Deep cross-domain imports such as
-`from domains.order_fulfillment.model.orders import ...`, package imports,
-wildcards, private names, and imports of another domain's `model`, `tools`,
-`ui`, `llms`, or `migrations` package fail validation. Export a high-level
-business function only when the dependency is genuinely needed; do not turn
-`__init__.py` into a convenience barrel.
-
-`app/dashboard.py` is the exception: it is the application composition root
-and Toolframe does not restrict how it composes domain UI. The default file
-uses the registry, but the master development agent may replace that behavior.
-
-## Migrations
-
-New migrations use an owner namespace, an explicit target, and revision
-dependencies. Each owner keeps its own SQL files:
-
-```text
-domains/entry_register/migrations/0000_bootstrap.sql
-domains/entry_register/migrations/0001_adopt_domain_table_name.sql
-domains/order_fulfillment/migrations/schema.json
-domains/order_fulfillment/migrations/sqlite/0001_add_orders.sql
-domains/order_fulfillment/migrations/postgresql/0001_add_orders.sql
-```
-
-The original `0000`/`0001` files and ledger remain the immutable legacy global
-history. New references such as `order_fulfillment@0001_add_orders` identify a
-revision in its owner's namespace. `scaffold migration` creates both SQL drafts
-and updates `schema.json`; complete its SQL and owned `tables` before checking.
-Add revisions instead of editing applied bytes.
-
-Business table names use their owning domain prefix, such as
-`entry_register_entries` or `order_fulfillment_orders`. `_toolframe_*` tables
-belong to the runtime and are outside business migrations and repair code.
-
-Python coordinates migration locks, transactions and durable history. Original
-SQL bytes, metadata and checksums are archived in the selected database before
-execution. Removing a plugin preserves its tables, data and verifiable history;
-archived pending revisions do not run without the installed plugin. Reinstalling
-older code fails unless it explicitly declares compatibility. Service `requires`
-does not grant schema ownership or cross-table access.
-
-See [Migration authoring and guarantees](docs/plugin-migrations.md) for declarations,
-cross-owner read contracts, supported SQL, legacy adoption and recovery behavior.
-
-## MCP tools
-
-Every direct public `domains/<domain>/tools/<name>.py` file publishes exactly
-one synchronous FastMCP `@tool` function. The filename, Python function name,
-and MCP tool name must be identical lower snake case, and names are globally
-unique across domains. Dot-prefixed files, `_*.py`, and nested directories are
-not published.
-
-Each public file begins with PEP 723 metadata:
-
-```python
-# /// script
-# requires-python = ">=3.14,<3.15"
-# dependencies = []
-# ///
-
-from fastmcp.tools import tool
-
-
-@tool
-def order_fulfillment_list_due_orders(limit: int = 50) -> dict:
-    """List the bounded set of due orders needed for the next decision."""
-    ...
-```
-
-Publish business commands and queries, not table CRUD, arbitrary filters, or
-generic SQL. One tool should complete one guarded intent or answer one bounded
-business question. Useful runtime helpers are:
-
-- `toolframe_db.get_database()` for bounded parameterized queries and guarded
-  data DML;
-- `toolframe_idempotency.run_once()` for replay-safe mutations;
-- `toolframe_artifacts.get_artifact_store()` for create-once large outputs; and
-- `toolframe_runtime.ToolframeError` for structured, actionable MCP errors.
-
-Do not open SQLite directly from public tools and never expose schema-changing
-or repair capabilities to peer agents. The bundled
-`domains/entry_register/tools/_execute_sql_reference.py` is private reference
-code only; Toolframe does not publish it. A missing business operation is a
-request for the master development agent to implement a narrow tool.
-
-Tool files and dependencies are startup-loaded. Stop and restart Toolframe
-after changing them.
-
-## Dashboard and widgets
-
-Every direct public `domains/<domain>/ui/<widget>.py` file is automatically
-loaded. A widget exports synchronous `render(context)` and may define `TITLE`
-and globally unique integer `ORDER` values. Dot-prefixed files, `_*.py`, and
-nested directories are not widgets.
-
-The default `app/dashboard.py` calls `render_widgets()`. It remains ordinary,
-trusted Streamlit code: the master agent may select, group, reorder, or render
-widgets manually, or replace the registry entirely.
-
-Domain model code belongs in `domains/<domain>/model/` so the UI and tools can
-share validation and business behavior without importing each other. Use
-parameterized database helpers from the widget context; do not accept arbitrary
-SQL from the browser.
-
-Expected, recoverable interaction errors may be rendered through the one
-core-owned `render_error_card()` helper. It produces one clear card containing
-the message, recovery action, trace ID, and instruction to copy the error to the
-master development agent. Do not create competing shared or domain-specific
-error-card components. Syntax, import, contract, and other programming defects
-must propagate and make the app unhealthy.
-
-Streamlit may rerun dashboard code during browser interaction. Tool and
-migration changes still require a full process restart.
-
-## Agent documents
-
-The three document roles are deliberately different:
-
-Toolframe serves `app/llms.txt` at `/llms.txt` as authored; it does not generate
-or append a tool catalog. The file may link focused documents using exact
-root-relative paths of the form `/llms/<domain>/<name>.md`. Only those linked
-regular Markdown files under `domains/<domain>/llms/` are validated and served.
-Unlinked files are private and unavailable over HTTP. Changing the linked set
-requires a restart; editing the bytes of an already approved index or document
-is visible on the next request if the allowlist stays unchanged.
-
-## HTTP surface
-
-| Route | Purpose |
-| --- | --- |
-| `/` | Streamlit business dashboard |
-| `/info` | Built-in database and startup-catalog diagnostics |
-| `/healthz` | Process readiness only |
-| `/api/database` | Bounded built-in table preview |
-| `/api/runtime` | Immutable startup summary |
-| `/llms.txt` | Authored peer-agent entry point |
-| `/llms/<domain>/<document>.md` | Explicitly linked domain document |
-| `/mcp` | FastMCP Streamable HTTP endpoint |
-
-There is no SSE, stdio, reload, repair, or schema-management endpoint.
-
-## Data, artifacts, and audit
-
-The default database is `data/data.db`. Dashboard and tool adapters protect
-runtime-owned tables and enforce bounded results. Large durable outputs
-belong under `workspace/artifacts/`; use the managed artifact API so writes are
-create-once and integrity-addressed.
-
-Structured logs are written to `.toolframe/logs/` by default:
-
-- `audit-YYYY-MM-DD.jsonl` records application lifecycle and mutations;
-- `mcp-YYYY-MM-DD.jsonl` records MCP traffic and tool results.
-
-Logs can contain business input, output, and secrets. Default retention is 14
-UTC date buckets with a combined 256 MiB cap. Logging failures are fail-closed.
-
-## Configuration
-
-Relative CLI path overrides resolve from the current working directory except
-the logs path, which resolves from the executable root.
-
-| CLI flag | Environment | Default beside executable |
-| --- | --- | --- |
-| `--database` | `TOOLFRAME_SQLITE_PATH`, then `TOOLFRAME_DB` | `data/data.db` |
-| `--app-dir` | `TOOLFRAME_APP_DIR` | `app` |
-| `--domains-dir` | `TOOLFRAME_DOMAINS_DIR` | `domains` |
-| `--workspace-dir` | `TOOLFRAME_WORKSPACE` | `workspace` |
-| `--runtime-dir` | `TOOLFRAME_RUNTIME` | `.toolframe` |
-| `--logs-dir` | `TOOLFRAME_LOGS_DIR` | `.toolframe/logs` |
-
-Run `./toolframe --help` for networking, UV/offline, concurrency, timeout,
-result-size, and logging options. The retired per-feature source flags are not
-accepted.
-
-Set `TOOLFRAME_DB_PROVIDER=postgresql` and `TOOLFRAME_POSTGRES_DSN` to select
-PostgreSQL. Provider and target changes take effect after restart and never
-transfer or delete existing data. Tools continue using `get_database()` or the
-typed `DATABASE` service. Use `insert()` for portable returned identifiers.
-See [Configuration and secret-safe diagnostics](docs/database-configuration.md),
-[Provider contract](docs/database-providers.md), and the
-[executable custom provider example](examples/providers/README.md).
-
-## Diagnose safely
-
-Start with:
-
-```sh
-./toolframe check --format json
-./toolframe --help
-```
-
-Preserve the complete terminal error and relevant JSONL logs. Do not delete the
-database, runtime, domains, or migration history as a first response. Fix the
-named source through the master development agent, rerun `check`, then restart
-and prove the dashboard and MCP path.
-
-Retry only errors explicitly marked retryable. Syntax, dependency, migration,
-checksum, import-boundary, schema, widget, and business-rule errors require a
-source or input correction.
-
-## Build and verify this repository
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test --all-targets
-cargo build --release
-```
-
-Create distributable binaries with `make package` for the current host or
-`make release` for the supported macOS targets. The launcher embeds the default
-app/domain scaffold, managed Python runtime modules, information page, and
-production business-app skill.
-
-The embedded package is the unreleased `fastapi-cordis==0.2.0`, sourced from
-`../fastapi-cordis-reactive` (`codex/reactive-plugin-runtime`). After changing and
-testing that checkout, run
-`python3 scripts/sync-fastapi-cordis.py --source ../fastapi-cordis-reactive`
-before building. The older `../fastapi-cordis` checkout is still independent.
-The checked-in source and wheel are embedded in the executable; UV installs the
-wheel as a local dependency when preparing the application's Python environment.
-No PyPI publication or editable sibling install is needed. The embedded
-copy makes normal builds and deployed binaries independent of the sibling path.
-Use `--check` to verify that copy against its source.
-
-With the managed Python dependencies plus pytest/HTTPX installed, run
-`PYTHONPATH=core python -m pytest core/tests`. Database tests use temporary SQLite
-files. Set `TOOLFRAME_TEST_POSTGRES_DSN` to a disposable PostgreSQL server whose
-test role can create/drop databases; each case creates and removes its own database.
-Set `TOOLFRAME_TEST_EXECUTABLE` to the absolute path of a freshly built binary to
-include the isolated real check/invoke/serve/MCP target-switch test. Install
-Playwright in the test environment and set `TOOLFRAME_TEST_BROWSER=1` to also
-exercise `/info` in headless Chrome, including preview/apply, blocked recovery
-and Retry. `TOOLFRAME_TEST_BROWSER_EXECUTABLE` can select another Chromium binary;
-`TOOLFRAME_TEST_BROWSER_ARTIFACTS` selects the screenshot directory. PostgreSQL
-and executable tests are skipped when their explicit test settings are absent.
-
-Run Ruff checks/format validation with `--target-version py311` across `core`,
-`examples`, `app` and `domains` to retain the embedded package's Python 3.11 syntax
-compatibility; the host runtime itself requires Python 3.14.
-
-### Review an updated bundled skill
-
-`serve` installs `.agents/skills/toolframe-business-app` only when absent and
-preserves an existing directory, including personal edits. A replacement binary
-does not upgrade that installed copy. Export the new bundle to a fresh destination:
-
-```sh
-./toolframe export-skill ./toolframe-business-app-new
-git diff --no-index .agents/skills/toolframe-business-app ./toolframe-business-app-new
-```
-
-The export is offline, starts no application services, and rejects existing
-destinations. Its parent directory must already exist. Review the differences
-and merge the relevant changes into the installed copy, preserving personal rules;
-`git diff --no-index` returns status 1 when there are differences. When no installed
-copy exists, the next normal `serve` installs the bundled version.
+The Rust executable only bootstraps pinned Python/core packages and forwards to
+the Python CLI. `scripts/build-release.sh` embeds core, SDK and Cordis wheels;
+provider implementations are independently distributed. First use may download
+Python/dependencies. `--offline` uses existing caches, never claims missing content
+is available. `--wheelhouse PATH` supports local development builds. The formal v1
+release targets remain macOS 12+ arm64 and Intel; cross-platform support needs
+separate acceptance evidence.

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Toolframe Business App"
-  short_description: "Build and operate a LAN-first business app with toolframe"
-  default_prompt: "Turn this editable toolframe folder into a business-first LAN app, suggest and apply a distinct app name, then verify it end to end."

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "toolframe-core"
+version = "0.2.0"
+description = "Persistent control host for isolated Toolframe plugins"
+requires-python = ">=3.14"
+dependencies = [
+  "toolframe-sdk==0.1.0", "fastapi-cordis==0.2.0", "fastapi==0.135.2",
+  "uvicorn==0.42.0", "httpx>=0.28,<1", "websockets>=15,<17",
+  "tomlkit>=0.13,<1", "packaging>=25", "watchfiles>=1,<2",
+]
+
+[project.scripts]
+toolframe-core = "toolframe_core.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.12,<1", "hatchling>=1.27,<2"]
+
+[tool.uv.sources]
+toolframe-sdk = { path = "../toolframe-sdk", editable = true }
+fastapi-cordis = { path = "../fastapi-cordis-reactive", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py314"

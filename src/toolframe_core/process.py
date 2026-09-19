@@ -1,0 +1,104 @@
+"""Own a worker process, its protocol channel, stderr tail and actual exit."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import os
+import signal
+from collections import deque
+
+from toolframe_sdk import MAX_FRAME_BYTES, PluginError
+from toolframe_sdk.rpc import RpcPeer
+
+
+class WorkerProcess:
+    def __init__(self, process, handler, *, log_callback=None):
+        self.process = process
+        self.expected_exit = False
+        self.logs = deque(maxlen=200)
+        self.log_callback = log_callback
+        self.peer = RpcPeer(process.stdout, process.stdin, handler)
+        self.reader_task = asyncio.create_task(self.peer.run())
+        self.log_task = asyncio.create_task(self._logs())
+
+    @classmethod
+    async def start(cls, python, entrypoint, handler, *, cwd, log_callback=None):
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in ("PYTHONPATH", "PYTHONHOME")
+        }
+        process = await asyncio.create_subprocess_exec(
+            str(python),
+            "-I",
+            "-u",
+            "-m",
+            "toolframe_sdk.worker",
+            "--entrypoint",
+            entrypoint,
+            cwd=cwd,
+            env=environment,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=MAX_FRAME_BYTES,
+            start_new_session=True,
+        )
+        return cls(process, handler, log_callback=log_callback)
+
+    @property
+    def pid(self):
+        return self.process.pid
+
+    async def _logs(self):
+        remainder = b""
+        while data := await self.process.stderr.read(4096):
+            remainder += data
+            lines = remainder.split(b"\n")
+            remainder = lines.pop()[-4096:]
+            for line in lines:
+                text = line[-4096:].decode(errors="replace")
+                self.logs.append(text)
+                if self.log_callback:
+                    self.log_callback(text)
+
+    async def request(self, method, params=None, *, timeout=30):
+        return await self.peer.request(method, params, timeout=timeout)
+
+    async def close(self, timeout=10, *, activated=True):
+        self.expected_exit = True
+        if self.process.returncode is None:
+            if activated:
+                await self.request("runtime.dispose", timeout=timeout)
+            self.process.stdin.close()
+            try:
+                await asyncio.wait_for(self.process.wait(), timeout)
+            except TimeoutError as error:
+                raise PluginError(
+                    "cleanup_failed",
+                    "Worker did not exit after disposal",
+                    {"pid": self.pid},
+                ) from error
+        await self.peer.close()
+        await asyncio.gather(self.reader_task, self.log_task, return_exceptions=True)
+        if self.process.returncode not in (0, None):
+            raise PluginError(
+                "cleanup_failed",
+                "Worker exited unsuccessfully",
+                {"returncode": self.process.returncode},
+            )
+
+    async def force_stop(self):
+        self.expected_exit = True
+        if self.process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self.pid, signal.SIGTERM)
+            try:
+                await asyncio.wait_for(self.process.wait(), 2)
+            except TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(self.pid, signal.SIGKILL)
+                await self.process.wait()
+        await self.peer.close()
+        await asyncio.gather(self.reader_task, self.log_task, return_exceptions=True)

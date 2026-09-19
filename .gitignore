@@ -1,4 +1,10 @@
 /target/
+/target-*/
+/.venv/
+/.pytest_cache/
+/.ruff_cache/
+/wheelhouse/
+/build/
 /dist/
 /.toolframe/
 /data/
