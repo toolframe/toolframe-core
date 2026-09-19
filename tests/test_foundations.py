@@ -107,3 +107,53 @@ packages = ["fixture"]
     with pytest.raises(PluginError, match="broken candidate"):
         await package.prepare("fixture", str(source), {})
     assert (tmp_path / first["artifact"]).is_file()
+
+
+async def test_git_branch_wheel_index_and_offline_cached_resolution(tmp_path):
+    import shutil
+    import subprocess
+
+    from test_host import fixture_source
+
+    workspace = Path(__file__).resolve().parents[2]
+    source = fixture_source(tmp_path, "sources")
+    for arguments in (
+        ["git", "init", "-q", "-b", "main"],
+        ["git", "add", "."],
+        [
+            "git",
+            "-c",
+            "user.name=Toolframe Tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        ["git", "branch", "feature/plugin"],
+    ):
+        subprocess.run(arguments, cwd=source, check=True, capture_output=True)
+    package = Packages(
+        tmp_path / "home",
+        PackageSettings(find_links=[str(workspace / "toolframe-sdk/dist")]),
+    )
+    git_source = f"git+{source.as_uri()}@feature/plugin"
+    captured = await package.capture(git_source)
+    assert len(captured["source"]["commit"]) == 40
+    wheel = package.home / captured["artifact"]
+    direct = await package.capture("wheel:" + str(wheel))
+    assert direct["artifact_hash"] == captured["artifact_hash"]
+    package.settings.find_links.append(str(wheel.parent))
+    indexed = await package.capture("pypi:fixture-sources==0.1.0")
+    assert indexed["plugin_id"] == "sources"
+    assert indexed["artifact_hash"] == captured["artifact_hash"]
+    package.settings.offline = True
+    shutil.rmtree(source)
+    assert (await package.capture(git_source))["artifact_hash"] == captured[
+        "artifact_hash"
+    ]
+    assert (await package.capture("pypi:fixture-sources==0.1.0"))[
+        "artifact_hash"
+    ] == indexed["artifact_hash"]
+    with pytest.raises(PluginError, match="Unknown local source"):
+        await package.capture(str(source))

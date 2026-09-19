@@ -7,6 +7,7 @@ import configparser
 import email
 import fnmatch
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -19,6 +20,8 @@ import zipfile
 from pathlib import Path
 
 import httpx
+import tomlkit
+from packaging.requirements import Requirement
 from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from toolframe_sdk import (
@@ -251,6 +254,22 @@ class Packages:
                 "Downloaded artifact differs from its pinned SHA256",
             )
 
+    async def fetch_locked(self, item, target):
+        expected = item.get("hashes", {}).get("sha256")
+        url = item["url"]
+        if url.startswith("file://"):
+            shutil.copyfile(
+                Path(urllib.parse.unquote(urllib.parse.urlsplit(url).path)), target
+            )
+        else:
+            await self.download(url, target, expected)
+        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        if expected and actual != expected:
+            raise PluginError(
+                "artifact_hash_mismatch", "Resolved artifact changed before capture"
+            )
+        return actual
+
     async def _build(self, source, destination):
         await command(
             self.uv,
@@ -271,6 +290,21 @@ class Packages:
         return wheels[0]
 
     async def capture(self, source):
+        cached = self.root / "source-resolutions" / f"{digest(source)}.json"
+        if (
+            self.settings.offline
+            and cached.exists()
+            and source.startswith(("pypi:", "git+", "https://"))
+        ):
+            value = json.loads(cached.read_text())
+            if (
+                hashlib.sha256((self.home / value["artifact"]).read_bytes()).hexdigest()
+                != value["artifact_hash"]
+            ):
+                raise PluginError(
+                    "artifact_hash_mismatch", "Cached source artifact was modified"
+                )
+            return value
         with tempfile.TemporaryDirectory(dir=self.root / "tmp") as temporary:
             temporary = Path(temporary)
             provenance = {"request": source}
@@ -292,15 +326,26 @@ class Packages:
                     url, ref = url.rsplit("@", 1)
                 checkout = temporary / "checkout"
                 await command("git", "clone", "--no-checkout", "--", url, checkout)
-                commit = (
-                    await command(
-                        "git",
-                        "rev-parse",
-                        "--verify",
-                        f"{ref}^{{commit}}",
-                        cwd=checkout,
-                    )
-                ).strip()
+                try:
+                    commit = (
+                        await command(
+                            "git",
+                            "rev-parse",
+                            "--verify",
+                            f"{ref}^{{commit}}",
+                            cwd=checkout,
+                        )
+                    ).strip()
+                except PluginError:
+                    commit = (
+                        await command(
+                            "git",
+                            "rev-parse",
+                            "--verify",
+                            f"origin/{ref}^{{commit}}",
+                            cwd=checkout,
+                        )
+                    ).strip()
                 await command("git", "checkout", "--detach", commit, cwd=checkout)
                 subdirectory = urllib.parse.parse_qs(fragment).get(
                     "subdirectory", [""]
@@ -327,7 +372,7 @@ class Packages:
                 await self.download(url, wheel, expected)
                 provenance.update(kind="wheel")
             elif source.startswith("pypi:"):
-                requirement = source.removeprefix("pypi:")
+                requirement = str(Requirement(source.removeprefix("pypi:")))
                 requirements = temporary / "requirements.in"
                 requirements.write_text(requirement + "\n")
                 lockfile = temporary / "pylock.toml"
@@ -360,12 +405,23 @@ class Packages:
                         chosen = item
                         break
                 if chosen is None:
-                    raise PluginError(
-                        "wheel_unavailable",
-                        "No compatible wheel; build a wheel from a local/Git source first",
+                    chosen = package.get("sdist")
+                    if not chosen:
+                        raise PluginError(
+                            "artifact_unavailable",
+                            "Index package has no compatible wheel or source archive",
+                        )
+                    archive = (
+                        temporary / Path(urllib.parse.urlsplit(chosen["url"]).path).name
                     )
-                wheel = temporary / Path(urllib.parse.urlsplit(chosen["url"]).path).name
-                await self.download(chosen["url"], wheel, chosen["hashes"]["sha256"])
+                    provenance["sdist_hash"] = await self.fetch_locked(chosen, archive)
+                    self.artifact(archive)
+                    wheel = await self._build(archive, temporary / "wheel")
+                else:
+                    wheel = (
+                        temporary / Path(urllib.parse.urlsplit(chosen["url"]).path).name
+                    )
+                    await self.fetch_locked(chosen, wheel)
                 provenance.update(
                     kind="pypi",
                     distribution=package["name"],
@@ -390,12 +446,14 @@ class Packages:
                     raise PluginError("source_missing", f"Unknown local source: {path}")
             metadata = wheel_metadata(wheel)
             stored, wheel_hash = self.artifact(wheel)
-            return {
+            result = {
                 **metadata,
                 "artifact": str(stored.relative_to(self.home)),
                 "artifact_hash": wheel_hash,
                 "source": provenance,
             }
+            atomic_write(cached, json.dumps(result))
+            return result
 
     async def environment(self, artifacts, *, ui=False):
         requirements = []
@@ -449,7 +507,19 @@ class Packages:
                 *self.flags(),
                 input_file,
             )
-            lock = lockfile.read_text().replace(str(self.home), "${TOOLFRAME_HOME}")
+            document = tomlkit.parse(lockfile.read_text())
+            for package in document.get("packages", []):
+                for wheel in package.get("wheels", []):
+                    if wheel.get("url", "").startswith("file://"):
+                        path = Path(
+                            urllib.parse.unquote(
+                                urllib.parse.urlsplit(wheel["url"]).path
+                            )
+                        )
+                        stored, checksum = self.artifact(path)
+                        wheel["url"] = stored.as_uri()
+                        wheel["hashes"] = {"sha256": checksum}
+            lock = tomlkit.dumps(document).replace(str(self.home), "${TOOLFRAME_HOME}")
             key = digest(
                 {
                     "lock": lock,
@@ -529,5 +599,7 @@ class Packages:
             "config": config,
             "validation": {"preflight": "passed", "runtime": "not_run"},
         }
-        candidate["id"] = digest(candidate)
+        candidate["id"] = digest(
+            {key: value for key, value in candidate.items() if key != "validation"}
+        )
         return candidate
