@@ -1,50 +1,199 @@
 # Toolframe core
 
-A persistent local control host for replaceable Python plugins. Core has no
-Streamlit, FastMCP, business schema or demo imports. It starts empty, keeps its
-management database in `data/core.sqlite`, and runs each plugin/provider in an
-immutable environment and separate process under fastapi-cordis.
+Toolframe is a persistent local control host for replaceable Python plugins.
+Core owns composition, immutable package environments, worker lifecycles,
+management operations and `data/core.sqlite`. Dashboard, MCP, llms.txt, business
+storage and Entry Register are independently packaged plugins.
+
+## Run the local workspace
+
+The seven Toolframe repositories and `fastapi-cordis-reactive` must be siblings.
+Python 3.14.7, uv 0.12.8 and Rust are the tested build tools.
 
 ```sh
-uv sync --group dev
-uv run toolframe-core --home /path/to/app init
-uv run toolframe-core --home /path/to/app serve
-# Another terminal:
-uv run toolframe-core --home /path/to/app plugin add /path/to/plugin
-uv run toolframe-core --home /path/to/app plugin enable plugin-id
-uv run toolframe-core --home /path/to/app plugin validate plugin-id
-uv run toolframe-core --home /path/to/app plugin reload plugin-id
+# From toolframe-core:
+uv sync --locked --group dev
+bash scripts/dev-wheelhouse.sh
+bash scripts/build-release.sh
+export TOOLFRAME_WHEELHOUSE="$PWD/wheelhouse"
+
+# An explicit template installs the four providers and the ordinary demo plugin.
+./target/release/toolframe --home ./example init --template entry-register
+./target/release/toolframe --home ./example serve
 ```
 
-`toolframe.toml` is desired authority. `toolframe.lock` records exact artifacts and
-resolved environments; SQLite records observed generations, candidates and the
-operation journal. Installing defaults to disabled. Existing-data migrations use
-`migrate plan ID` then `migrate apply ID --plan-id HASH`. Disable/remove preserve
-business databases. Failed updates do not silently rewrite desired configuration.
+In another terminal, with the same wheelhouse setting, run
+`./target/release/toolframe --home ./example open` for the local sign-in link.
+`init` without `--template` creates an empty core. `serve` reconciles the selected
+composition and keeps CLI/API diagnostics available during plugin preparation.
+Nothing is published to a package index by these commands; the local wheelhouse
+supplies the currently unpublished Toolframe distributions.
 
-Local path, Git (`git+URL@ref#subdirectory=path`), wheel paths/HTTPS and
-`pypi:distribution==version` sources share capture/build/validation. Git references
-resolve to commits. Local source changes get new content identities even at the
-same package version. Wheels must export one `toolframe.plugins` entry point and
-use the public SDK. Providers are sibling repositories, not bundled source.
+The commands below use `toolframe` for the built executable. Pass `--home PATH`
+before its subcommand. The Python development entry point is
+`uv run toolframe-core --home PATH ...`.
 
-Management API: authenticated `/_toolframe/status`, `/_toolframe/operations`,
-`/_toolframe/operations/{id}`, and explicit cancellation. Operations survive client
-disconnects. `toolframe open` prints a local Dashboard sign-in link. The token is
-stored with owner-only permissions in `.toolframe/management.token`. Version 1
-binds loopback only; the gateway validates Host/Origin and protects management and
-Dashboard access. `/healthz` is core liveness, separately from application readiness.
+## Install, inspect and replace plugins
 
-The SDK, SQLite provider, llms provider, MCP provider, Dashboard and Entry Register
-each live in their own repository. For unpublished local packages, configure
-`[packages] find_links=["/absolute/wheelhouse"]` containing their built wheels.
-Source checkouts are used only to build captured wheels; no live editable plugin
-is installed into a worker.
+```sh
+toolframe --home ./example plugin add /absolute/path/to/plugin
+# add installs and validates but leaves the plugin disabled; add --enable opts in.
+toolframe --home ./example plugin validate plugin-id
+toolframe --home ./example plugin validate plugin-id --runtime
+toolframe --home ./example plugin enable plugin-id
 
-The Rust executable only bootstraps pinned Python/core packages and forwards to
-the Python CLI. `scripts/build-release.sh` embeds core, SDK and Cordis wheels;
-provider implementations are independently distributed. First use may download
-Python/dependencies. `--offline` uses existing caches, never claims missing content
-is available. `--wheelhouse PATH` supports local development builds. The formal v1
-release targets remain macOS 12+ arm64 and Intel; cross-platform support needs
-separate acceptance evidence.
+toolframe --home ./example plugin update plugin-id
+toolframe --home ./example plan --action reload --id plugin-id
+# Review the affected members and copy result.plan_id from the completed plan.
+toolframe --home ./example plugin reload plugin-id --plan-id PLAN_ID
+toolframe --home ./example plugin status plugin-id --json --check
+```
+
+`update` stages a candidate; it does not change the active generation. Ordinary
+`reload` can also capture the current source directly. A reviewed plan binds the
+candidate content, desired revision, worker generations, catalog and schema
+history. Changed inputs produce a stale-plan error instead of applying a different
+candidate. `--expected-revision` protects managed edits to composition.
+
+Supported sources are local directories (`path:/absolute/directory`), Git
+(`git+https://host/repo.git@ref#subdirectory=path`), wheel files/HTTPS URLs and
+`pypi:distribution==version`. Git refs resolve to full commits; local edits receive
+new content identities even when their package version is unchanged. Workers use
+captured wheels, never live editable imports. Each wheel supplies one
+`toolframe.plugins` entry point and one stable plugin ID.
+
+Validation reports capture/build, environment, import, configuration and resource
+preflight separately. `--runtime` exercises a temporary application/store; it does
+not certify live business health. Status distinguishes the installed candidate,
+selected active generation, recent health, missing dependencies and last operation.
+
+## Composition and data
+
+`toolframe.toml` is the desired authority. `toolframe.lock` records exact artifacts
+and environments. Core SQLite records actual generations, candidates, interrupted
+operations and recovery information. CLI/API edits compare revisions and replace
+TOML atomically. After editing TOML manually, run `plan`, then
+`apply --plan-id PLAN_ID`; `export --output PATH` writes a reviewable copy without
+overwriting an existing file. Schema-marked secret values and credentials are
+redacted in exports and management views; restore required secrets from the
+operator's original configuration before applying an exported copy.
+
+Use `[packages] find_links=["/absolute/wheelhouse"]` for local distributions.
+`TOOLFRAME_WHEELHOUSE` provides the equivalent launcher/host override. Set
+`watch=true` on a local plugin to opt into stable, debounced validation and safe
+reload. Watch does not enable disabled or manually stopped plugins, migrate
+existing data, force termination or restart core.
+
+SQLite storage is a provider. Each business plugin receives a managed SQL and
+transaction client for its own retained `data/plugins/<id>/data.sqlite`. Plugins
+access another owner's data through its public business service. No raw database
+path or connection is supplied. This is ownership isolation for trusted local
+plugins, not an operating-system sandbox.
+
+```sh
+toolframe --home ./example migrate plan plugin-id
+toolframe --home ./example migrate apply plugin-id --plan-id PLAN_ID
+```
+
+Fresh empty stores can initialize automatically. Existing-data migrations require
+explicit apply, a checked plan and a backup. A committed or uncertain schema
+upgrade never triggers automatic old-code recovery. Status exposes
+`forward_repair` until a compatible candidate is explicitly repaired/applied.
+Disabling or removing a plugin retains its database.
+
+## Lifecycle and management
+
+Required dependents drain together. Admitted calls retain their generation and
+transaction leases until completion. Drain timeout keeps intact old instances;
+normal reload does not kill them. Worker/process-group cleanup must finish before
+a replacement starts. With unchanged schema and proven cleanup, a failed new
+cohort gets one attempt to restart the retained old snapshots. Its operation is
+reported as `failed_recovered`, not successful.
+
+`plugin stop ID --force` is the explicit termination path. A manual stop remains
+fenced until enable/reload/apply explicitly resumes it. Core startup reconciles
+surviving worker ownership and interrupted operations; invalid TOML is visible
+through management rather than hiding the repair surface.
+
+CLI, API and the Dashboard management page use the same durable operation engine.
+The Dashboard shows a plan before applying lifecycle changes and can reload its
+own provider; its UI session can reconnect while core completes the operation.
+
+| Interface | Contract |
+| --- | --- |
+| `/_toolframe/v1/status` | Core health, application readiness, candidates and observed generations. |
+| `/_toolframe/v1/readiness` | HTTP 200 when required capabilities are ready; otherwise 503. Reports `ready` and optional `degraded` independently. |
+| `/_toolframe/v1/operations` | GET history; POST `{ "action": "reload", "params": { "id": "plugin-id" } }` returns HTTP 202. |
+| `/_toolframe/v1/operations/{id}` | Durable operation status; POST `/{id}/cancel` requests cancellation at a safe boundary. |
+| `/_toolframe/v1/composition` | TOML text and its revision. |
+| `/_toolframe/v1/services/{owner}/{service}/{method}` | Authenticated JSON business-service calls. |
+| `/healthz` | Core liveness, independent of application readiness. |
+
+Management uses a bearer token or local sign-in cookie; the token is stored in
+`.toolframe/management.token` with owner-only permissions. Listeners are loopback
+only and validate Host/Origin. Dashboard access is authenticated. Enabled MCP and
+llms entrances are local provider endpoints at `/mcp` and `/llms.txt`.
+
+Mutations support `Idempotency-Key`. Identical retries return the original
+operation, even if that operation changed the composition revision. Different
+requests using the same key return a conflict. Client disconnect does not cancel
+host work. CLI `--no-wait` returns the operation ID immediately;
+`operation status ID` and `operation cancel ID` manage it later.
+
+CLI exit codes: 0 success/accepted work; 2 input/configuration; 3 validation or
+readiness; 4 runtime/recovery failure; 5 stale/conflict; 130 cancellation. Use
+`--json` for structured output and `status --check` when readiness should affect
+the exit code.
+
+## Repository boundaries
+
+| Repository | Owns |
+| --- | --- |
+| `toolframe-core` | Persistent FastAPI/Cordis control host, gateway and thin Rust launcher. |
+| `toolframe-sdk` | Public definitions, worker protocol, services, resources and scoped clients. |
+| `toolframe-storage-sqlite` | Owner databases, SQL authorization, transactions, receipts and migrations. |
+| `toolframe-streamlit-dashboard` | Native Streamlit pages, shared navigation and management UI. |
+| `toolframe-fastmcp` | MCP tools and Streamable HTTP transport. |
+| `toolframe-llms-txt` | Index composition and explicitly packaged Markdown assets. |
+| `toolframe-demo-entry-register` | Ordinary business service, page, read-only tool, docs and template. |
+
+Core/SDK import no presentation provider. Workers have separate locked environments;
+Streamlit page contributors share a separately resolved Dashboard environment.
+An incompatible UI dependency set fails preflight. Replacing that shared process
+can reset Dashboard session state. Catalog/schema changes replace MCP and require
+client reconnection; backend-only changes can preserve MCP sessions.
+
+## Build and verify
+
+The Rust executable embeds only core, SDK and the independent Cordis 0.2.0 wheel.
+It prepares the exact Python 3.14.7 architecture and invokes Python core. The
+source for the pinned local Cordis wheel is `../fastapi-cordis-reactive` at
+`25a870f3bbc1c1c3e28c9de48a96c5ee516197a6`. Provider updates do not require rebuilding
+the launcher.
+
+```sh
+uv run pytest -q
+uv run ruff check src tests scripts/verify-release.py
+cargo test
+cargo fmt --check
+uv run python scripts/verify-release.py \
+  --binary target/release/toolframe --wheelhouse wheelhouse \
+  --architecture arm64 --output build/release-arm64.json
+```
+
+The integration tests expect the sibling repositories and check private-import
+boundaries. Run each provider/SDK repository's `uv run pytest -q` as well. The MCP
+repository has an additional `scripts/verify-gateway.py` acceptance driver.
+
+For Intel, first build the companion native dependency wheel documented in
+`../toolframe-fastmcp/README.md`, then run
+`bash scripts/build-release.sh --target x86_64-apple-darwin`. The matching release
+probe uses `--binary target/x86_64-apple-darwin/release/toolframe` and
+`--architecture x86_64-rosetta` on Apple Silicon.
+
+First preparation may download Python/dependencies. `--offline` uses exact cached
+content and fails when required assets are missing. Native arm64 and x86_64 under
+Rosetta were exercised on macOS 14.8.5. Physical Intel, the macOS 12 minimum,
+independent desktop MCP clients and remote CI/publication remain explicit release
+gates in the acceptance report. Linux/Windows, PostgreSQL, multiple instances,
+artifact storage and full business audit providers are outside this version.
