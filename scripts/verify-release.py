@@ -119,6 +119,7 @@ def main():
                         and (home / "data/core.sqlite").is_file()
                     )
                     assert len(status["plugins"]) == (0 if template == "empty" else 5)
+                    assert request(home, endpoint, "/_toolframe/v1/readiness")["ready"]
                     interpreters = list((root / "runtime/core").glob("*/bin/python"))
                     assert len(interpreters) == 1, interpreters
                     inspection = subprocess.run(
@@ -139,9 +140,9 @@ def main():
                         check=True,
                     )
                     runtime_info = json.loads(inspection.stdout)
-                    assert runtime_info["architecture"] == args.architecture.removesuffix(
-                        "-rosetta"
-                    )
+                    assert runtime_info[
+                        "architecture"
+                    ] == args.architecture.removesuffix("-rosetta")
                     assert not any(runtime_info["optional_imports"].values())
                     outcome = {
                         "template": template,
@@ -156,6 +157,8 @@ def main():
                                 "observed_revision",
                                 "catalog_epoch",
                                 "application",
+                                "ready",
+                                "degraded",
                             )
                         },
                         "plugins": {
@@ -228,6 +231,19 @@ def main():
                                 == by_id(status)["storage-sqlite"]
                             )
                             outcome["reload"] = op
+                            outcome["after_reload"] = {
+                                "pid": after["pid"],
+                                "host_run": after["host_run"],
+                                "catalog_epoch": after["catalog_epoch"],
+                                "plugins": {
+                                    item["id"]: {
+                                        "candidate": item["candidate"],
+                                        "active_status": item["active_status"],
+                                        "runtime": item["runtime"],
+                                    }
+                                    for item in after["plugins"]
+                                },
+                            }
                         with urllib.request.urlopen(
                             endpoint + "/llms.txt", timeout=5
                         ) as response:
