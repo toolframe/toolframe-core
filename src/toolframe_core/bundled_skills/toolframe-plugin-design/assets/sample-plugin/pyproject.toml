@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "toolframe-sample-notes"
+version = "0.1.0"
+description = "Small independently packaged Toolframe notes plugin"
+requires-python = ">=3.14"
+dependencies = ["toolframe-sdk==0.1.0"]
+
+[project.optional-dependencies]
+ui = ["streamlit==1.61.0"]
+
+[project.entry-points."toolframe.plugins"]
+sample-notes = "toolframe_sample_notes.plugin:plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/toolframe_sample_notes"]

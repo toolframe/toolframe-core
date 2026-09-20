@@ -18,9 +18,15 @@ REPOSITORIES = (
 )
 
 
-@pytest.mark.parametrize("repository", REPOSITORIES)
+@pytest.mark.parametrize("repository", (*REPOSITORIES, "toolframe-sample-notes"))
 def test_repository_uses_only_its_implementation_and_public_sdk(repository):
     root = Path(__file__).resolve().parents[2] / repository
+    if repository == "toolframe-sample-notes":
+        root = (
+            root.parent
+            / "toolframe-core/src/toolframe_core/bundled_skills"
+            / "toolframe-plugin-design/assets/sample-plugin"
+        )
     assert root.is_dir(), f"Integration workspace is missing {repository}"
     own = repository.replace("-", "_")
     allowed = {own, "toolframe_sdk"}
@@ -29,9 +35,12 @@ def test_repository_uses_only_its_implementation_and_public_sdk(repository):
         if repository in {"toolframe-core", "toolframe-sdk"}
         else set()
     )
-    if repository == "toolframe-demo-entry-register":
+    if repository in {"toolframe-demo-entry-register", "toolframe-sample-notes"}:
         forbidden_libraries.add("sqlite3")
     for file in (root / "src").rglob("*.py"):
+        # Shipped authoring assets are a separate plugin, checked in their own case.
+        if repository == "toolframe-core" and "bundled_skills" in file.parts:
+            continue
         for node in ast.walk(ast.parse(file.read_text(), filename=str(file))):
             imports = []
             if isinstance(node, ast.Import):

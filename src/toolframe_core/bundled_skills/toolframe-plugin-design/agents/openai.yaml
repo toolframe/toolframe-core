@@ -1,0 +1,4 @@
+interface:
+  display_name: "Toolframe Plugin Design"
+  short_description: "Design and build custom Toolframe business plugins"
+  default_prompt: "Use $toolframe-plugin-design to design and implement a Toolframe plugin for my business workflow."

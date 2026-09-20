@@ -1,0 +1,5 @@
+CREATE TABLE notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    body TEXT NOT NULL CHECK (length(trim(body)) BETWEEN 1 AND 1000),
+    created_at TEXT NOT NULL
+);

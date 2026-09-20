@@ -1,0 +1,110 @@
+[
+  {
+    "id": "inventory-design",
+    "prompt": "幫我設計一個 Toolframe 庫存插件：收貨和出貨都要留紀錄，先只設計不要寫程式。",
+    "activate": true,
+    "read": [
+      "references/design.md"
+    ],
+    "avoid_read": [
+      "assets/sample-plugin",
+      "references/operations.md"
+    ],
+    "success": [
+      "Defines stock movements and inventory derivation",
+      "Records ownership, invariants and correction history",
+      "Produces a design without implementation or application changes"
+    ]
+  },
+  {
+    "id": "new-plugin",
+    "prompt": "Use Toolframe to build a small reading tracker plugin with a Streamlit page, SQLite persistence, and a read-only MCP list tool.",
+    "activate": true,
+    "read": [
+      "references/design.md",
+      "references/plugin-api.md",
+      "references/operations.md",
+      "assets/sample-plugin"
+    ],
+    "success": [
+      "Owns an independent wheel and stable plugin ID",
+      "Uses managed SQL and public service calls",
+      "Keeps Streamlit in the UI extra",
+      "Uses actual CLI validation and explicit activation"
+    ]
+  },
+  {
+    "id": "existing-schema-change",
+    "prompt": "Extend our existing Toolframe booking plugin with cancellation reasons; there is already production data.",
+    "activate": true,
+    "read": [
+      "references/design.md",
+      "references/plugin-api.md",
+      "references/operations.md"
+    ],
+    "avoid_read": [
+      "assets/sample-plugin"
+    ],
+    "success": [
+      "Preserves the existing identity and applied migration bytes",
+      "Appends a migration",
+      "Separates preview from authorized application",
+      "Does not silently replay failed writes"
+    ]
+  },
+  {
+    "id": "headless-service",
+    "prompt": "Build a Toolframe plugin that only provides a service to other plugins; no UI, tools, or database.",
+    "activate": true,
+    "read": [
+      "references/design.md",
+      "references/plugin-api.md",
+      "references/operations.md"
+    ],
+    "success": [
+      "Publishes a service with JSON schemas",
+      "Omits presentation resources, storage and UI dependencies"
+    ]
+  },
+  {
+    "id": "peer-agent",
+    "prompt": "Call the existing MCP list_entries tool to show my latest records.",
+    "activate": false,
+    "success": [
+      "Uses the existing business tool",
+      "Does not read private design files or edit plugin source"
+    ]
+  },
+  {
+    "id": "ordinary-operation",
+    "prompt": "Stop the Toolframe app and explain its status output.",
+    "activate": false,
+    "success": [
+      "Uses the operation surface without starting plugin design"
+    ]
+  },
+  {
+    "id": "generic-streamlit",
+    "prompt": "Make a standalone Streamlit CSV viewer; I am not using Toolframe.",
+    "activate": false,
+    "success": [
+      "Does not introduce Toolframe repositories, services or packaging"
+    ]
+  },
+  {
+    "id": "codex-plugin",
+    "prompt": "Create a Codex plugin with a plugin.json manifest.",
+    "activate": false,
+    "success": [
+      "Routes to Codex plugin creation, not a Toolframe business plugin"
+    ]
+  },
+  {
+    "id": "binary-skill-update",
+    "prompt": "Upgrade my Toolframe binary and refresh the bundled skills, preserving my edits.",
+    "activate": false,
+    "success": [
+      "Uses the skill installation/update surface without starting business-plugin design"
+    ]
+  }
+]

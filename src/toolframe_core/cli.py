@@ -58,6 +58,22 @@ def parser():
     initialize.add_argument("--template")
     initialize.add_argument("--port", type=int, default=9876)
 
+    skill = commands.add_parser("skill", help="Install bundled agent guidance locally")
+    _add_json_option(skill)
+    skill_commands = skill.add_subparsers(dest="action", required=True)
+    skill_install = skill_commands.add_parser("install")
+    _add_json_option(skill_install)
+    skill_install.add_argument(
+        "--output",
+        type=Path,
+        help="Exact destination directory; defaults to APP/.agents/skills/toolframe-plugin-design under --home",
+    )
+    skill_install.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Confirm replacement of customized content; saves a backup ZIP",
+    )
+
     serve = commands.add_parser("serve")
     _add_json_option(serve)
 
@@ -255,6 +271,7 @@ def _exit_code(code):
         "stale_revision",
         "idempotency_conflict",
         "already_installed",
+        "skill_conflict",
     }:
         return 5
     if code == "cancelled":
@@ -395,8 +412,46 @@ def _operation_params(arguments, *, exclude=()):
     return params
 
 
+def _install_skill(arguments, home, *, upgrade_only=False):
+    from .skills import install_skill
+
+    def confirm(result):
+        print(
+            f"Skill at {result['path']} has local changes or no installation record. "
+            f"Replace it with bundled version {result['bundled_version']} and save a backup? [y/N] ",
+            end="",
+            file=sys.stderr,
+            flush=True,
+        )
+        return sys.stdin.readline().strip().lower() in {"y", "yes"}
+
+    return install_skill(
+        home,
+        output=getattr(arguments, "output", None),
+        overwrite=getattr(arguments, "overwrite", False),
+        confirm=confirm
+        if sys.stdin.isatty() and not getattr(arguments, "json", False)
+        else None,
+        upgrade_only=upgrade_only,
+    )
+
+
 def run(arguments):
     config = ConfigFile(arguments.home)
+    if arguments.command == "skill":
+        from .skills import installation_message
+
+        result = _install_skill(arguments, config.home)
+        if getattr(arguments, "json", False):
+            _emit_json(result)
+        else:
+            print(installation_message(result))
+        return (
+            5
+            if result["confirmation_required"]
+            or result.get("reason") == "non_regular_destination"
+            else 0
+        )
     if arguments.command == "init":
         if arguments.template:
             from .templates import initialize_template
@@ -411,9 +466,30 @@ def run(arguments):
             )
         else:
             config.initialize(name=arguments.name or "Toolframe", port=arguments.port)
-        print(f"Initialized {config.path}. Run toolframe --home {config.home} serve")
+        from .skills import installation_message
+
+        skill = _install_skill(arguments, config.home)
+        if getattr(arguments, "json", False):
+            _emit_json({"configuration": str(config.path), "skill": skill})
+        else:
+            print(
+                f"Initialized {config.path}. Run toolframe --home {config.home} serve"
+            )
+            print(installation_message(skill))
         return 0
     if arguments.command == "serve":
+        from .skills import installation_message
+
+        try:
+            skill = _install_skill(arguments, config.home, upgrade_only=True)
+            if skill["status"] != "unchanged":
+                print(installation_message(skill), file=sys.stderr)
+        except (OSError, ValueError, PluginError) as error:
+            # Authoring guidance must not prevent management and recovery startup.
+            print(
+                f"Skill refresh skipped: {error}. Use skill install to retry.",
+                file=sys.stderr,
+            )
         return _serve(config)
 
     base = _base_url(config)

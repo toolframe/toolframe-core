@@ -34,6 +34,38 @@ before its subcommand. The Python development entry point is
 `uv run toolframe-core --home PATH ...`. `toolframe --version` (or `-V`) prints the
 launcher version without preparing Python or contacting the package index.
 
+## Develop a custom plugin with an agent
+
+`init` supplies the bundled `toolframe-plugin-design` skill at
+`APP/.agents/skills/toolframe-plugin-design`. Open an agent session in that
+application directory and invoke `$toolframe-plugin-design` with your business
+requirements. Existing sessions may need to refresh skill discovery.
+
+The skill covers domain/data design, public SDK services, managed SQLite,
+optional Streamlit/MCP/llms resources and validation/reload. Its references and
+buildable notes-plugin starter ship inside the core wheel and Rust bundle; no
+Toolframe source checkout is required. Copy the starter to a separate plugin
+source directory before adapting it.
+
+For an existing application, or to obtain a separate copy:
+
+```sh
+toolframe --home APP skill install
+toolframe --home APP skill install --output ./toolframe-plugin-design --json
+```
+
+`--output` names the exact skill directory. Installation needs no running server,
+application configuration or management token. The skill has its own semantic
+version in the `SKILL.md` YAML frontmatter, for example `version: "0.1.0"`.
+An installation receipt records that version and every shipped file's SHA-256.
+
+After a binary update, `serve` refreshes the bundled skill before starting core.
+Unmodified copies update automatically. Modified, added or deleted files require
+confirmation in an interactive terminal; the default answer keeps the local copy.
+Noninteractive startup keeps customizations, prints how to resolve the conflict,
+and continues serving. It does not repeatedly ask about a customized copy when the
+binary still ships the same skill. `skill install` explicitly checks for replacement.
+
 ## Install, inspect and replace plugins
 
 ```sh
