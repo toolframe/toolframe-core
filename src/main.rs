@@ -11,6 +11,11 @@ include!(concat!(env!("OUT_DIR"), "/bundle.rs"));
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let arguments: Vec<_> = env::args_os().skip(1).collect();
+    if matches!(arguments.as_slice(), [argument] if argument == "--version" || argument == "-V") {
+        println!("toolframe {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     tracing_subscriber::fmt()
         .with_env_filter("warn")
         .with_writer(std::io::stderr)
@@ -19,7 +24,7 @@ async fn main() -> Result<()> {
     let mut offline = false;
     let mut uv_path = None;
     let mut wheelhouse = env::var_os("TOOLFRAME_WHEELHOUSE").map(PathBuf::from);
-    let mut args = env::args_os().skip(1);
+    let mut args = arguments.into_iter();
     while let Some(argument) = args.next() {
         match argument.to_str() {
             Some("--offline") => offline = true,

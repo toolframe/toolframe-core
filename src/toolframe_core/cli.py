@@ -14,6 +14,7 @@ import httpx
 import uvicorn
 from toolframe_sdk import PluginError
 
+from . import __version__
 from .config import Application, ConfigFile, management_token
 
 _SOURCE_PREFIXES = ("git+", "pypi:", "https://", "path:", "wheel:")
@@ -37,7 +38,16 @@ def _add_expected_revision(command):
 
 
 def parser():
-    result = argparse.ArgumentParser(prog="toolframe")
+    result = argparse.ArgumentParser(
+        prog="toolframe",
+        epilog=(
+            "Built launcher options: --offline (cached assets only), "
+            "--wheelhouse PATH (local wheels), --uv-path PATH (uv executable)."
+        ),
+    )
+    result.add_argument(
+        "--version", "-V", action="version", version=f"toolframe {__version__}"
+    )
     result.add_argument("--home", type=Path, default=Path.cwd())
     _add_json_option(result)
     commands = result.add_subparsers(dest="command", required=True)
