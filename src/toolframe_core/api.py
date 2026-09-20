@@ -13,10 +13,12 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
+    Response,
     StreamingResponse,
 )
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
+from starlette.requests import ClientDisconnect
 from toolframe_sdk import PluginError
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -334,6 +336,10 @@ def create_app(host, *, manage_lifespan=True):
                 request.method, url, headers=headers, content=request.stream()
             )
             upstream = await client.send(upstream_request, stream=True)
+        except ClientDisconnect:
+            await client.aclose()
+            # The caller left before its upload finished; this is not a server error.
+            return Response(status_code=499)
         except Exception:
             await client.aclose()
             raise

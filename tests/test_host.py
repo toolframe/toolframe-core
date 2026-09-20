@@ -1,11 +1,13 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 import tomlkit
 from toolframe_sdk import PluginError
 
+from toolframe_core import api
 from toolframe_core.api import create_app
 from toolframe_core.config import ConfigFile, atomic_write
 from toolframe_core.host import Host
@@ -257,3 +259,54 @@ async def test_real_llms_provider_http_through_gateway(host):
         assert response.status_code == 200, response.text
         assert response.text == ""
         assert (await client.get("/llms/unknown/doc.md")).status_code == 404
+
+
+@pytest.mark.parametrize("partial_body", [False, True])
+async def test_gateway_closes_upstream_on_upload_disconnect(
+    host, monkeypatch, partial_body
+):
+    async def provider(request):
+        await request.aread()
+        pytest.fail("An incomplete request must not finish reaching the provider")
+
+    upstream = httpx.AsyncClient(transport=httpx.MockTransport(provider))
+    monkeypatch.setattr(api.httpx, "AsyncClient", lambda **kwargs: upstream)
+    monkeypatch.setattr(
+        api,
+        "provider_for",
+        lambda host, path: (
+            "mcp",
+            SimpleNamespace(name="mcp"),
+            "http://127.0.0.1:12345",
+        ),
+    )
+    messages = iter(
+        [{"type": "http.request", "body": b'{"jsonrpc":', "more_body": True}]
+        if partial_body
+        else []
+    )
+    responses = []
+
+    async def receive():
+        return next(messages, {"type": "http.disconnect"})
+
+    async def send(message):
+        responses.append(message)
+
+    await create_app(host, manage_lifespan=False)(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/mcp",
+            "query_string": b"",
+            "headers": [(b"host", b"127.0.0.1:9876")],
+        },
+        receive,
+        send,
+    )
+    assert upstream.is_closed
+    assert [message["status"] for message in responses if "status" in message] == [499]
+    assert not host.gateway_sessions
