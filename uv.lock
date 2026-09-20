@@ -88,7 +88,7 @@ wheels = [
 [[package]]
 name = "fastapi-cordis"
 version = "0.2.0"
-source = { editable = "../fastapi-cordis-reactive" }
+source = { editable = "../fastapi-cordis" }
 dependencies = [
     { name = "fastapi" },
     { name = "pydantic" },
@@ -477,7 +477,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = "==0.135.2" },
-    { name = "fastapi-cordis", editable = "../fastapi-cordis-reactive" },
+    { name = "fastapi-cordis", editable = "../fastapi-cordis" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "packaging", specifier = ">=25" },
     { name = "tomlkit", specifier = ">=0.13,<1" },

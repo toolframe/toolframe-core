@@ -7,7 +7,7 @@ storage and Entry Register are independently packaged plugins.
 
 ## Run the local workspace
 
-The seven Toolframe repositories and `fastapi-cordis-reactive` must be siblings.
+The seven Toolframe repositories and `fastapi-cordis` must be siblings.
 Python 3.14.7, uv 0.12.8 and Rust are the tested build tools.
 
 ```sh
@@ -168,8 +168,8 @@ client reconnection; backend-only changes can preserve MCP sessions.
 
 The Rust executable embeds only core, SDK and the independent Cordis 0.2.0 wheel.
 It prepares the exact Python 3.14.7 architecture and invokes Python core. The
-source for the pinned local Cordis wheel is `../fastapi-cordis-reactive` at
-`25a870f3bbc1c1c3e28c9de48a96c5ee516197a6`. Provider updates do not require rebuilding
+source for the pinned local Cordis wheel is `../fastapi-cordis`, whose `main`
+includes the reactive lifecycle release `25a870f`. Provider updates do not require rebuilding
 the launcher.
 
 ```sh

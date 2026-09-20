@@ -21,7 +21,7 @@ dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.12,<1", "hatchling>=1.2
 
 [tool.uv.sources]
 toolframe-sdk = { path = "../toolframe-sdk", editable = true }
-fastapi-cordis = { path = "../fastapi-cordis-reactive", editable = true }
+fastapi-cordis = { path = "../fastapi-cordis", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
