@@ -8,7 +8,9 @@ def render(context: PageContext):
     st.title("Notes")
     with st.form("sample-notes-capture"):
         body = st.text_area("New note", max_chars=1000, key="sample-notes-body")
-        if st.form_submit_button("Capture"):
+        if st.form_submit_button(
+            "Capture", disabled=not context.can("sample-notes.write")
+        ):
             try:
                 service.call("capture", {"body": body})
             except PluginError as error:

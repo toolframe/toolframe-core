@@ -25,7 +25,7 @@ build-backend="hatchling.build"
 [project]
 name="fixture-{name}"
 version="0.1.0"
-dependencies=["toolframe-sdk==0.1.0"]
+dependencies=["toolframe-sdk==0.2.0"]
 [project.entry-points."toolframe.plugins"]
 {name}="fixture:plugin"
 [tool.hatch.build.targets.wheel]
@@ -42,9 +42,9 @@ packages=["fixture"]
         else f"return {{'version': '{version}'}}"
     )
     (package / "__init__.py").write_text(f"""import asyncio
-from toolframe_sdk import Plugin, PluginDefinition, ServiceSpec, MethodSpec, Requirement
-plugin=PluginDefinition(id='{name}',factory='fixture:Example', requires={requires},
-services={{'{name}.service': ServiceSpec(methods={{'echo':MethodSpec(read_only=True)}})}})
+from toolframe_sdk import AuthorizationSpec, ScopeSpec, Plugin, PluginDefinition, ServiceSpec, MethodSpec, Requirement
+plugin=PluginDefinition(authorization=AuthorizationSpec(scopes={{"{name}.use":ScopeSpec(title="Use fixture")}}), id='{name}',factory='fixture:Example', requires={requires},
+services={{'{name}.service': ServiceSpec(methods={{'echo':MethodSpec(audience="business", required_scopes=("{name}.use",), read_only=True)}})}})
 class Example(Plugin):
     async def activate(self):
         {"raise RuntimeError('activation exploded')" if broken else "pass"}
@@ -201,7 +201,8 @@ async def test_forced_stop_is_fenced_until_explicit_enable(host, tmp_path):
 async def test_management_auth_origin_and_empty_gateway(host):
     app = create_app(host, manage_lifespan=False)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app), base_url="http://127.0.0.1:9876"
+        transport=httpx.ASGITransport(app, client=("192.168.1.20", 54321)),
+        base_url="http://127.0.0.1:9876",
     ) as client:
         assert (await client.get("/healthz")).json()["core"] == "ready"
         assert (await client.get("/")).json()["dashboard"] == "not_installed"

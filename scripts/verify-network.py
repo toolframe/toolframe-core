@@ -16,7 +16,6 @@ from urllib.parse import urlsplit
 
 import httpx
 from websockets.asyncio.client import connect
-from websockets.exceptions import InvalidStatus
 
 
 def main():
@@ -131,9 +130,9 @@ def main():
                 "management CLI and open resolve wildcard to loopback"
             )
             assert client.get("/healthz").status_code == 200
-            for path in ("/_toolframe/v1/status", "/mcp", "/llms.txt"):
-                assert client.get(path).status_code == 401, path
-            assert client.get("/plugins").status_code == 303
+            assert client.get("/_toolframe/v1/status").status_code == 401
+            assert client.get("/llms.txt").status_code == 200
+            assert client.get("/").status_code == 200
             assert (
                 client.get("/healthz", headers={"Host": "attacker.invalid"}).status_code
                 == 403
@@ -146,7 +145,7 @@ def main():
                 == 403
             )
             report["checks"].append(
-                "LAN routes require token; hostile Host and Origin remain rejected"
+                "Public LAN business entrances, protected management, hostile Host/Origin rejected"
             )
             login = client.post(
                 "/_toolframe/session", data={"token": token}, headers={"Origin": base}
@@ -166,11 +165,10 @@ def main():
 
             async def websocket_probe():
                 url = base.replace("http://", "ws://", 1) + "/_stcore/stream"
-                try:
-                    async with connect(url, origin=base, proxy=None):
-                        raise AssertionError("Anonymous LAN WebSocket was accepted")
-                except InvalidStatus as error:
-                    assert error.response.status_code == 403
+                async with connect(
+                    url, origin=base, subprotocols=["streamlit"], proxy=None
+                ) as websocket:
+                    assert websocket.subprotocol == "streamlit"
                 async with connect(
                     url,
                     origin=base,
@@ -182,7 +180,7 @@ def main():
 
             asyncio.run(websocket_probe())
             report["checks"].append(
-                "real Streamlit WebSocket accepts LAN session and rejects anonymous access"
+                "real Streamlit WebSocket accepts public anonymous and operator LAN sessions"
             )
             mcp = next(
                 plugin for plugin in status["plugins"] if plugin["id"] == "fastmcp"
@@ -199,7 +197,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 options = json.load(sys.stdin)
 async def main():
-    transport = StreamableHttpTransport(options['url'], headers={'Authorization': 'Bearer ' + options['token']})
+    transport = StreamableHttpTransport(options['url'])
     async with Client(transport) as client:
         tools = await client.list_tools()
         names = [tool.name for tool in tools]
@@ -210,7 +208,7 @@ async def main():
 asyncio.run(main())
 """,
                 ],
-                input=json.dumps({"url": base + "/mcp", "token": token}),
+                input=json.dumps({"url": base + "/mcp"}),
                 text=True,
                 capture_output=True,
                 check=False,

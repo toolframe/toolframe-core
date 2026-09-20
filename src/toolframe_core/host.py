@@ -16,8 +16,9 @@ from pathlib import Path
 import tomlkit
 from fastapi_cordis import Plugin as CordisPlugin
 from fastapi_cordis import PluginManager
-from toolframe_sdk import PluginError, digest
+from toolframe_sdk import PluginError, Principal, digest
 
+from .access import Access, operation_scopes
 from .config import ConfigFile, HostLock, PluginRequest, atomic_write, management_token
 from .graph import Graph
 from .network import bind_host
@@ -48,6 +49,8 @@ class Root:
     leases: ExitStack
     paths: dict = field(default_factory=dict)
     read_only: bool = False
+    principal: Principal | None = None
+    scope_catalog: dict = field(default_factory=dict)
 
 
 class Host:
@@ -108,6 +111,10 @@ class Host:
         self.failed_roots = set()
         self.cleanup_blocked = set()
         self.worker_owners = self.state.meta("worker_owners", {})
+        self.starting = True
+        self.transitioning = set()
+        self.access = Access(self)
+        self.operation_identities = {}
 
     async def start(self, *, apply=True, wait=True):
         self.lock.acquire()
@@ -128,6 +135,8 @@ class Host:
             operation = self.submit("apply", {"startup": True})
             if wait:
                 await self.wait_operation(operation["id"])
+        else:
+            self.starting = False
         if not self.scratch:
             self.tasks = [
                 asyncio.create_task(self._health_loop()),
@@ -208,7 +217,7 @@ class Host:
             self.lock.close()
             self.state.close()
 
-    def submit(self, action, params, *, idempotency=None):
+    def submit(self, action, params, *, idempotency=None, identity=None):
         if self.closing:
             raise PluginError("host_closing", "Core is shutting down")
         actions = {
@@ -260,6 +269,8 @@ class Host:
             action, params.get("id"), params, idempotency
         )
         if created:
+            if identity is not None:
+                self.operation_identities[operation["id"]] = identity
             self.operations[operation["id"]] = asyncio.create_task(
                 self._operate(operation)
             )
@@ -284,6 +295,13 @@ class Host:
             self.state.update_operation(identifier, status="running", phase="planning")
             try:
                 self.check_cancel(identifier)
+                if identity := self.operation_identities.get(identifier):
+                    await self.access.admit(
+                        identity,
+                        operation_scopes(operation["kind"], operation["request"]),
+                        activity=True,
+                        effective=False,
+                    )
                 result = await self._dispatch(
                     operation["kind"], operation["request"], identifier
                 )
@@ -312,6 +330,9 @@ class Host:
                 )
             finally:
                 self.cancellations.discard(identifier)
+                self.operation_identities.pop(identifier, None)
+                if operation["request"].get("startup"):
+                    self.starting = False
 
     def refresh(self):
         composition, revision = self.config.read()
@@ -884,6 +905,7 @@ class Host:
         self.state.set_meta("worker_owners", self.worker_owners)
         self.record(runtime, "starting")
         await runtime.worker.request("runtime.describe")
+        private_secrets = self.access.private_secrets(definition)
         if definition.store:
             await self.change_schema(
                 self._storage_runtime(name),
@@ -896,6 +918,7 @@ class Host:
             {
                 "generation": generation,
                 "config": candidate["config"],
+                "private_secrets": private_secrets,
                 "state_directory": str(self.home / "data/plugins")
                 if definition.provider_kind == "storage"
                 else None,
@@ -954,16 +977,10 @@ class Host:
             session.cancel()
         try:
             if runtime.worker:
-                if (
-                    runtime.worker.expected_exit
-                    and runtime.worker.process.returncode is not None
-                    and not group_exists(runtime.worker.pid)
-                ):
-                    await runtime.worker.peer.close()
-                else:
-                    await runtime.worker.close(
-                        timeout=self.composition.runtime.disposal_timeout
-                    )
+                await runtime.worker.close(
+                    timeout=self.composition.runtime.disposal_timeout,
+                    allow_exited=True,
+                )
         except BaseException:
             self.record(runtime, "cleanup_failed")
             raise
@@ -1008,7 +1025,7 @@ class Host:
             except Exception as error:
                 if (
                     self.graph.definitions[name].provider_kind
-                    not in {"dashboard", "mcp", "llms"}
+                    not in {"dashboard", "mcp", "llms", "auth", "dashboard-auth"}
                     or name not in self.optional_new
                 ):
                     raise
@@ -1048,6 +1065,18 @@ class Host:
                 ):
                     if operation:
                         self.check_cancel(operation)
+                    # Shutdown cancels the health/exit loops; a cancelled probe
+                    # can leave cleanup awaiting acknowledgement. The drain must
+                    # retry that idempotent cleanup before releasing its leases.
+                    for root_id in list(self.failed_roots):
+                        root = self.roots.get(root_id)
+                        if root and affected & root.runtimes.keys():
+                            try:
+                                await self.end_root(root)
+                            except Exception:  # noqa: BLE001 - retain lease until cleanup is proven
+                                self.state.set_meta(
+                                    "cleanup_pending", sorted(self.failed_roots)
+                                )
                     self.changed.clear()
                     try:
                         await asyncio.wait_for(self.changed.wait(), 0.1)
@@ -1082,6 +1111,14 @@ class Host:
         self.changed.set()
 
     async def replace(self, proposed, changed, operation, *, migration=None):
+        try:
+            return await self._replace(
+                proposed, changed, operation, migration=migration
+            )
+        finally:
+            self.transitioning.clear()
+
+    async def _replace(self, proposed, changed, operation, *, migration=None):
         self.schema_changed = bool(self.state.meta("forward_repair"))
         self.schema_events = []
         if self.orphans:
@@ -1095,7 +1132,8 @@ class Host:
         self.optional_new = {
             name
             for name, definition in replacement.definitions.items()
-            if definition.provider_kind in {"dashboard", "mcp", "llms"}
+            if definition.provider_kind
+            in {"dashboard", "mcp", "llms", "auth", "dashboard-auth"}
             and name not in self.runtimes
         }
         self.optional_failures = {}
@@ -1143,7 +1181,10 @@ class Host:
         replacement = Graph(proposed, self.composition.bindings)
         self.phase(operation, "prepare_resources")
         for kind, provider in replacement.providers.items():
-            if kind == "storage" or provider in self.optional_failures:
+            if (
+                kind not in {"dashboard", "mcp", "llms"}
+                or provider in self.optional_failures
+            ):
                 continue
             resource_kind = {
                 "dashboard": "dashboard.page",
@@ -1205,11 +1246,14 @@ class Host:
             },
         )
         self.gated.update(affected)
+        self.transitioning.update(affected)
         try:
             for name in affected:
                 if name in self.runtimes:
                     self.runtimes[name].admitted = False
-                    await self.runtimes[name].worker.request("runtime.quiesce")
+                    worker = self.runtimes[name].worker
+                    if worker.process.returncode is None:
+                        await worker.request("runtime.quiesce")
             self.phase(operation, "draining")
             await self._drain(
                 affected, self.composition.runtime.drain_timeout, operation
@@ -1467,7 +1511,7 @@ class Host:
         self.state.set_meta("desired_revision", self.revision)
         self.state.set_meta("last_valid_composition", self.composition.model_dump())
 
-    def begin_root(self, owner, *, deadline=None):
+    def begin_root(self, owner, *, deadline=None, principal=None):
         if (
             owner in self.gated
             or owner not in self.runtimes
@@ -1494,6 +1538,8 @@ class Host:
                 deadline or time.time() + 30,
                 {name: self.runtimes[name] for name in members},
                 leases,
+                principal=principal,
+                scope_catalog=self.access.catalog(),
             )
             self.roots[root.id] = root
             return root
@@ -1545,6 +1591,18 @@ class Host:
             .get("methods", {})
             .get(method)
         )
+        if not specification:
+            raise PluginError("method_not_found", "Method is not declared")
+        if (
+            root.principal is not None
+            and specification.get("audience") != "internal"
+            and not root.principal.allows(
+                specification.get("required_scopes", ()), root.scope_catalog
+            )
+        ):
+            raise PluginError(
+                "forbidden", "The admitted caller does not have this method's scopes"
+            )
         if root.read_only and (not specification or not specification.get("read_only")):
             raise PluginError(
                 "probe_write_forbidden",
@@ -1567,6 +1625,10 @@ class Host:
                         "owner": source.name,
                         "owner_generation": source.generation,
                         "application_id": self.composition.application.id,
+                        "principal": root.principal.model_dump()
+                        if root.principal
+                        else None,
+                        "scope_catalog": root.scope_catalog,
                     },
                 },
                 timeout=max(0.01, root.deadline - time.time()),
@@ -1576,8 +1638,8 @@ class Host:
             if not root.paths[path]:
                 del root.paths[path]
 
-    async def call_service(self, owner, service, method, params):
-        root = self.begin_root(owner)
+    async def call_service(self, owner, service, method, params, *, principal=None):
+        root = self.begin_root(owner, principal=principal)
         try:
             return await self.invoke(root, owner, service, method, params)
         finally:
@@ -1588,13 +1650,26 @@ class Host:
             raise PluginError(
                 "stale_generation", "Worker generation is no longer current"
             )
-        if method == "management.call":
+        if method in {"management.call", "access.call"}:
             if runtime.candidate["definition"].get("provider_kind") != "dashboard":
                 raise PluginError(
                     "forbidden",
                     "Only the management dashboard may request management operations",
                 )
             action = params["action"]
+            identity = self.access.context(params.get("access_context"))
+            if method == "access.call":
+                return await self.access.manage(
+                    identity, action, params.get("params", {})
+                )
+            if action == "cancel":
+                operation = self.state.operation(params["params"]["id"])
+                scopes = operation_scopes(operation["kind"], operation["request"])
+            else:
+                scopes = operation_scopes(action, params.get("params"))
+            await self.access.admit(
+                identity, scopes, effective=False, activity=action == "cancel"
+            )
             if action == "status":
                 return self.status()
             if action == "operation":
@@ -1605,7 +1680,9 @@ class Host:
                 self.cancellations.add(identifier)
                 self.changed.set()
                 return {"id": identifier, "requested": True}
-            return self.redact(self.submit(action, params.get("params", {})))
+            return self.redact(
+                self.submit(action, params.get("params", {}), identity=identity)
+            )
         if method == "resource.call":
             resource = next(
                 (
@@ -1665,13 +1742,45 @@ class Host:
                     "service_version_mismatch",
                     "Requested service version is unavailable",
                 )
-            root = self.begin_root(resource.owner)
-            try:
-                return await self.invoke(
-                    root, target, service, name, params.get("params", {})
+            specification = (
+                self.graph.definitions[target].services[service].methods.get(name)
+            )
+            if specification is None or specification.audience == "internal":
+                raise PluginError(
+                    "forbidden", "Internal services are not page/tool entrances"
                 )
-            finally:
-                await self.end_root(root)
+            if kind == "mcp":
+                if specification.audience != "business":
+                    raise PluginError(
+                        "forbidden", "MCP cannot publish system operations"
+                    )
+                principal = Principal(kind="public", all_business=True)
+            else:
+                identity = self.access.context(params.get("access_context"))
+                principal = await self.access.admit(
+                    identity,
+                    (
+                        *resource.resource.required_scopes,
+                        *specification.required_scopes,
+                    ),
+                    activity=params.get("activity", True),
+                )
+            root = self.begin_root(resource.owner, principal=principal)
+
+            async def admitted():
+                try:
+                    return await self.invoke(
+                        root, target, service, name, params.get("params", {})
+                    )
+                finally:
+                    await self.end_root(root)
+
+            # A browser disconnect ends its UI, not work already admitted by core.
+            task = asyncio.create_task(admitted())
+            task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
+            return await asyncio.shield(task)
         if method == "task.begin":
             async with asyncio.timeout(self.composition.runtime.activation_timeout):
                 while runtime.name in self.gated or not runtime.admitted:
@@ -2052,6 +2161,7 @@ class Host:
             {
                 "report_schema": 1,
                 "core": "ready",
+                "access": self.access.mode(),
                 "ready": ready,
                 "degraded": degraded,
                 "configuration_error": self.configuration_error,

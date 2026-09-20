@@ -79,7 +79,7 @@ build-backend = "hatchling.build"
 name = "toolframe-fixture"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = ["toolframe-sdk==0.1.0"]
+dependencies = ["toolframe-sdk==0.2.0"]
 [project.entry-points."toolframe.plugins"]
 fixture = "fixture:plugin"
 [tool.hatch.build.targets.wheel]
@@ -88,8 +88,8 @@ packages = ["fixture"]
     (source / "fixture").mkdir()
     implementation = source / "fixture/__init__.py"
     implementation.write_text(
-        "from toolframe_sdk import Plugin, PluginDefinition\n"
-        'plugin = PluginDefinition(id="fixture", factory="fixture:Example")\n'
+        "from toolframe_sdk import AuthorizationSpec, ScopeSpec, Plugin, PluginDefinition\n"
+        'plugin = PluginDefinition(authorization=AuthorizationSpec(), id="fixture", factory="fixture:Example")\n'
         "class Example(Plugin): pass\n"
     )
     first = await package.prepare("fixture", str(source), {})

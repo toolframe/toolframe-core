@@ -411,6 +411,7 @@ def _serve(config, *, listen_host=None):
         port=application.port,
         log_level="info",
         access_log=False,
+        proxy_headers=False,
     )
     return 0
 

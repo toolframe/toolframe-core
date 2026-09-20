@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
+import time
 from contextlib import asynccontextmanager, suppress
+from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -19,11 +22,12 @@ from fastapi.responses import (
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 from starlette.requests import ClientDisconnect
-from toolframe_sdk import PluginError
+from toolframe_sdk import PluginError, Principal
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
-from .network import loopback, trusted
+from .access import CONTEXT_HEADER, PASSWORD_COOKIE, operation_scopes
+from .network import trusted
 from .redaction import redact_toml
 
 COOKIE = "toolframe_session"
@@ -39,6 +43,14 @@ HOP_HEADERS = {
     "host",
     "content-length",
 }
+
+
+def provider_cookies(connection):
+    cookies = SimpleCookie()
+    for name, value in connection.cookies.items():
+        if name not in {COOKIE, PASSWORD_COOKIE}:
+            cookies[name] = value
+    return cookies.output(header="", sep=";").strip()
 
 
 class OperationRequest(BaseModel):
@@ -61,6 +73,10 @@ def error_status(error):
         return 404
     if code == "forbidden":
         return 403
+    if code in {"authentication_required", "invalid_credentials", "session_invalid"}:
+        return 401
+    if code == "rate_limited":
+        return 429
     if code in {
         "invalid_request",
         "action_unknown",
@@ -75,19 +91,11 @@ def error_status(error):
         "presentation_unavailable",
         "peer_closed",
         "cleanup_failed",
+        "auth_unavailable",
+        "auth_transition",
     }:
         return 503
     return 400
-
-
-def authenticated(connection, host):
-    authorization = connection.headers.get("authorization", "")
-    token = (
-        authorization.removeprefix("Bearer ")
-        if authorization.startswith("Bearer ")
-        else connection.cookies.get(COOKIE, "")
-    )
-    return hmac.compare_digest(token, host.token)
 
 
 def provider_for(host, path):
@@ -150,22 +158,13 @@ def create_app(host, *, manage_lifespan=True):
                 status_code=403,
             )
         path = request.url.path
-        if (
-            path.startswith("/_toolframe/")
-            and path != "/_toolframe/session"
-            and not authenticated(request, host)
-        ):
-            return JSONResponse(
-                {
-                    "error": {
-                        "code": "authentication_required",
-                        "message": "A management token is required",
-                    }
-                },
-                status_code=401,
-            )
+        request.state.identity = host.access.identity(request)
         try:
-            return await call_next(request)
+            response = await call_next(request)
+            if path.startswith("/_toolframe/"):
+                response.headers["cache-control"] = "no-store"
+                response.headers["referrer-policy"] = "no-referrer"
+            return response
         except PluginError as error:
             return JSONResponse(
                 {"error": host.redact(error.as_dict())}, status_code=error_status(error)
@@ -177,9 +176,92 @@ def create_app(host, *, manage_lifespan=True):
             {"error": host.redact(error.as_dict())}, status_code=error_status(error)
         )
 
+    async def require(request, action, params=None, *, activity=False):
+        return await host.access.admit(
+            request.state.identity,
+            operation_scopes(action, params),
+            effective=False,
+            activity=activity,
+        )
+
+    async def bounded_body(request):
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 16384:
+                raise PluginError("invalid_request", "Auth request exceeds 16 KiB")
+        try:
+            if request.headers.get("content-type", "").startswith("application/json"):
+                result = json.loads(body)
+            else:
+                result = {k: v[0] for k, v in parse_qs(body.decode()).items()}
+            if not isinstance(result, dict):
+                raise TypeError()
+            return result
+        except ValueError, UnicodeError, TypeError:
+            raise PluginError("invalid_request", "Supply an object or form") from None
+
     @app.get("/healthz")
     async def health():
         return {"core": "ready", "host_run": host.host_run}
+
+    @app.get("/_toolframe/auth/context")
+    async def access_context(request: Request):
+        return await host.access.presentation(request.state.identity)
+
+    @app.api_route("/_toolframe/auth/login", methods=["GET", "POST"])
+    async def password_login(request: Request):
+        if request.method == "POST":
+            data = await bounded_body(request)
+            result = await host.access.login(
+                data.get("password"),
+                request.client.host if request.client else "unknown",
+            )
+            response = (
+                JSONResponse({"status": "signed_in"})
+                if "application/json" in request.headers.get("accept", "")
+                else RedirectResponse("/", status_code=303)
+            )
+            response.set_cookie(
+                PASSWORD_COOKIE,
+                result["token"],
+                httponly=True,
+                samesite="strict",
+                max_age=max(1, int(result["expires_at"] - time.time())),
+            )
+            return response
+        name = host.composition.access.dashboard_auth
+        try:
+            result = await host.call_service(
+                name, "dashboard-auth.presentation", "login", {}
+            )
+            if not isinstance(result.get("html"), str):
+                raise TypeError("Invalid login presentation")
+            return HTMLResponse(result["html"])
+        except Exception:  # noqa: BLE001 - an unavailable login integration selects fallback
+            if name not in host.transitioning and not host.starting:
+                host.access.mark_failed(name)
+            return HTMLResponse(
+                '<!doctype html><title>Toolframe</title><p>Login is unavailable.</p><a href="/">Open Dashboard</a>',
+                status_code=503,
+            )
+
+    @app.post("/_toolframe/auth/logout")
+    async def logout(request: Request):
+        token = request.cookies.get(PASSWORD_COOKIE)
+        if token:
+            with suppress(PluginError):
+                await host.access.auth("logout", {"token": token})
+        response = RedirectResponse("/", status_code=303)
+        response.delete_cookie(PASSWORD_COOKIE)
+        response.delete_cookie(COOKIE)
+        return response
+
+    @app.post("/_toolframe/v1/auth/{action}")
+    async def auth_operation(action: str, request: Request):
+        return await host.access.manage(
+            request.state.identity, action, await bounded_body(request)
+        )
 
     @app.api_route("/_toolframe/session", methods=["GET", "POST"])
     async def session(request: Request):
@@ -188,9 +270,14 @@ def create_app(host, *, manage_lifespan=True):
             data = await request.body()
             if len(data) > 4096:
                 return JSONResponse({"error": "Request too large"}, status_code=413)
-            token = parse_qs(data.decode()).get("token", [""])[0]
+            try:
+                token = parse_qs(data.decode()).get("token", [""])[0]
+            except UnicodeError:
+                return JSONResponse(
+                    {"error": "Invalid request encoding"}, status_code=422
+                )
         if token:
-            if not hmac.compare_digest(token, host.token):
+            if not hmac.compare_digest(token.encode(), host.token.encode()):
                 return JSONResponse(
                     {"error": "Invalid management token"}, status_code=401
                 )
@@ -209,16 +296,19 @@ def create_app(host, *, manage_lifespan=True):
         )
 
     @app.get("/_toolframe/v1/status")
-    async def status():
+    async def status(request: Request):
+        await require(request, "status")
         return host.status()
 
     @app.get("/_toolframe/v1/readiness")
-    async def readiness():
+    async def readiness(request: Request):
+        await require(request, "readiness")
         report = host.status()
         return JSONResponse(report, status_code=200 if report["ready"] else 503)
 
     @app.get("/_toolframe/v1/composition")
-    async def composition():
+    async def composition(request: Request):
+        await require(request, "composition")
         try:
             text = redact_toml(host.config.path.read_text(), host.redact)
         except ValueError as error:
@@ -228,16 +318,19 @@ def create_app(host, *, manage_lifespan=True):
         return {"toml": text, "revision": host.config.revision, "secrets": "redacted"}
 
     @app.get("/_toolframe/v1/operations")
-    async def operations():
+    async def operations(request: Request):
+        await require(request, "operations")
         return host.redact(host.state.operations())
 
     @app.get("/_toolframe/v1/operations/{identifier}")
-    async def operation(identifier: str):
+    async def operation(identifier: str, request: Request):
+        await require(request, "operation")
         return host.redact(host.state.operation(identifier))
 
     @app.post("/_toolframe/v1/operations/{identifier}/cancel")
-    async def cancel(identifier: str):
+    async def cancel(identifier: str, request: Request):
         current = host.state.operation(identifier)
+        await require(request, current["kind"], current["request"], activity=True)
         if current["status"] not in ("queued", "running"):
             return {"id": identifier, "requested": False, "status": current["status"]}
         host.cancellations.add(identifier)
@@ -246,11 +339,13 @@ def create_app(host, *, manage_lifespan=True):
 
     @app.post("/_toolframe/v1/operations", status_code=202)
     async def submit(request: Request, body: OperationRequest):
+        await require(request, body.action, body.params)
         return host.redact(
             host.submit(
                 body.action,
                 body.params,
                 idempotency=request.headers.get("idempotency-key"),
+                identity=request.state.identity,
             )
         )
 
@@ -258,16 +353,19 @@ def create_app(host, *, manage_lifespan=True):
     async def plugin_operation(
         identifier: str, action: str, request: Request, body: dict
     ):
+        await require(request, action, {**body, "id": identifier})
         return host.redact(
             host.submit(
                 action,
                 {**body, "id": identifier},
                 idempotency=request.headers.get("idempotency-key"),
+                identity=request.state.identity,
             )
         )
 
     @app.get("/_toolframe/v1/plugins/{identifier}/logs")
-    async def logs(identifier: str):
+    async def logs(identifier: str, request: Request):
+        await require(request, "logs")
         runtime = host.runtimes.get(identifier)
         return host.redact(
             {
@@ -278,9 +376,40 @@ def create_app(host, *, manage_lifespan=True):
 
     @app.post("/_toolframe/v1/services/{owner}/{service}/{method}")
     async def service_call(owner: str, service: str, method: str, request: Request):
-        if service == "toolframe.storage.admin":
-            raise PluginError("forbidden", "Use reviewed migration operations")
-        return await host.call_service(owner, service, method, await request.json())
+        definition = host.graph.definitions.get(owner)
+        spec = (
+            definition.services.get(service).methods.get(method)
+            if definition and service in definition.services
+            else None
+        )
+        if spec is None or spec.audience == "internal":
+            raise PluginError("forbidden", "This service is not a visitor-facing API")
+        actor = await host.access.admit(
+            request.state.identity, spec.required_scopes, activity=True
+        )
+        return await host.call_service(
+            owner, service, method, await request.json(), principal=actor
+        )
+
+    @app.post("/api/{owner}/{service}/{method}")
+    async def public_business_call(
+        owner: str, service: str, method: str, request: Request
+    ):
+        definition = host.graph.definitions.get(owner)
+        spec = (
+            definition.services.get(service).methods.get(method)
+            if definition and service in definition.services
+            else None
+        )
+        if spec is None or not spec.public_api or spec.audience != "business":
+            raise PluginError("forbidden", "This method has no public API declaration")
+        return await host.call_service(
+            owner,
+            service,
+            method,
+            await request.json(),
+            principal=Principal(kind="public", all_business=True),
+        )
 
     @app.api_route(
         "/{path:path}",
@@ -306,25 +435,24 @@ def create_app(host, *, manage_lifespan=True):
                 status_code=503,
                 headers={"Retry-After": "1"},
             )
-        if kind == "dashboard" and not authenticated(request, host):
-            return RedirectResponse("/_toolframe/session", status_code=303)
-        if not loopback(host.listen_host) and not authenticated(request, host):
-            return JSONResponse(
-                {
-                    "error": {
-                        "code": "authentication_required",
-                        "message": "A management token is required for LAN access",
-                    }
-                },
-                status_code=401,
-            )
+        if kind == "dashboard":
+            try:
+                await host.access.admit(request.state.identity)
+            except PluginError as error:
+                if error.code == "authentication_required":
+                    return RedirectResponse("/_toolframe/auth/login", status_code=303)
+                raise
         headers = {
             key: value
             for key, value in request.headers.items()
-            if key.lower() not in HOP_HEADERS and key.lower() != "authorization"
+            if key.lower() not in HOP_HEADERS
+            and key.lower() not in {"authorization", "cookie"}
+            and not key.lower().startswith("x-toolframe-")
         }
         if "origin" in headers:
             headers["origin"] = address
+        if cookies := provider_cookies(request):
+            headers["cookie"] = cookies
         url = f"{address}/{path}"
         if request.url.query:
             url += "?" + request.url.query
@@ -368,10 +496,8 @@ def create_app(host, *, manage_lifespan=True):
 
     @app.websocket("/{path:path}")
     async def websocket(path: str, downstream: WebSocket):
-        if (
-            not trusted(downstream.headers, host.listen_host)
-            or not authenticated(downstream, host)
-            or path.startswith("_toolframe/")
+        if not trusted(downstream.headers, host.listen_host) or path.startswith(
+            "_toolframe/"
         ):
             await downstream.close(code=1008)
             return
@@ -383,6 +509,14 @@ def create_app(host, *, manage_lifespan=True):
         if kind != "dashboard":
             await downstream.close(code=1008)
             return
+        identity = host.access.identity(downstream)
+        try:
+            initial_actor = await host.access.admit(identity)
+            reference = host.access.register(identity)
+        except PluginError:
+            await downstream.close(code=1008)
+            return
+        initial_mode = host.access.mode()
         url = address.replace("http://", "ws://", 1) + "/" + path
         if downstream.url.query:
             url += "?" + downstream.url.query
@@ -392,8 +526,12 @@ def create_app(host, *, manage_lifespan=True):
             for key, value in downstream.headers.items()
             if key.lower() not in HOP_HEADERS
             and not key.lower().startswith("sec-websocket-")
-            and key.lower() not in ("origin", "authorization")
+            and key.lower() not in ("origin", "authorization", "cookie")
+            and not key.lower().startswith("x-toolframe-")
         }
+        headers[CONTEXT_HEADER] = reference
+        if cookies := provider_cookies(downstream):
+            headers["cookie"] = cookies
         task = asyncio.current_task()
         host.gateway_sessions.setdefault(runtime.name, set()).add(task)
         try:
@@ -425,9 +563,23 @@ def create_app(host, *, manage_lifespan=True):
                         else:
                             await downstream.send_bytes(message)
 
+                async def session_validity():
+                    while True:
+                        await asyncio.sleep(1)
+                        try:
+                            await host.access.admit(identity)
+                        except PluginError:
+                            return
+                        if (
+                            not initial_actor.unrestricted
+                            and host.access.mode() != initial_mode
+                        ):
+                            return
+
                 pumps = [
                     asyncio.create_task(incoming()),
                     asyncio.create_task(outgoing()),
+                    asyncio.create_task(session_validity()),
                 ]
                 try:
                     done, _ = await asyncio.wait(
@@ -442,6 +594,7 @@ def create_app(host, *, manage_lifespan=True):
         except ConnectionClosed, asyncio.CancelledError, OSError:
             pass
         finally:
+            host.access.contexts.pop(reference, None)
             host.gateway_sessions.get(runtime.name, set()).discard(task)
             with suppress(RuntimeError):
                 await downstream.close(code=1012)

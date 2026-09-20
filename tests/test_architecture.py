@@ -1,4 +1,4 @@
-"""Keep the seven independently installable repositories behind public contracts."""
+"""Keep independently installable repositories behind public contracts."""
 
 import ast
 import tomllib
@@ -15,6 +15,8 @@ REPOSITORIES = (
     "toolframe-fastmcp",
     "toolframe-llms-txt",
     "toolframe-demo-entry-register",
+    "toolframe-auth",
+    "toolframe-dashboard-auth",
 )
 
 
@@ -35,7 +37,12 @@ def test_repository_uses_only_its_implementation_and_public_sdk(repository):
         if repository in {"toolframe-core", "toolframe-sdk"}
         else set()
     )
-    if repository in {"toolframe-demo-entry-register", "toolframe-sample-notes"}:
+    if repository in {
+        "toolframe-demo-entry-register",
+        "toolframe-sample-notes",
+        "toolframe-auth",
+        "toolframe-dashboard-auth",
+    }:
         forbidden_libraries.add("sqlite3")
     for file in (root / "src").rglob("*.py"):
         # Shipped authoring assets are a separate plugin, checked in their own case.

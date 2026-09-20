@@ -55,6 +55,24 @@
     ]
   },
   {
+    "id": "scoped-business-plugin",
+    "prompt": "Create a Toolframe customer-notes plugin. Readers may list notes; editors may create them. Publish only a read-only MCP tool and public list API; protected Dashboard writes must stay scoped.",
+    "activate": true,
+    "read": [
+      "references/design.md",
+      "references/plugin-api.md",
+      "references/operations.md"
+    ],
+    "success": [
+      "Runs plugin new customer-notes and customizes the generated source without overwriting existing plugins",
+      "Declares customer-notes.read and customer-notes.write in AuthorizationSpec",
+      "Declares method audience and required scopes, page scopes and scope-aware write controls",
+      "Keeps managed SQL internal to admitted business execution",
+      "Explains that published MCP/API entrances are public independently of Dashboard passwords",
+      "Builds and validates with SDK 0.2 and checks direct read-only write denial"
+    ]
+  },
+  {
     "id": "headless-service",
     "prompt": "Build a Toolframe plugin that only provides a service to other plugins; no UI, tools, or database.",
     "activate": true,

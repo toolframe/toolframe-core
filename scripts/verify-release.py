@@ -163,7 +163,7 @@ def main():
                         status["core"] == "ready"
                         and (home / "data/core.sqlite").is_file()
                     )
-                    assert len(status["plugins"]) == (0 if template == "empty" else 5)
+                    assert len(status["plugins"]) == (0 if template == "empty" else 7)
                     assert request(home, endpoint, "/_toolframe/v1/readiness")["ready"]
                     interpreters = list((root / "runtime/core").glob("*/bin/python"))
                     assert len(interpreters) == 1, interpreters

@@ -165,16 +165,21 @@ async def test_lan_http_auth_session_and_origin_checks(tmp_path, monkeypatch):
     )
     try:
         async with original_client(
-            transport=httpx.ASGITransport(api.create_app(host, manage_lifespan=False)),
+            transport=httpx.ASGITransport(
+                api.create_app(host, manage_lifespan=False),
+                client=("192.168.1.20", 54321),
+            ),
             base_url="http://192.168.1.10:9876",
         ) as client:
             assert (await client.get("/healthz")).status_code == 200
-            for path in ("/_toolframe/v1/status", "/mcp", "/llms.txt"):
-                assert (await client.get(path)).status_code == 401
-            assert (await client.get("/plugins")).status_code == 303
-            # Supplying a loopback Host must not bypass LAN-mode authentication.
+            assert (await client.get("/_toolframe/v1/status")).status_code == 401
+            for path in ("/mcp", "/llms.txt", "/plugins"):
+                assert (await client.get(path)).status_code == 200
+            # A loopback Host never promotes a remote socket to Local Control.
             assert (
-                await client.get("/mcp", headers={"Host": "127.0.0.1:9876"})
+                await client.get(
+                    "/_toolframe/v1/status", headers={"Host": "127.0.0.1:9876"}
+                )
             ).status_code == 401
             authorization = {"Authorization": f"Bearer {host.token}"}
             assert (
@@ -254,7 +259,6 @@ def test_lan_websocket_keeps_auth_and_same_origin_validation(tmp_path, monkeypat
     try:
         with TestClient(api.create_app(host, manage_lifespan=False)) as client:
             for invalid in (
-                headers,
                 {
                     **headers,
                     "Cookie": f"{api.COOKIE}={host.token}",

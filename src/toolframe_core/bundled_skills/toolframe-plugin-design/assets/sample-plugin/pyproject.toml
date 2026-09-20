@@ -7,7 +7,7 @@ name = "toolframe-sample-notes"
 version = "0.1.0"
 description = "Small independently packaged Toolframe notes plugin"
 requires-python = ">=3.14"
-dependencies = ["toolframe-sdk==0.1.0"]
+dependencies = ["toolframe-sdk==0.2.0"]
 
 [project.optional-dependencies]
 ui = ["streamlit==1.61.0"]

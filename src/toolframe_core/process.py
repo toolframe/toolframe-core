@@ -69,7 +69,10 @@ class WorkerProcess:
     async def request(self, method, params=None, *, timeout=30):
         return await self.peer.request(method, params, timeout=timeout)
 
-    async def close(self, timeout=10, *, activated=True):
+    async def close(self, timeout=10, *, activated=True, allow_exited=False):
+        # A crashed worker may be replaced only after its entire process group
+        # is gone. A worker that fails during this disposal still fails cleanup.
+        exited_before_disposal = self.process.returncode is not None
         self.expected_exit = True
         if self.process.returncode is None:
             if activated:
@@ -94,7 +97,9 @@ class WorkerProcess:
             asyncio.gather(self.reader_task, self.log_task, return_exceptions=True),
             timeout,
         )
-        if self.process.returncode not in (0, None):
+        if self.process.returncode not in (0, None) and not (
+            allow_exited and exited_before_disposal
+        ):
             raise PluginError(
                 "cleanup_failed",
                 "Worker exited unsuccessfully",

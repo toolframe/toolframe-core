@@ -1,13 +1,13 @@
 ---
 name: toolframe-plugin-design
-version: "0.2.0"
+version: "0.3.0"
 description: Load when designing, creating, or extending a Toolframe business plugin, including its domain model, persistence, or dashboard and MCP interfaces. Excludes routine application operation, calling existing tools, standalone Streamlit apps, Codex plugins, and Toolframe runtime/provider internals.
 ---
 
 # Toolframe plugin design
 
 Turn the user's business outcome into an independently packaged Toolframe plugin.
-This skill targets Toolframe core 0.2 and SDK 0.1. The attached references and
+This skill targets Toolframe core 0.3 and SDK 0.2. The attached references and
 starter travel with the application; a Toolframe source checkout is optional.
 
 ## Establish the design
@@ -30,6 +30,10 @@ For implementation, read [plugin-api.md](references/plugin-api.md) before defini
 services, storage or resources. Use public `toolframe_sdk` contracts. Business
 state belongs in provider-managed storage; business services own its meaning.
 Dashboard pages and MCP tools call those services.
+Declare owned read/write scopes and each method's audience. Use page permissions
+for navigation and controls; core enforces service permissions. Choose public
+MCP/API publication explicitly: those entrances remain public even when Dashboard
+requires a password. [plugin-api.md](references/plugin-api.md) defines this boundary.
 
 For a **new** plugin, read [operations.md](references/operations.md), then run
 `toolframe --home APP plugin new PLUGIN-ID --json`. Customize the generated source
@@ -40,7 +44,7 @@ application composition unchanged. Adapt its schema and behavior to the design;
 remove unneeded presentation resources, UI extras or storage declarations.
 For an **existing** plugin, edit its source directly; do not regenerate it.
 Generated sources belong to the application and survive binary/skill updates.
-Finish implementation with a buildable wheel, explicit service schemas and
+Finish implementation with a buildable wheel, explicit scopes and service schemas and
 checks for the requested business rules.
 
 ## Validate in the application

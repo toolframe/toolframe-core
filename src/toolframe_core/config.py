@@ -64,6 +64,18 @@ class PackageSettings(Model):
     offline: bool = False
 
 
+class AccessPolicy(Model):
+    mode: Literal["public", "protected"] = "public"
+    local_control: bool = True
+    auth_provider: str = "auth"
+    dashboard_auth: str = "dashboard-auth"
+
+    @field_validator("auth_provider", "dashboard_auth")
+    @classmethod
+    def identities(cls, value):
+        return validate_plugin_id(value)
+
+
 class Composition(Model):
     schema_version: Literal[1] = 1
     application: Application
@@ -72,6 +84,7 @@ class Composition(Model):
     required_capabilities: list[str] = Field(default_factory=list)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     packages: PackageSettings = Field(default_factory=PackageSettings)
+    access: AccessPolicy = Field(default_factory=AccessPolicy)
 
     @field_validator("plugins")
     @classmethod

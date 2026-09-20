@@ -79,6 +79,15 @@ class Graph:
                             "resource_target_invalid",
                             f"{name}/{resource.id} targets an unknown method",
                         )
+                    if (
+                        target
+                        and target.methods[resource.data["method"]].audience
+                        != "business"
+                    ):
+                        raise PluginError(
+                            "resource_target_invalid",
+                            "Public MCP tools must target business methods",
+                        )
         try:
             self.order = tuple(TopologicalSorter(self.dependencies).static_order())
         except CycleError as error:

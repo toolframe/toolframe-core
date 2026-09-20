@@ -7,7 +7,7 @@ storage and Entry Register are independently packaged plugins.
 
 ## Run the local workspace
 
-The seven Toolframe repositories and `fastapi-cordis` must be siblings.
+The nine Toolframe repositories and `fastapi-cordis` must be siblings.
 Python 3.14.7, uv 0.12.8 and Rust are the tested build tools.
 
 ```sh
@@ -15,7 +15,7 @@ Python 3.14.7, uv 0.12.8 and Rust are the tested build tools.
 uv sync --locked --group dev
 bash scripts/build-release.sh
 
-# An explicit template installs the four providers and the ordinary demo plugin.
+# The template installs six providers (including auth) and the demo plugin.
 ./target/release/toolframe --home ./example init --template entry-register
 ./target/release/toolframe --home ./example serve
 ```
@@ -24,8 +24,8 @@ In another terminal, run
 `./target/release/toolframe --home ./example open` for the local sign-in link.
 `init` without `--template` creates an empty core. `serve` reconciles the selected
 composition and keeps CLI/API diagnostics available during plugin preparation.
-The default standard release embeds all eight Toolframe/Cordis wheels, including
-the four providers and Entry Register. Copy the executable to another directory
+The default standard release embeds all ten Toolframe/Cordis wheels, including
+the six providers and Entry Register. Copy the executable to another directory
 or computer of the same architecture; no source checkout or separate wheelhouse
 is needed. First use downloads the pinned uv/Python runtime and public Python
 dependencies. This is not a fully offline cold-start distribution.
@@ -40,7 +40,7 @@ dependencies. This is not a fully offline cold-start distribution.
 
 Plain `init` still creates an empty application. Bundling makes plugins available;
 the chosen composition controls installation and activation. The default build
-also writes `dist/toolframe-0.2.0-standard-aarch64-apple-darwin` (or the selected
+also writes `dist/toolframe-0.3.0-standard-aarch64-apple-darwin` (or the selected
 target's equivalent). `--bundle core` builds the smaller three-wheel variant.
 
 The commands below use `toolframe` for the built executable. Pass `--home PATH`
@@ -69,16 +69,16 @@ the current process; it does not edit the composition. A specific LAN IP or IPv6
 address is also supported; use `--host ::` for all IPv6 interfaces. Host values
 are IP addresses or `localhost`, without a URL, brackets or port.
 
-On another device, open `http://SERVER_LAN_IP:9876` and sign in using the token
-stored at `APP/.toolframe/management.token` on the server. For example, use the
+On another device, open `http://SERVER_LAN_IP:9876`. Dashboard business access is
+public until a password is configured. For example, use the
 server's actual `192.168.x.x` address, not the wildcard `0.0.0.0` bind address.
 `toolframe open` and management CLI commands continue to use a connectable local
 address when core binds a wildcard. The effective listener is recorded in
 `.toolframe/endpoint.json`, including a temporary `serve --host` override.
 
-LAN mode requires the same bearer token or sign-in cookie for Dashboard, MCP
-(`/mcp`) and llms (`/llms.txt`, `/llms/...`) requests. MCP clients supply
-`Authorization: Bearer TOKEN`. Host/Origin checks still reject arbitrary DNS
+MCP (`/mcp`), llms (`/llms.txt`, `/llms/...`) and explicitly published business
+APIs are public. System management requires direct local control, a management
+token or the corresponding password scopes. Host/Origin checks still reject arbitrary DNS
 names and cross-origin browser requests; use the server's numeric IP for LAN
 access. Provider worker ports remain private loopback listeners behind core.
 The public `/healthz` endpoint continues to report core liveness.
@@ -88,7 +88,7 @@ address (it creates and stops a separate temporary application):
 
 ```sh
 uv run python scripts/verify-network.py \
-  --binary dist/toolframe-0.2.0-standard-aarch64-apple-darwin \
+  --binary dist/toolframe-0.3.0-standard-aarch64-apple-darwin \
   --address SERVER_LAN_IP --output build/lan-access.json
 ```
 
@@ -156,7 +156,7 @@ toolframe --home APP skill install --output ./toolframe-plugin-design --json
 
 `--output` names the exact skill directory. Installation needs no running server,
 application configuration or management token. The skill has its own semantic
-version in the `SKILL.md` YAML frontmatter, currently `version: "0.2.0"`.
+version in the `SKILL.md` YAML frontmatter, currently `version: "0.3.0"`.
 An installation receipt records that version and every shipped file's SHA-256.
 
 After a binary update, `serve` refreshes the bundled skill before starting core.
@@ -267,11 +267,12 @@ own provider; its UI session can reconnect while core completes the operation.
 | `/_toolframe/v1/services/{owner}/{service}/{method}` | Authenticated JSON business-service calls. |
 | `/healthz` | Core liveness, independent of application readiness. |
 
-Management uses a bearer token or sign-in cookie; the token is stored in
+Management accepts direct local control, a bearer token/sign-in cookie, or an
+access password with the required system scopes. The management token remains in
 `.toolframe/management.token` with owner-only permissions. The gateway defaults
-to loopback and validates Host/Origin. Dashboard access is always authenticated.
-Enabled MCP and llms entrances are `/mcp` and `/llms.txt`; a non-loopback listener
-also requires authentication for these provider routes. See LAN access above.
+to loopback and validates Host/Origin. Dashboard business access follows the
+configured public/protected policy. MCP and llms entrances remain public on LAN.
+See [authentication](docs/authentication.md) for scope and fallback behavior.
 
 Mutations support `Idempotency-Key`. Identical retries return the original
 operation, even if that operation changed the composition revision. Different
@@ -295,6 +296,8 @@ the exit code.
 | `toolframe-fastmcp` | MCP tools and Streamable HTTP transport. |
 | `toolframe-llms-txt` | Index composition and explicitly packaged Markdown assets. |
 | `toolframe-demo-entry-register` | Ordinary business service, page, read-only tool, docs and template. |
+| `toolframe-auth` | Password grants, sessions and authorization using its managed SQLite store. |
+| `toolframe-dashboard-auth` | Password login and scoped password-management page. |
 
 Core/SDK import no presentation provider. Workers have separate locked environments;
 Streamlit page contributors share a separately resolved Dashboard environment.
@@ -305,7 +308,7 @@ client reconnection; backend-only changes can preserve MCP sessions.
 ## Build and verify
 
 The standard Rust executable embeds core, SDK, the independent Cordis 0.2.0 wheel,
-SQLite, Streamlit Dashboard, FastMCP, llms.txt and Entry Register. The Intel build
+SQLite, Streamlit Dashboard, FastMCP, llms.txt, auth, Dashboard auth and Entry Register. The Intel build
 also embeds the pinned native cryptography wheel. Only core/SDK/Cordis are installed
 into the core environment; providers remain independently resolved workers.
 It prepares the exact Python 3.14.7 architecture and invokes Python core. The

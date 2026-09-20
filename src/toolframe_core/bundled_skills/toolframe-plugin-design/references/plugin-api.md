@@ -1,6 +1,6 @@
 # Public plugin contract
 
-Target: `toolframe-sdk==0.1.0`, core 0.2, Python 3.14. Use this packaged reference
+Target: `toolframe-sdk==0.2.0`, core 0.3, Python 3.14. Use this packaged reference
 and the starter when the source workspace is unavailable. If the installed SDK
 version differs, inspect its public definitions before adapting these examples.
 
@@ -20,7 +20,7 @@ sample-notes = "toolframe_sample_notes.plugin:plugin"
 
 - `factory="package.module:Class"`: a subclass of `toolframe_sdk.Plugin`.
 - `services={name: ServiceSpec(version=1, methods={...})}`: named business APIs.
-- `MethodSpec(input_schema=..., output_schema=..., read_only=...)`: JSON schemas
+- `MethodSpec(audience="business", required_scopes=("sample-notes.read",), input_schema=..., output_schema=..., read_only=...)`: JSON schemas
   for each method. Use bounded inputs and explicit object properties. JSON Schema
   defaults are documentation; implement actual Python defaults too.
 - `requires={alias: Requirement(service=name, version=1, optional=False)}`:
@@ -38,6 +38,47 @@ runtime resources, `health()` reports readiness, and `dispose()` releases owned
 resources and awaits `super().dispose()`. Use `self.context.task(factory)` for
 owned asynchronous work; account for cancellation. Each plugin runs in a separate
 process. Cross-plugin Python objects and imports are not the service boundary.
+
+## Authorization and publication
+
+Every definition requires `authorization=AuthorizationSpec(scopes={...})`, even
+infrastructure plugins with an empty catalog. Legacy definitions fail validation;
+no whole-plugin fallback permission is invented. Each scope ID starts with the
+owning plugin ID, for example `sample-notes.read` and `sample-notes.write`:
+
+```python
+authorization = AuthorizationSpec(
+    scopes={
+        "sample-notes.read": ScopeSpec(title="Read notes"),
+        "sample-notes.write": ScopeSpec(title="Capture notes"),
+    }
+)
+```
+
+Business methods declare `audience="business"` and `required_scopes`. Internal
+dependency services declare `audience="internal"` and have no visitor scopes;
+they cannot be invoked directly by Dashboard/API clients. Managed SQL uses this
+internal audience and the caller plugin's storage ownership. Do not require the
+visitor to hold storage administration permission merely to submit a form.
+
+Dashboard pages declare `Resource.required_scopes`. `context.can("sample-notes.write")`
+can disable editing controls. The host-issued context is supplied by the provider;
+page code does not construct principals or handle browser passwords. Nested
+service calls keep the admitted caller and check the callee's declared scopes.
+
+`read_only=True` describes mutation behavior; it does not make a method public.
+Use `public_api=True` only for deliberately public business methods, served at
+`POST /api/PLUGIN/SERVICE/METHOD`. An MCP tool resource also deliberately publishes
+its business method. These routes and llms documents remain anonymous-accessible
+on LAN, independent of Dashboard passwords/scopes. Keep sensitive operations out
+of those publications. System/internal methods cannot be published as public APIs
+or MCP tools. The starter publishes only a read-only query.
+
+Page `service.call(..., activity=False)` is for background polling, so it does not
+extend a session's idle deadline or last-use timestamp. Interactive calls default
+to activity. Every new call rechecks current access; already admitted call trees
+retain their snapshot if a password is subsequently revoked. Plugin workers are
+trusted application code, not a sandbox for untrusted extensions.
 
 ## Managed SQLite
 

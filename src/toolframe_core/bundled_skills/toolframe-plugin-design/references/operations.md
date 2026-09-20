@@ -51,7 +51,7 @@ Run `serve` in a separate terminal. Add required providers to the composition
 before enabling a plugin that consumes their services. For a local SQLite wheel:
 
 ```sh
-toolframe --home APP plugin add /path/to/toolframe_storage_sqlite-0.1.0-py3-none-any.whl --enable
+toolframe --home APP plugin add /path/to/toolframe_storage_sqlite-0.2.0-py3-none-any.whl --enable
 toolframe --home APP plugin add APP/plugins/customer-notes
 toolframe --home APP plugin validate customer-notes
 toolframe --home APP plugin validate customer-notes --runtime
@@ -117,6 +117,8 @@ the database and perform forward repair or an explicitly chosen restore.
 ## Evidence for completion
 
 Verify business invariants through public services and requested interfaces.
+For a Dashboard plugin, also verify a read-only password cannot write, including a
+direct protected service call. Verify any deliberately public API/tool separately.
 Record preflight, scratch runtime and active health separately. For persistent
 plugins, create synthetic data in a disposable application, reload after a real
 local edit, and show that the behavior updates while old records remain. Check

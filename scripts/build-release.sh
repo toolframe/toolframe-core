@@ -25,7 +25,7 @@ while (($#)); do
       shift ;;
     --help|-h)
       echo "Usage: $0 [--bundle standard|core] [--target RUST_TARGET] [--native-wheelhouse PATH] [cargo build options]"
-      echo "standard (default): core, SDK, Cordis, four providers and Entry Register."
+      echo "standard (default): core, SDK, Cordis, six providers and Entry Register."
       echo "core: only core, SDK and Cordis. First use may download Python/public dependencies."
       exit 0 ;;
     *) toolframe_args+=("$1"); shift ;;
@@ -45,7 +45,7 @@ for wheel in "$toolframe_bundle"/*.whl; do
 done
 toolframe_repositories=(toolframe-sdk fastapi-cordis toolframe-core)
 if [[ "$toolframe_profile" == standard ]]; then
-  toolframe_repositories+=(toolframe-storage-sqlite toolframe-streamlit-dashboard toolframe-fastmcp toolframe-llms-txt toolframe-demo-entry-register)
+  toolframe_repositories+=(toolframe-storage-sqlite toolframe-streamlit-dashboard toolframe-fastmcp toolframe-llms-txt toolframe-demo-entry-register toolframe-auth toolframe-dashboard-auth)
   if [[ "$toolframe_platform" == x86_64-apple-darwin ]]; then
     toolframe_crypto="cryptography-50.0.1-cp314-abi3-macosx_12_0_x86_64.whl"
     if [[ ! -f "$toolframe_native_wheels/$toolframe_crypto" ]]; then

@@ -29,10 +29,10 @@ def store_source(directory, name, *, revision=1, broken=False):
         else ""
     )
     (source / "fixture/__init__.py").write_text(f"""import asyncio
-from toolframe_sdk import Plugin, PluginDefinition, ServiceSpec, MethodSpec, Requirement, StoreSchema, Migration
-plugin=PluginDefinition(id={name!r},factory='fixture:Example',
+from toolframe_sdk import AuthorizationSpec, ScopeSpec, Plugin, PluginDefinition, ServiceSpec, MethodSpec, Requirement, StoreSchema, Migration
+plugin=PluginDefinition(authorization=AuthorizationSpec(), id={name!r},factory='fixture:Example',
 requires={{'storage':Requirement(service='toolframe.storage.sql')}},
-services={{{name + ".service"!r}:ServiceSpec(methods={{'read':MethodSpec(read_only=True),'write':MethodSpec()}})}},
+services={{{name + ".service"!r}:ServiceSpec(methods={{'read':MethodSpec(audience="internal", read_only=True),'write':MethodSpec(audience="internal", )}})}},
 store=StoreSchema(revision='v{revision}',migrations=(Migration(revision='v1',sql='CREATE TABLE records(id INTEGER PRIMARY KEY, label TEXT NOT NULL);'){extra},)))
 class Example(Plugin):
     async def activate(self):

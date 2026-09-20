@@ -3,11 +3,13 @@
 from importlib.resources import files
 
 from toolframe_sdk import (
+    AuthorizationSpec,
     MethodSpec,
     Migration,
     PluginDefinition,
     Requirement,
     Resource,
+    ScopeSpec,
     ServiceSpec,
     StoreSchema,
 )
@@ -44,11 +46,19 @@ LIST_OUTPUT = {
 plugin = PluginDefinition(
     id="sample-notes",
     factory="toolframe_sample_notes.service:Notes",
+    authorization=AuthorizationSpec(
+        scopes={
+            "sample-notes.read": ScopeSpec(title="Read notes"),
+            "sample-notes.write": ScopeSpec(title="Capture notes"),
+        }
+    ),
     requires={"storage": Requirement(service="toolframe.storage.sql")},
     services={
         SERVICE: ServiceSpec(
             methods={
                 "capture": MethodSpec(
+                    audience="business",
+                    required_scopes=("sample-notes.write",),
                     description="Capture a new note.",
                     input_schema={
                         "type": "object",
@@ -59,6 +69,9 @@ plugin = PluginDefinition(
                     output_schema=NOTE,
                 ),
                 "list_notes": MethodSpec(
+                    audience="business",
+                    required_scopes=("sample-notes.read",),
+                    public_api=True,
                     description="Read the newest notes.",
                     input_schema=LIST_INPUT,
                     output_schema=LIST_OUTPUT,
@@ -81,6 +94,7 @@ plugin = PluginDefinition(
             id="notes",
             kind="dashboard.page",
             title="Notes",
+            required_scopes=("sample-notes.read",),
             data={"entrypoint": "toolframe_sample_notes.page:render", "order": 10},
         ),
         Resource(

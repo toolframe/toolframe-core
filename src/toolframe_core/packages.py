@@ -511,7 +511,7 @@ class Packages:
             for link in links:
                 if "://" in link:
                     continue
-                matches = sorted((self.home / link).glob("toolframe_sdk-0.1.0-*.whl"))
+                matches = sorted((self.home / link).glob("toolframe_sdk-0.2.0-*.whl"))
                 if matches:
                     sdk, _ = self.artifact(matches[-1])
                     requirements.append(f"toolframe-sdk @ {sdk.as_uri()}")
