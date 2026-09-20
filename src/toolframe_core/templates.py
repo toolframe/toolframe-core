@@ -14,7 +14,7 @@ from .config import Composition, PackageSettings, atomic_write
 from .packages import Packages
 
 
-async def initialize_template(config, template, *, name=None, port=9876):
+async def initialize_template(config, template, *, name=None, host=None, port=9876):
     if config.path.exists():
         raise PluginError(
             "configuration_exists", "Refusing to overwrite existing toolframe.toml"
@@ -45,6 +45,8 @@ async def initialize_template(config, template, *, name=None, port=9876):
             document = tomlkit.parse(wheel.read(recipe["asset"]).decode())
     document["application"]["id"] = str(uuid.uuid4())
     document["application"]["port"] = port
+    if host is not None:
+        document["application"]["host"] = host
     if name:
         document["application"]["name"] = name
     if links:

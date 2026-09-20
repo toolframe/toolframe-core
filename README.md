@@ -48,6 +48,50 @@ before its subcommand. The Python development entry point is
 `uv run toolframe-core --home PATH ...`. `toolframe --version` (or `-V`) prints the
 launcher version without preparing Python or contacting the package index.
 
+## LAN access
+
+The default listener is `127.0.0.1`. Bind all IPv4 interfaces for one run:
+
+```sh
+toolframe --home ./my-app serve --host 0.0.0.0
+```
+
+To save the address when creating an application:
+
+```sh
+toolframe --home ./my-app init --template entry-register --host 0.0.0.0
+toolframe --home ./my-app serve
+```
+
+Existing applications can set `host = "0.0.0.0"` under `[application]` in
+`toolframe.toml`, then restart core. `serve --host` overrides that value only for
+the current process; it does not edit the composition. A specific LAN IP or IPv6
+address is also supported; use `--host ::` for all IPv6 interfaces. Host values
+are IP addresses or `localhost`, without a URL, brackets or port.
+
+On another device, open `http://SERVER_LAN_IP:9876` and sign in using the token
+stored at `APP/.toolframe/management.token` on the server. For example, use the
+server's actual `192.168.x.x` address, not the wildcard `0.0.0.0` bind address.
+`toolframe open` and management CLI commands continue to use a connectable local
+address when core binds a wildcard. The effective listener is recorded in
+`.toolframe/endpoint.json`, including a temporary `serve --host` override.
+
+LAN mode requires the same bearer token or sign-in cookie for Dashboard, MCP
+(`/mcp`) and llms (`/llms.txt`, `/llms/...`) requests. MCP clients supply
+`Authorization: Bearer TOKEN`. Host/Origin checks still reject arbitrary DNS
+names and cross-origin browser requests; use the server's numeric IP for LAN
+access. Provider worker ports remain private loopback listeners behind core.
+The public `/healthz` endpoint continues to report core liveness.
+
+To repeat the real executable/LAN acceptance probe with this machine's IPv4
+address (it creates and stops a separate temporary application):
+
+```sh
+uv run python scripts/verify-network.py \
+  --binary dist/toolframe-0.2.0-standard-aarch64-apple-darwin \
+  --address SERVER_LAN_IP --output build/lan-access.json
+```
+
 ## Develop a custom plugin with an agent
 
 `init` supplies the bundled `toolframe-plugin-design` skill at
@@ -223,10 +267,11 @@ own provider; its UI session can reconnect while core completes the operation.
 | `/_toolframe/v1/services/{owner}/{service}/{method}` | Authenticated JSON business-service calls. |
 | `/healthz` | Core liveness, independent of application readiness. |
 
-Management uses a bearer token or local sign-in cookie; the token is stored in
-`.toolframe/management.token` with owner-only permissions. Listeners are loopback
-only and validate Host/Origin. Dashboard access is authenticated. Enabled MCP and
-llms entrances are local provider endpoints at `/mcp` and `/llms.txt`.
+Management uses a bearer token or sign-in cookie; the token is stored in
+`.toolframe/management.token` with owner-only permissions. The gateway defaults
+to loopback and validates Host/Origin. Dashboard access is always authenticated.
+Enabled MCP and llms entrances are `/mcp` and `/llms.txt`; a non-loopback listener
+also requires authentication for these provider routes. See LAN access above.
 
 Mutations support `Idempotency-Key`. Identical retries return the original
 operation, even if that operation changed the composition revision. Different

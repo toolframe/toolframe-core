@@ -165,7 +165,7 @@ def test_skill_upgrade_and_replacement_preserve_generated_plugins(
     (
         mutable_bundle / "assets/sample-plugin/src/toolframe_sample_notes/service.py"
     ).write_text("# A different bundled example\n")
-    monkeypatch.setattr(cli, "_serve", lambda config: 0)
+    monkeypatch.setattr(cli, "_serve", lambda config, **kwargs: 0)
     assert cli.main(["--home", str(home), "serve"]) == 0
     (destination / "references/design.md").write_text("My custom guidance\n")
     assert (
@@ -236,7 +236,7 @@ def test_serve_refreshes_clean_skill_and_retains_changed_upgrade(
 ):
     home = tmp_path / "app"
     destination = Path(install_skill(home)["path"])
-    monkeypatch.setattr(cli, "_serve", lambda config: 0)
+    monkeypatch.setattr(cli, "_serve", lambda config, **kwargs: 0)
     bump_bundle(mutable_bundle)
     assert cli.main(["--home", str(home), "serve"]) == 0
     assert "updated (0.2.0)" in capsys.readouterr().err
@@ -269,7 +269,9 @@ def test_bad_bundle_guidance_does_not_block_server_startup(
     document = mutable_bundle / "SKILL.md"
     document.write_text("---\nversion: [broken\n---\n")
     started = []
-    monkeypatch.setattr(cli, "_serve", lambda config: started.append(config.home) or 0)
+    monkeypatch.setattr(
+        cli, "_serve", lambda config, **kwargs: started.append(config.home) or 0
+    )
     home = tmp_path / "app"
     assert cli.main(["--home", str(home), "serve"]) == 0
     assert started == [home]

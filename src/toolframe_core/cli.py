@@ -16,6 +16,7 @@ from toolframe_sdk import PluginError
 
 from . import __version__
 from .config import Application, ConfigFile, management_token
+from .network import bind_host, client_host, http_url
 
 _SOURCE_PREFIXES = ("git+", "pypi:", "https://", "path:", "wheel:")
 _PENDING_OPERATION_STATES = ("queued", "running", "cancelling")
@@ -56,6 +57,11 @@ def parser():
     _add_json_option(initialize)
     initialize.add_argument("--name")
     initialize.add_argument("--template")
+    initialize.add_argument(
+        "--host",
+        type=bind_host,
+        help="Save the listen address (IPv4/IPv6 or localhost); default 127.0.0.1 for an empty app",
+    )
     initialize.add_argument("--port", type=int, default=9876)
 
     skill = commands.add_parser("skill", help="Install bundled agent guidance locally")
@@ -76,6 +82,11 @@ def parser():
 
     serve = commands.add_parser("serve")
     _add_json_option(serve)
+    serve.add_argument(
+        "--host",
+        type=bind_host,
+        help="Override the listen address for this run, e.g. 0.0.0.0 for LAN access",
+    )
 
     status = commands.add_parser("status")
     _add_json_option(status)
@@ -212,8 +223,7 @@ def _endpoint(config):
 
 def _base_url(config):
     host, port = _endpoint(config)
-    authority = f"[{host}]" if ":" in host else host
-    return f"http://{authority}:{port}"
+    return http_url(client_host(host), port)
 
 
 def _emit_json(value):
@@ -379,18 +389,19 @@ def _status_check(result, *, plugin=False):
     return 3
 
 
-def _serve(config):
+def _serve(config, *, listen_host=None):
     # Host owns the invalid-config fallback and is the only host constructed by
     # the CLI. Its application is therefore the source of the listen address.
     from .api import create_app
     from .host import Host
 
-    control = Host(config.home)
+    control = Host(config.home, listen_host=listen_host)
     application = control.composition.application
-    host = application.host
+    host = control.listen_host
     authority = f"[{host}]" if ":" in host else host
     print(
-        f"Toolframe: http://{authority}:{application.port} · management token: "
+        f"Toolframe: {http_url(client_host(host), application.port)} "
+        f"· listening on {authority}:{application.port} · management token: "
         f"{config.home / '.toolframe/management.token'}",
         flush=True,
     )
@@ -482,11 +493,16 @@ def run(arguments):
                     config,
                     arguments.template,
                     name=arguments.name,
+                    host=arguments.host,
                     port=arguments.port,
                 )
             )
         else:
-            config.initialize(name=arguments.name or "Toolframe", port=arguments.port)
+            config.initialize(
+                name=arguments.name or "Toolframe",
+                host=arguments.host or "127.0.0.1",
+                port=arguments.port,
+            )
         from .skills import installation_message
 
         skill = _install_skill(arguments, config.home)
@@ -511,7 +527,7 @@ def run(arguments):
                 f"Skill refresh skipped: {error}. Use skill install to retry.",
                 file=sys.stderr,
             )
-        return _serve(config)
+        return _serve(config, listen_host=arguments.host)
 
     base = _base_url(config)
     token = management_token(config.home)

@@ -23,6 +23,7 @@ from toolframe_sdk import PluginError
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from .network import loopback, trusted
 from .redaction import redact_toml
 
 COOKIE = "toolframe_session"
@@ -77,20 +78,6 @@ def error_status(error):
     }:
         return 503
     return 400
-
-
-def trusted(headers):
-    authority = headers.get("host", "")
-    hostname = urlsplit(f"http://{authority}").hostname
-    if hostname not in ("127.0.0.1", "localhost", "::1"):
-        return False
-    origin = headers.get("origin")
-    if origin and origin.rstrip("/") not in (
-        f"http://{authority}",
-        f"https://{authority}",
-    ):
-        return False
-    return headers.get("sec-fetch-site") != "cross-site"
 
 
 def authenticated(connection, host):
@@ -151,13 +138,13 @@ def create_app(host, *, manage_lifespan=True):
     )
 
     @app.middleware("http")
-    async def local_operator(request, call_next):
-        if not trusted(request.headers):
+    async def application_operator(request, call_next):
+        if not trusted(request.headers, host.listen_host):
             return JSONResponse(
                 {
                     "error": {
                         "code": "untrusted_origin",
-                        "message": "Use the local application origin",
+                        "message": "Use the application origin",
                     }
                 },
                 status_code=403,
@@ -172,7 +159,7 @@ def create_app(host, *, manage_lifespan=True):
                 {
                     "error": {
                         "code": "authentication_required",
-                        "message": "A local management token is required",
+                        "message": "A management token is required",
                     }
                 },
                 status_code=401,
@@ -216,8 +203,9 @@ def create_app(host, *, manage_lifespan=True):
             return response
         return HTMLResponse(
             '<!doctype html><title>Toolframe sign in</title><h1>Toolframe</h1><form method="post">'
-            '<label>Local management token <input type="password" name="token" required></label>'
-            "<button>Open Dashboard</button></form><p>Run <code>toolframe open</code> for a local sign-in link.</p>"
+            '<label>Management token <input type="password" name="token" required></label>'
+            "<button>Open Dashboard</button></form><p>On the server, run <code>toolframe open</code> for a local sign-in link. "
+            "For LAN access, enter the token from <code>APP/.toolframe/management.token</code>.</p>"
         )
 
     @app.get("/_toolframe/v1/status")
@@ -320,6 +308,16 @@ def create_app(host, *, manage_lifespan=True):
             )
         if kind == "dashboard" and not authenticated(request, host):
             return RedirectResponse("/_toolframe/session", status_code=303)
+        if not loopback(host.listen_host) and not authenticated(request, host):
+            return JSONResponse(
+                {
+                    "error": {
+                        "code": "authentication_required",
+                        "message": "A management token is required for LAN access",
+                    }
+                },
+                status_code=401,
+            )
         headers = {
             key: value
             for key, value in request.headers.items()
@@ -371,7 +369,7 @@ def create_app(host, *, manage_lifespan=True):
     @app.websocket("/{path:path}")
     async def websocket(path: str, downstream: WebSocket):
         if (
-            not trusted(downstream.headers)
+            not trusted(downstream.headers, host.listen_host)
             or not authenticated(downstream, host)
             or path.startswith("_toolframe/")
         ):

@@ -20,6 +20,7 @@ from toolframe_sdk import PluginError, digest
 
 from .config import ConfigFile, HostLock, PluginRequest, atomic_write, management_token
 from .graph import Graph
+from .network import bind_host
 from .packages import Packages, source_files
 from .process import WorkerProcess, group_exists, process_inventory, stop_group
 from .redaction import redact, secret_values
@@ -50,7 +51,7 @@ class Root:
 
 
 class Host:
-    def __init__(self, home, *, scratch=False):
+    def __init__(self, home, *, scratch=False, listen_host=None):
         self.home = Path(home).resolve()
         self.config = ConfigFile(self.home)
         self.state = CoreState(self.home)
@@ -69,6 +70,11 @@ class Host:
             )
             self.revision = self.config.revision
         self.initial_application = self.composition.application.model_dump()
+        self.listen_host = bind_host(
+            listen_host
+            if listen_host is not None
+            else self.composition.application.host
+        )
         self.host_run = uuid.uuid4().hex
         self.lock = HostLock(self.home)
         self.token = management_token(self.home)
@@ -113,7 +119,7 @@ class Host:
             self.home / ".toolframe/endpoint.json",
             json.dumps(
                 {
-                    "host": self.composition.application.host,
+                    "host": self.listen_host,
                     "port": self.composition.application.port,
                 }
             ),

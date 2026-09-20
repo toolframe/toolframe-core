@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import os
 import re
 import secrets
@@ -15,6 +14,8 @@ from typing import Literal
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from toolframe_sdk import PluginError
+
+from .network import bind_host
 
 
 def validate_plugin_id(identifier: str) -> str:
@@ -37,12 +38,8 @@ class Application(Model):
 
     @field_validator("host")
     @classmethod
-    def local_host(cls, value):
-        if value != "localhost" and not ipaddress.ip_address(value).is_loopback:
-            raise ValueError(
-                "v1 management/gateway listeners are local-operator loopback only"
-            )
-        return value
+    def listen_address(cls, value):
+        return bind_host(value)
 
 
 class PluginRequest(Model):
@@ -127,14 +124,15 @@ class ConfigFile:
         except (OSError, ValueError) as error:
             raise PluginError("configuration_invalid", str(error)) from error
 
-    def initialize(self, *, name="Toolframe", port=9876):
+    def initialize(self, *, name="Toolframe", host="127.0.0.1", port=9876):
         if self.path.exists():
             raise PluginError(
                 "configuration_exists", "Refusing to overwrite existing toolframe.toml"
             )
-        self.home.mkdir(parents=True, exist_ok=True)
         value = Composition(
-            application=Application(id=str(uuid.uuid4()), name=name, port=port)
+            application=Application(
+                id=str(uuid.uuid4()), name=name, host=host, port=port
+            )
         )
         atomic_write(self.path, tomlkit.dumps(value.model_dump()))
         return value
