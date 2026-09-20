@@ -23,10 +23,11 @@
     "read": [
       "references/design.md",
       "references/plugin-api.md",
-      "references/operations.md",
-      "assets/sample-plugin"
+      "references/operations.md"
     ],
     "success": [
+      "Runs toolframe --home APP plugin new reading-tracker before customizing APP/plugins/reading-tracker",
+      "Scaffolds without registering, enabling or changing composition",
       "Owns an independent wheel and stable plugin ID",
       "Uses managed SQL and public service calls",
       "Keeps Streamlit in the UI extra",
@@ -46,6 +47,7 @@
       "assets/sample-plugin"
     ],
     "success": [
+      "Edits existing source directly without scaffolding over it",
       "Preserves the existing identity and applied migration bytes",
       "Appends a migration",
       "Separates preview from authorized application",
@@ -62,6 +64,7 @@
       "references/operations.md"
     ],
     "success": [
+      "Uses plugin new before adapting the generated source",
       "Publishes a service with JSON schemas",
       "Omits presentation resources, storage and UI dependencies"
     ]
@@ -104,7 +107,8 @@
     "prompt": "Upgrade my Toolframe binary and refresh the bundled skills, preserving my edits.",
     "activate": false,
     "success": [
-      "Uses the skill installation/update surface without starting business-plugin design"
+      "Uses the skill installation/update surface without starting business-plugin design",
+      "Leaves previously generated and customized business plugin sources untouched"
     ]
   }
 ]

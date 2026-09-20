@@ -3,6 +3,7 @@
 # ruff: noqa: F811 -- shared pytest fixture imported from test_host.
 import io
 import json
+import re
 import zipfile
 from importlib.resources import as_file
 from pathlib import Path
@@ -95,6 +96,17 @@ def mutable_bundle(tmp_path, monkeypatch):
     source = tmp_path / "bundled" / SKILL_NAME
     with as_file(bundled_skill()) as original:
         copytree(original, source)
+    # Upgrade scenarios use fixed synthetic versions, independent of the release.
+    document = source / "SKILL.md"
+    document.write_text(
+        re.sub(
+            r"^version: .*$",
+            'version: "0.1.0"',
+            document.read_text(),
+            count=1,
+            flags=re.MULTILINE,
+        )
+    )
     monkeypatch.setattr(skills, "bundled_skill", lambda: source)
     return source
 
@@ -126,6 +138,44 @@ def test_clean_install_updates_from_new_bundle(tmp_path, mutable_bundle):
         json.loads((Path(updated["path"]) / RECEIPT).read_text())["version"] == "0.2.0"
     )
     assert install_skill(home)["status"] == "unchanged"
+
+
+def test_skill_upgrade_and_replacement_preserve_generated_plugins(
+    tmp_path, mutable_bundle, monkeypatch, capsys
+):
+    home = tmp_path / "app"
+    external = tmp_path / "custom-plugin"
+    for arguments in (
+        ["customer-notes"],
+        ["external-notes", "--output", str(external)],
+    ):
+        assert (
+            cli.main(["--home", str(home), "plugin", "new", *arguments, "--json"]) == 0
+        )
+    generated = home / "plugins/customer-notes/src/toolframe_customer_notes/service.py"
+    generated.write_text(generated.read_text() + "\n# User business customization\n")
+    roots = (home / "plugins", external)
+    before = {
+        p: p.read_bytes() for root in roots for p in root.rglob("*") if p.is_file()
+    }
+    destination = Path(install_skill(home)["path"])
+    bump_bundle(mutable_bundle)
+    # The next binary can even ship changed example code; generated code is owned
+    # by the project and is not an installed-skill receipt member.
+    (
+        mutable_bundle / "assets/sample-plugin/src/toolframe_sample_notes/service.py"
+    ).write_text("# A different bundled example\n")
+    monkeypatch.setattr(cli, "_serve", lambda config: 0)
+    assert cli.main(["--home", str(home), "serve"]) == 0
+    (destination / "references/design.md").write_text("My custom guidance\n")
+    assert (
+        cli.main(["--home", str(home), "skill", "install", "--overwrite", "--json"])
+        == 0
+    )
+    assert {
+        p: p.read_bytes() for root in roots for p in root.rglob("*") if p.is_file()
+    } == before
+    assert not (home / "toolframe.toml").exists()
 
 
 @pytest.mark.parametrize("change", ["edit", "add", "delete", "invalid_receipt"])
@@ -246,10 +296,23 @@ def test_failed_directory_publication_restores_previous_skill(
     assert (destination / "SKILL.md").read_bytes() == previous
 
 
-async def test_copied_starter_runs_headless_and_retains_data_after_edit(host, tmp_path):
-    installed = install_skill(tmp_path / "authoring")
-    source = tmp_path / "plugin-source"
-    copytree(Path(installed["path"]) / "assets/sample-plugin", source)
+async def test_generated_starter_runs_headless_and_retains_data_after_edit(
+    host, tmp_path, capsys
+):
+    assert (
+        cli.main(
+            [
+                "--home",
+                str(tmp_path / "authoring"),
+                "plugin",
+                "new",
+                "customer-notes",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    source = Path(json.loads(capsys.readouterr().out)["path"])
     workspace = Path(__file__).resolve().parents[2]
     storage = await operate(
         host, "add", source=str(workspace / "toolframe-storage-sqlite"), enable=True
@@ -257,32 +320,32 @@ async def test_copied_starter_runs_headless_and_retains_data_after_edit(host, tm
     assert storage["status"] == "succeeded", storage
     added = await operate(host, "add", source=str(source))
     assert added["status"] == "succeeded", added
-    assert "sample-notes" not in host.runtimes
-    enabled = await operate(host, "enable", id="sample-notes")
+    assert "customer-notes" not in host.runtimes
+    enabled = await operate(host, "enable", id="customer-notes")
     assert enabled["status"] == "succeeded", enabled
-    assert set(host.runtimes) == {"storage-sqlite", "sample-notes"}
-    service = "sample-notes.notes"
+    assert set(host.runtimes) == {"storage-sqlite", "customer-notes"}
+    service = "customer-notes.notes"
     note = await host.call_service(
-        "sample-notes", service, "capture", {"body": " First "}
+        "customer-notes", service, "capture", {"body": " First "}
     )
     assert note["body"] == "First"
     with pytest.raises(PluginError, match="nonblank"):
-        await host.call_service("sample-notes", service, "capture", {"body": "   "})
+        await host.call_service("customer-notes", service, "capture", {"body": "   "})
     before = {name: runtime.generation for name, runtime in host.runtimes.items()}
-    validation = await operate(host, "validate", id="sample-notes", runtime=True)
+    validation = await operate(host, "validate", id="customer-notes", runtime=True)
     assert validation["status"] == "succeeded", validation
-    assert host.runtimes["sample-notes"].generation == before["sample-notes"]
-    module = source / "src/toolframe_sample_notes/service.py"
+    assert host.runtimes["customer-notes"].generation == before["customer-notes"]
+    module = source / "src/toolframe_customer_notes/service.py"
     module.write_text(
         module.read_text().replace("body = body.strip()", "body = body.strip().upper()")
     )
-    reload = await operate(host, "reload", id="sample-notes")
+    reload = await operate(host, "reload", id="customer-notes")
     assert reload["status"] == "succeeded", reload
-    assert host.runtimes["sample-notes"].generation != before["sample-notes"]
+    assert host.runtimes["customer-notes"].generation != before["customer-notes"]
     assert host.runtimes["storage-sqlite"].generation == before["storage-sqlite"]
     second = await host.call_service(
-        "sample-notes", service, "capture", {"body": "second"}
+        "customer-notes", service, "capture", {"body": "second"}
     )
     assert second["body"] == "SECOND"
-    result = await host.call_service("sample-notes", service, "list_notes", {})
+    result = await host.call_service("customer-notes", service, "list_notes", {})
     assert result == {"notes": [second, note], "count": 2}

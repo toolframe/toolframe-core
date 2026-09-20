@@ -6,13 +6,38 @@ version rather than assuming commands from another Toolframe generation.
 
 ## New source and application
 
-Copy `assets/sample-plugin` from this skill to a separate development directory.
-Rename the distribution, import package, entry-point key, plugin ID, service names,
-page keys and resource references consistently. The example records immutable
-notes; replace that behavior with the agreed design. A headless service can omit
-the page, tools, docs, `ui` extra and storage when not needed.
+For a new plugin, generate the source with the installed CLI:
 
-Build with `uv build --wheel` from the plugin source. The starter contains no
+```sh
+toolframe --home APP plugin new customer-notes --json
+# Alternative: the exact destination directory, relative to the current directory.
+toolframe --home APP plugin new customer-notes --output ./custom/customer-notes
+```
+
+Choose one of these destinations. The default is `APP/plugins/customer-notes/`.
+The CLI sets distribution `toolframe-customer-notes`, module
+`toolframe_customer_notes`, plugin ID `customer-notes` and service namespace
+`customer-notes.*`. JSON returns `plugin_id`, `package_name`, `python_module`,
+`path` and `status: "created"`. An existing file, directory or symlink is refused.
+IDs ending in `-` keep their plugin ID but add `plugin` to the distribution's end
+to form a valid package name; the module uses its underscores form. Read the
+returned names when editing references.
+An existing plugin is edited directly, never regenerated or overwritten.
+
+Generation uses the template bundled inside core, without needing this skill to
+be installed or a Toolframe source checkout. It does not build, install, register,
+enable or start a plugin, read application configuration, or request a management
+token. The launcher may prepare its own core runtime on first use as usual.
+Generated plugins are independent source trees; skill/binary updates leave them
+alone. `plugins/` is an authoring location, not an auto-discovery mechanism.
+
+Customize the generated files for the agreed design. The Notes example provides
+managed SQLite, capture/list services, a Streamlit page, a read-only MCP list tool
+and llms documentation. A headless service can omit the page, tools, docs, `ui`
+extra and storage when not needed. Keep its package and resource references
+consistent when intentionally changing identity.
+
+Build with `uv build --wheel` from the generated plugin directory. The starter contains no
 sibling path dependencies. Where Toolframe packages are not in the configured
 index, use an existing wheelhouse for dependency resolution. For a new local
 application:
@@ -27,14 +52,14 @@ before enabling a plugin that consumes their services. For a local SQLite wheel:
 
 ```sh
 toolframe --home APP plugin add /path/to/toolframe_storage_sqlite-0.1.0-py3-none-any.whl --enable
-toolframe --home APP plugin add /path/to/my-plugin
-toolframe --home APP plugin validate my-plugin
-toolframe --home APP plugin validate my-plugin --runtime
-toolframe --home APP plugin enable my-plugin
-toolframe --home APP plugin status my-plugin --check
+toolframe --home APP plugin add APP/plugins/customer-notes
+toolframe --home APP plugin validate customer-notes
+toolframe --home APP plugin validate customer-notes --runtime
+toolframe --home APP plugin enable customer-notes
+toolframe --home APP plugin status customer-notes --check
 ```
 
-Replace `my-plugin` with the definition's ID. `add` validates and leaves the plugin
+Use your generated path and ID in place of `customer-notes`. `add` validates and leaves the plugin
 disabled unless `--enable` is explicit. Default validation covers package,
 dependencies, imports, configuration and resources. `--runtime` runs against a
 temporary data environment; it does not establish production health or prove a
@@ -48,6 +73,7 @@ packages, use the launcher's `--wheelhouse PATH` and the composition's
 
 ## Local edits and reload
 
+In the commands below, replace `my-plugin` with the definition's ID.
 Editing source does not modify an active immutable snapshot, even if its package
 version is unchanged. Validate and reload explicitly:
 

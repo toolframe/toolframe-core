@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import os
+import re
 import secrets
 import tempfile
 import uuid
@@ -14,6 +15,14 @@ from typing import Literal
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from toolframe_sdk import PluginError
+
+
+def validate_plugin_id(identifier: str) -> str:
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", identifier):
+        raise ValueError(
+            "Plugin IDs must be normalized lowercase slugs (1–64 characters)"
+        )
+    return identifier
 
 
 class Model(BaseModel):
@@ -70,10 +79,8 @@ class Composition(Model):
     @field_validator("plugins")
     @classmethod
     def plugin_ids(cls, value):
-        import re
-
-        if any(not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", key) for key in value):
-            raise ValueError("Plugin IDs must be normalized lowercase slugs")
+        for identifier in value:
+            validate_plugin_id(identifier)
         return value
 
 

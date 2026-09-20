@@ -43,9 +43,51 @@ requirements. Existing sessions may need to refresh skill discovery.
 
 The skill covers domain/data design, public SDK services, managed SQLite,
 optional Streamlit/MCP/llms resources and validation/reload. Its references and
-buildable notes-plugin starter ship inside the core wheel and Rust bundle; no
-Toolframe source checkout is required. Copy the starter to a separate plugin
-source directory before adapting it.
+buildable Notes template ship inside the core wheel and Rust bundle; no Toolframe
+source checkout is required. Create source with the same CLI the agent uses:
+
+```sh
+toolframe --home APP plugin new customer-notes
+# Or select an exact destination and get machine-readable output:
+toolframe --home APP plugin new reading-tracker --output ./plugins/reading-tracker --json
+```
+
+The default is `APP/plugins/<plugin-id>/`. `--output` is the complete destination,
+relative to the current directory when not absolute. Existing files, directories
+and symlinks (including dangling links) are refused with exit 5. IDs follow the
+existing lowercase slug rule: `[a-z][a-z0-9-]{0,63}`.
+
+For `customer-notes`, the distribution is `toolframe-customer-notes`, Python module
+is `toolframe_customer_notes`, entry-point key and plugin ID are `customer-notes`,
+and services use `customer-notes.*`. JSON returns `plugin_id`, `package_name`,
+`python_module`, the absolute `path`, and `status: "created"`.
+For an ID ending in `-`, the distribution adds `plugin` at the end so it remains
+a valid Python package name (for example `a-` → `toolframe-a-plugin`); the module
+uses that distribution with hyphens changed to underscores. The plugin ID is kept.
+
+Generation needs no initialized application, installed skill, server or management
+token. It creates source only: no wheel build, plugin dependency installation,
+composition edit, registration or activation. The launcher still prepares its
+own core runtime on first use when necessary. `plugins/` is not scanned or loaded
+automatically.
+
+Customize the generated service, schema, page, read-only MCP tool and llms document
+for the business requirements; remove optional surfaces you do not need. Existing
+plugins are edited directly, never regenerated. Build from the generated directory
+with `uv build --wheel`. With core running and required providers installed:
+
+```sh
+toolframe --home APP plugin add APP/plugins/customer-notes
+toolframe --home APP plugin validate customer-notes
+toolframe --home APP plugin validate customer-notes --runtime
+# Explicit activation after validation:
+toolframe --home APP plugin enable customer-notes
+```
+
+The Notes starter requires the SQLite storage provider; install and enable it
+before runtime validation/activation. `add` captures and builds the local source,
+validates it, and leaves it disabled by default. See the operations reference for
+provider installation, wheelhouse configuration, reload and explicit migrations.
 
 For an existing application, or to obtain a separate copy:
 
@@ -56,10 +98,12 @@ toolframe --home APP skill install --output ./toolframe-plugin-design --json
 
 `--output` names the exact skill directory. Installation needs no running server,
 application configuration or management token. The skill has its own semantic
-version in the `SKILL.md` YAML frontmatter, for example `version: "0.1.0"`.
+version in the `SKILL.md` YAML frontmatter, currently `version: "0.2.0"`.
 An installation receipt records that version and every shipped file's SHA-256.
 
 After a binary update, `serve` refreshes the bundled skill before starting core.
+Updates affect only the installed skill; generated/customized business plugins
+under `APP/plugins/` or an explicit output directory are never refreshed from it.
 Unmodified copies update automatically. Modified, added or deleted files require
 confirmation in an interactive terminal; the default answer keeps the local copy.
 Noninteractive startup keeps customizations, prints how to resolve the conflict,
@@ -212,6 +256,9 @@ cargo fmt --check
 uv run python scripts/verify-release.py \
   --binary target/release/toolframe --wheelhouse wheelhouse \
   --architecture arm64 --output build/release-arm64.json
+uv run python scripts/verify-scaffold.py \
+  --binary target/release/toolframe --wheelhouse wheelhouse \
+  --output build/scaffold-arm64.json
 ```
 
 The integration tests expect the sibling repositories and check private-import

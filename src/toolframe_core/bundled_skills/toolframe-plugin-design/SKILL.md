@@ -1,6 +1,6 @@
 ---
 name: toolframe-plugin-design
-version: "0.1.0"
+version: "0.2.0"
 description: Load when designing, creating, or extending a Toolframe business plugin, including its domain model, persistence, or dashboard and MCP interfaces. Excludes routine application operation, calling existing tools, standalone Streamlit apps, Codex plugins, and Toolframe runtime/provider internals.
 ---
 
@@ -31,11 +31,15 @@ services, storage or resources. Use public `toolframe_sdk` contracts. Business
 state belongs in provider-managed storage; business services own its meaning.
 Dashboard pages and MCP tools call those services.
 
-For a **new** plugin, copy [assets/sample-plugin](assets/sample-plugin) to a new
-source directory outside this skill, then adapt its identity, schema and behavior.
-It is a working notes example, not a required domain model. Remove unneeded
-presentation resources, UI extras or storage declarations. For an **existing**
-plugin, modify its source directly instead of replacing it with the starter.
+For a **new** plugin, read [operations.md](references/operations.md), then run
+`toolframe --home APP plugin new PLUGIN-ID --json`. Customize the generated source
+at `APP/plugins/PLUGIN-ID/`; `--output PATH` selects an exact alternative directory.
+The CLI renders the core-packaged [Notes example](assets/sample-plugin), including
+consistent package, module and service identities. Generation alone leaves the
+application composition unchanged. Adapt its schema and behavior to the design;
+remove unneeded presentation resources, UI extras or storage declarations.
+For an **existing** plugin, edit its source directly; do not regenerate it.
+Generated sources belong to the application and survive binary/skill updates.
 Finish implementation with a buildable wheel, explicit service schemas and
 checks for the requested business rules.
 

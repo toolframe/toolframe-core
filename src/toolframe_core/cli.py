@@ -108,6 +108,17 @@ def parser():
     _add_json_option(plugin)
     plugin_commands = plugin.add_subparsers(dest="action", required=True)
 
+    new = plugin_commands.add_parser(
+        "new", help="Generate a new plugin's source locally"
+    )
+    _add_json_option(new)
+    new.add_argument("id")
+    new.add_argument(
+        "--output",
+        type=Path,
+        help="Exact destination directory; defaults to APP/plugins/PLUGIN-ID under --home",
+    )
+
     add = plugin_commands.add_parser("add")
     _add_json_option(add)
     add.add_argument("source")
@@ -272,6 +283,7 @@ def _exit_code(code):
         "idempotency_conflict",
         "already_installed",
         "skill_conflict",
+        "scaffold_conflict",
     }:
         return 5
     if code == "cancelled":
@@ -438,6 +450,15 @@ def _install_skill(arguments, home, *, upgrade_only=False):
 
 def run(arguments):
     config = ConfigFile(arguments.home)
+    if arguments.command == "plugin" and arguments.action == "new":
+        from .scaffold import new_plugin
+
+        result = new_plugin(config.home, arguments.id, output=arguments.output)
+        if getattr(arguments, "json", False):
+            _emit_json(result)
+        else:
+            print(f"Created plugin {result['plugin_id']} at {result['path']}")
+        return 0
     if arguments.command == "skill":
         from .skills import installation_message
 

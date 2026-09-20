@@ -61,6 +61,7 @@ def main():
     authoring = root / "authoring"
     installed = run("--home", authoring, "skill", "install", "--json")
     assert installed["status"] == "installed"
+    version = installed["bundled_version"]
     skill = Path(installed["path"])
     shipped = inventory(skill)
     assert "SKILL.md" in shipped
@@ -111,7 +112,7 @@ def main():
     # Model an older, untouched release using a valid installation receipt.
     document = skill / "SKILL.md"
     document.write_text(
-        document.read_text().replace('version: "0.1.0"', 'version: "0.0.9"')
+        document.read_text().replace(f'version: "{version}"', 'version: "0.0.9"')
     )
     edited.write_text("Earlier release guidance\n")
     receipt = skill / ".toolframe-install.json"
@@ -123,7 +124,7 @@ def main():
     receipt.write_text(json.dumps(prior, indent=2) + "\n")
     updated = run("--home", authoring, "skill", "install", "--json")
     assert updated["status"] == "updated" and updated["previous_version"] == "0.0.9"
-    assert updated["bundled_version"] == "0.1.0" and inventory(skill) == shipped
+    assert updated["bundled_version"] == version and inventory(skill) == shipped
 
     sample = root / "plugin-source"
     shutil.copytree(exported / "assets/sample-plugin", sample)
