@@ -31,7 +31,8 @@ supplies the currently unpublished Toolframe distributions.
 
 The commands below use `toolframe` for the built executable. Pass `--home PATH`
 before its subcommand. The Python development entry point is
-`uv run toolframe-core --home PATH ...`.
+`uv run toolframe-core --home PATH ...`. `toolframe --version` (or `-V`) prints the
+launcher version without preparing Python or contacting the package index.
 
 ## Install, inspect and replace plugins
 
@@ -184,6 +185,9 @@ uv run python scripts/verify-release.py \
 The integration tests expect the sibling repositories and check private-import
 boundaries. Run each provider/SDK repository's `uv run pytest -q` as well. The MCP
 repository has an additional `scripts/verify-gateway.py` acceptance driver.
+Its `scripts/verify-codex.py` probes a running local demo through the installed
+Codex app-server MCP client; see the CLI/Codex report for its tested approval and
+client-interface scope.
 
 For Intel, first build the companion native dependency wheel documented in
 `../toolframe-fastmcp/README.md`, then run

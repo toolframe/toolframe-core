@@ -42,6 +42,18 @@ def main():
         "workspace": str(root),
         "cases": [],
     }
+    for flag in ("--version", "-V"):
+        version = subprocess.run(
+            [str(binary), flag],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        assert version.stdout.strip().startswith("toolframe ") and not version.stderr
+        assert not (root / "runtime").exists(), "Version queries must not bootstrap"
+    reports["version_without_bootstrap"] = version.stdout.strip()
 
     def command(*arguments, env=None, expected=0):
         result = subprocess.run(
