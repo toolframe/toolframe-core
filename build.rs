@@ -7,6 +7,7 @@ fn main() {
         let directory = PathBuf::from(directory)
             .canonicalize()
             .expect("bundle directory");
+        println!("cargo:rerun-if-changed={}", directory.display());
         let mut paths: Vec<_> = fs::read_dir(&directory)
             .expect("read bundle")
             .map(|entry| entry.unwrap().path())
@@ -15,12 +16,6 @@ fn main() {
         paths.sort();
         for path in paths {
             let name = path.file_name().unwrap().to_str().unwrap();
-            if !["toolframe_core-", "toolframe_sdk-", "fastapi_cordis-"]
-                .iter()
-                .any(|prefix| name.starts_with(prefix))
-            {
-                continue;
-            }
             println!("cargo:rerun-if-changed={}", path.display());
             contents.push_str(&format!(
                 "({name:?}, include_bytes!({:?})),\n",

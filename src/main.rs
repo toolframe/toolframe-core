@@ -1,5 +1,6 @@
 //! Thin bootstrap: package/runtime preparation only. Python owns all plugin policy.
 
+mod bundle;
 mod uv;
 
 use anyhow::{Context, Result, bail};
@@ -58,20 +59,12 @@ async fn main() -> Result<()> {
         env::consts::OS,
         env::consts::ARCH
     );
-    fingerprint.update(b"toolframe-core==0.2.0;bootstrap2");
+    fingerprint.update(b"toolframe-core==0.2.0;bootstrap3");
     fingerprint.update(python_request.as_bytes());
-    let bundles = root.join("wheels");
-    fs::create_dir_all(&bundles)?;
+    let bundles = bundle::extract(&root.join("bundles"), WHEELS)?;
     for (name, content) in WHEELS {
         fingerprint.update(name.as_bytes());
         fingerprint.update(content);
-        let hash = format!("{:x}", Sha256::digest(content));
-        let directory = bundles.join(hash);
-        fs::create_dir_all(&directory)?;
-        let path = directory.join(name);
-        if !path.exists() {
-            fs::write(&path, content)?;
-        }
     }
     if let Some(path) = &wheelhouse {
         fingerprint.update(path.canonicalize()?.as_os_str().as_encoded_bytes());
@@ -118,11 +111,14 @@ async fn main() -> Result<()> {
             bail!("Python environment preparation failed");
         }
         let mut requirements = Vec::new();
-        for (name, content) in WHEELS {
-            let path = bundles
-                .join(format!("{:x}", Sha256::digest(content)))
-                .join(name);
-            requirements.push(path.to_string_lossy().to_string());
+        for (name, _) in WHEELS {
+            if bundle::is_bootstrap(name) {
+                requirements.push(
+                    bundle::wheel_path(&bundles, name)
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            }
         }
         if requirements.is_empty() {
             requirements.push("toolframe-core==0.2.0".into());
@@ -147,6 +143,11 @@ async fn main() -> Result<()> {
             .stdout(Stdio::null());
         if let Some(path) = &wheelhouse {
             compile.arg("--find-links").arg(path);
+        }
+        for (name, _) in WHEELS {
+            compile
+                .arg("--find-links")
+                .arg(bundle::wheel_path(&bundles, name).parent().unwrap());
         }
         if offline {
             compile.arg("--offline");
@@ -184,14 +185,10 @@ async fn main() -> Result<()> {
     if let Some(path) = wheelhouse {
         command.env("TOOLFRAME_WHEELHOUSE", path.canonicalize()?);
     }
-    for (name, content) in WHEELS {
+    command.env("TOOLFRAME_BUNDLED_WHEELHOUSE", &bundles);
+    for (name, _) in WHEELS {
         if name.starts_with("toolframe_sdk-") {
-            command.env(
-                "TOOLFRAME_SDK_WHEEL",
-                bundles
-                    .join(format!("{:x}", Sha256::digest(content)))
-                    .join(name),
-            );
+            command.env("TOOLFRAME_SDK_WHEEL", bundle::wheel_path(&bundles, name));
         }
     }
     if offline {

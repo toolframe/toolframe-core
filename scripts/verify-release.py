@@ -5,11 +5,13 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
 import tempfile
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -24,21 +26,47 @@ def port():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
-    parser.add_argument("--wheelhouse", type=Path, required=True)
+    parser.add_argument(
+        "--wheelhouse",
+        type=Path,
+        help="Optional external wheels; omit to verify the standalone standard bundle",
+    )
     parser.add_argument("--architecture", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    binary, wheels = args.binary.resolve(), args.wheelhouse.resolve()
-    root = Path(tempfile.mkdtemp(prefix=f"toolframe-release-{args.architecture}-"))
+    original = args.binary.resolve()
+    wheels = args.wheelhouse.resolve() if args.wheelhouse else None
+    root = Path(
+        tempfile.mkdtemp(prefix=f"toolframe-release-{args.architecture}-")
+    ).resolve()
+    binary = root / "toolframe"
+    shutil.copy2(original, binary)
     environment = {**os.environ, "TOOLFRAME_RUNTIME_ROOT": str(root / "runtime")}
+    for name in (
+        "TOOLFRAME_WHEELHOUSE",
+        "TOOLFRAME_BUNDLED_WHEELHOUSE",
+        "TOOLFRAME_SDK_WHEEL",
+        "TOOLFRAME_OFFLINE",
+        "PYTHONPATH",
+    ):
+        environment.pop(name, None)
+    if wheels is None:
+        # A previous package/Python cache must not hide a missing embedded wheel.
+        environment["UV_CACHE_DIR"] = str(root / "uv-cache")
+        environment["UV_PYTHON_INSTALL_DIR"] = str(root / "python")
+    wheel_args = ["--wheelhouse", str(wheels)] if wheels else []
     reports = {
         "architecture": args.architecture,
-        "binary": str(binary),
+        "binary": str(original),
+        "copied_binary": str(binary),
+        "standalone_bundle": wheels is None,
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "wheel_sha256": {
             path.name: hashlib.sha256(path.read_bytes()).hexdigest()
             for path in sorted(wheels.glob("*.whl"))
-        },
+        }
+        if wheels
+        else {},
         "workspace": str(root),
         "cases": [],
     }
@@ -57,11 +85,12 @@ def main():
 
     def command(*arguments, env=None, expected=0):
         result = subprocess.run(
-            [str(binary), "--wheelhouse", str(wheels), *map(str, arguments)],
+            [str(binary), *wheel_args, *map(str, arguments)],
+            cwd=root,
             env=env or environment,
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=300,
             check=False,
         )
         with (root / "commands.log").open("a") as log:
@@ -91,8 +120,11 @@ def main():
         if template != "empty":
             initialize += ["--template", template]
         command(*initialize)
+        if wheels is None:
+            composition = tomllib.loads((home / "toolframe.toml").read_text())
+            assert composition.get("packages", {}).get("find_links", []) == []
         for offline in (False, True):
-            arguments = [str(binary), "--wheelhouse", str(wheels)]
+            arguments = [str(binary), *wheel_args]
             if offline:
                 arguments += ["--offline"]
             arguments += ["--home", str(home), "serve"]
@@ -101,12 +133,13 @@ def main():
                 server = subprocess.Popen(
                     arguments,
                     env=environment,
+                    cwd=root,
                     stdin=subprocess.DEVNULL,
                     stdout=log,
                     stderr=log,
                 )
                 try:
-                    deadline = time.monotonic() + 180
+                    deadline = time.monotonic() + 300
                     while True:
                         if server.poll() is not None:
                             raise RuntimeError(f"Server exited; see {log.name}")
@@ -286,6 +319,30 @@ def main():
         word in result.stderr.lower() for word in ("offline", "cache", "download")
     ), result.stderr
     reports["missing_cache_offline"] = "rejected_without_fallback"
+    reports["embedded_wheels"] = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted((root / "runtime/bundles").glob("*/*/*.whl"))
+    }
+    if wheels is None:
+        for name in (
+            "toolframe_core",
+            "toolframe_sdk",
+            "fastapi_cordis",
+            "toolframe_streamlit_dashboard",
+            "toolframe_fastmcp",
+            "toolframe_llms_txt",
+            "toolframe_storage_sqlite",
+            "toolframe_demo_entry_register",
+        ):
+            assert any(
+                filename.startswith(name + "-")
+                for filename in reports["embedded_wheels"]
+            ), name
+        if args.architecture.startswith("x86_64"):
+            assert any(
+                filename.startswith("cryptography-")
+                for filename in reports["embedded_wheels"]
+            )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(reports, indent=2) + "\n")
     print(f"Evidence: {args.output}; diagnostic logs: {root}", flush=True)

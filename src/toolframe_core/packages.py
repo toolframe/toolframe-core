@@ -204,7 +204,7 @@ class Packages:
 
     def flags(self):
         result = ["--index-url", self.settings.index_url]
-        for link in self.settings.find_links:
+        for link in [*self.settings.find_links, *self.bundled_links()]:
             result += [
                 "--find-links",
                 str((self.home / link).resolve()) if "://" not in link else link,
@@ -212,6 +212,31 @@ class Packages:
         if self.settings.offline:
             result += ["--offline"]
         return result
+
+    def bundled_links(self):
+        """Use release wheels without persisting machine-local paths in TOML.
+
+        An explicit local wheel with the same filename replaces its bundled copy.
+        uv does not promise precedence between duplicate --find-links candidates.
+        """
+        directory = os.environ.get("TOOLFRAME_BUNDLED_WHEELHOUSE")
+        if not directory:
+            return []
+        overrides = set()
+        for link in self.settings.find_links:
+            parsed = urllib.parse.urlsplit(link)
+            if parsed.scheme == "file" and parsed.netloc in ("", "localhost"):
+                path = Path(urllib.parse.unquote(parsed.path))
+            elif "://" not in link:
+                path = self.home / link
+            else:
+                continue
+            overrides.update(wheel.name for wheel in path.glob("*.whl"))
+        return [
+            str(wheel.parent)
+            for wheel in sorted(Path(directory).glob("*/*.whl"))
+            if wheel.name not in overrides
+        ]
 
     def artifact(self, path):
         data = path.read_bytes()
