@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
         env::consts::OS,
         env::consts::ARCH
     );
-    fingerprint.update(b"toolframe-core==0.3.0;bootstrap3");
+    fingerprint.update(b"toolframe-core==0.3.1;bootstrap3");
     fingerprint.update(python_request.as_bytes());
     let bundles = bundle::extract(&root.join("bundles"), WHEELS)?;
     for (name, content) in WHEELS {
@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
             }
         }
         if requirements.is_empty() {
-            requirements.push("toolframe-core==0.3.0".into());
+            requirements.push("toolframe-core==0.3.1".into());
         }
         let input = environment.join("requirements.in");
         fs::write(&input, requirements.join("\n") + "\n")?;

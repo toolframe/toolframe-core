@@ -44,6 +44,11 @@ def main():
     parser.add_argument("--binary", required=True, type=Path)
     parser.add_argument("--address", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--runtime-root",
+        type=Path,
+        help="Use a separate launcher cache when testing another architecture",
+    )
     args = parser.parse_args()
     source = args.binary.resolve()
     directory = Path(tempfile.mkdtemp(prefix="toolframe-auth-release-"))
@@ -54,6 +59,8 @@ def main():
         for k, v in os.environ.items()
         if not k.startswith("TOOLFRAME_") and k not in {"PYTHONPATH", "PYTHONHOME"}
     }
+    if args.runtime_root:
+        env["TOOLFRAME_RUNTIME_ROOT"] = str(args.runtime_root.resolve())
     home = directory / "app"
     with socket.socket() as reservation:
         reservation.bind(("0.0.0.0", 0))

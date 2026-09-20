@@ -8,8 +8,15 @@ existing application's composition.
 Open the Dashboard directly on `http://127.0.0.1:9876`. The header shows **本機控制**.
 The **Access passwords** page creates named grants with random or custom secrets,
 optional expiry, selected scopes and a dynamic **All business scopes** option.
-System scopes start unchecked. Generated secrets are shown once. Visitors enter
-only the password; names label grants and do not establish a person's identity.
+System scopes start unchecked. New passwords accept 8–32 characters. The form
+supplies an editable unnamed label and a random password placeholder; leaving the
+password blank uses that exact suggestion. Copy the password when shown after
+creation. Existing longer passwords remain valid for login. **Set expiry** reveals
+a duration and unit in two columns, with minutes, hours, days, weeks or calendar
+months. Preview and record timestamps use the browser's local timezone. Durations
+start when saved; calendar months clamp to the last day when needed. An empty duration when
+editing preserves the existing expiry; turning the toggle off removes it. Visitors
+enter only the password; names label grants and do not establish a person's identity.
 The page lists creation, expiry, revocation, last login and last use, and supports
 expiry/grant edits and revocation. Editing a grant invalidates its sessions and
 requires a fresh login. Revoked records remain revoked.
@@ -27,14 +34,14 @@ auth_provider = "auth"
 dashboard_auth = "dashboard-auth"
 
 [plugins.auth]
-source = "pypi:toolframe-auth==0.1.0"
+source = "pypi:toolframe-auth==0.1.1"
 enabled = true
 [plugins.auth.config]
 session_max_seconds = 604800
 session_idle_seconds = 86400
 
 [plugins.dashboard-auth]
-source = "pypi:toolframe-dashboard-auth==0.1.0"
+source = "pypi:toolframe-dashboard-auth==0.1.1"
 enabled = true
 ```
 
@@ -112,8 +119,8 @@ All plugins now require `AuthorizationSpec`, explicit method `audience`, method
 scopes for business/system APIs and page scopes. Legacy packages fail validation;
 there is no synthetic whole-plugin permission. Update custom definitions using
 the bundled skill's `references/plugin-api.md` and SDK 0.2. Update shipped provider
-and demo packages to 0.2.0, then apply the reviewed composition together. The auth
-plugins are new packages at 0.1.0. Keep the old executable/composition for rollback
+packages to 0.2.0 and the demo to 0.2.1, then apply the reviewed composition together.
+The auth plugins are at 0.1.1. Keep the old executable/composition for rollback
 until the new packages validate; ordinary business databases keep their schemas.
 
 An upgraded composition without `[access]` adopts public business access once its
@@ -125,8 +132,8 @@ still apply. Generated `plugins/` business source is never overwritten.
 After the existing providers have been upgraded to 0.2.0 and core is running:
 
 ```sh
-toolframe --home APP plugin add pypi:toolframe-auth==0.1.0 --enable
-toolframe --home APP plugin add pypi:toolframe-dashboard-auth==0.1.0 --enable
+toolframe --home APP plugin add pypi:toolframe-auth==0.1.1 --enable
+toolframe --home APP plugin add pypi:toolframe-dashboard-auth==0.1.1 --enable
 ```
 
 The standard binary supplies these wheels. Open **Access passwords** through the

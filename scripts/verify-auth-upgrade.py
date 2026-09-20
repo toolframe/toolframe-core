@@ -149,8 +149,9 @@ def main():
         client.close()
         stop(process, log)
     desired = tomlkit.parse(composition.read_text())
-    for request in desired["plugins"].values():
-        request["source"] = request["source"].split("==")[0] + "==0.2.0"
+    for name, request in desired["plugins"].items():
+        version = "0.2.1" if name == "entry-register" else "0.2.0"
+        request["source"] = request["source"].split("==")[0] + "==" + version
     composition.write_text(tomlkit.dumps(desired))
     process, log, client, status = serve(new, "compatible")
     try:
