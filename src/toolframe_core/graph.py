@@ -8,6 +8,7 @@ from toolframe_sdk import OwnedResource, PluginDefinition, PluginError, digest
 class Graph:
     def __init__(self, candidates, bindings):
         self.candidates = candidates
+        self.binding_preferences = dict(bindings)
         self.definitions = {
             name: PluginDefinition.model_validate(value["definition"])
             for name, value in candidates.items()

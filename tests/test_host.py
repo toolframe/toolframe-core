@@ -80,6 +80,7 @@ async def host(tmp_path):
 async def test_empty_core_and_disabled_add(host, tmp_path):
     assert host.status()["core"] == "ready"
     assert host.status()["plugins"] == []
+    assert host.status()["dependency_graph"]["nodes"] == []
     source = fixture_source(tmp_path, "alpha")
     added = await operate(host, "add", id="alpha", source=str(source))
     assert added["status"] == "succeeded", added
@@ -89,9 +90,17 @@ async def test_empty_core_and_disabled_add(host, tmp_path):
     assert await host.call_service("alpha", "alpha.service", "echo", {}) == {
         "version": "old"
     }
+    before = host.state.operations()
+    report = host.status()["dependency_graph"]
+    assert report["nodes"][0]["healthy"]
+    assert report["impacts"]["alpha"]["reload"]["affected"] == ["alpha"]
+    assert host.state.operations() == before
     removed = await operate(host, "remove", id="alpha")
     assert removed["status"] == "succeeded", removed
     assert not host.runtimes
+    report = host.status()["dependency_graph"]
+    assert report["nodes"][0]["state"] == "removed"
+    assert not report["impacts"]
 
 
 async def test_reload_replaces_required_cohort_but_keeps_unrelated_and_drains_nested_call(
@@ -172,12 +181,17 @@ async def test_missing_dependency_is_visible_and_recovers_when_provider_added(
     result = await operate(host, "add", id="consumer", source=str(source), enable=True)
     assert result["status"] == "succeeded", result
     assert host.status()["plugins"][0]["blocked_by"] == ["alpha.service"]
+    report = host.status()["dependency_graph"]
+    assert report["edges"][0]["state"] == "missing"
     source = fixture_source(tmp_path, "alpha")
     result = await operate(host, "add", id="alpha", source=str(source), enable=True)
     assert result["status"] == "succeeded", result
     assert await host.call_service("consumer", "consumer.service", "echo", {}) == {
         "version": "old"
     }
+    report = host.status()["dependency_graph"]
+    assert report["edges"][0]["target"] == "alpha"
+    assert report["edges"][0]["state"] == "resolved"
 
 
 async def test_forced_stop_is_fenced_until_explicit_enable(host, tmp_path):

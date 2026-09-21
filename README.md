@@ -40,7 +40,7 @@ dependencies. This is not a fully offline cold-start distribution.
 
 Plain `init` still creates an empty application. Bundling makes plugins available;
 the chosen composition controls installation and activation. The default build
-also writes `dist/toolframe-0.3.1-standard-aarch64-apple-darwin` (or the selected
+also writes `dist/toolframe-0.4.0-standard-aarch64-apple-darwin` (or the selected
 target's equivalent). `--bundle core` builds the smaller three-wheel variant.
 
 The commands below use `toolframe` for the built executable. Pass `--home PATH`
@@ -88,7 +88,7 @@ address (it creates and stops a separate temporary application):
 
 ```sh
 uv run python scripts/verify-network.py \
-  --binary dist/toolframe-0.3.1-standard-aarch64-apple-darwin \
+  --binary dist/toolframe-0.4.0-standard-aarch64-apple-darwin \
   --address SERVER_LAN_IP --output build/lan-access.json
 ```
 
@@ -259,7 +259,7 @@ own provider; its UI session can reconnect while core completes the operation.
 
 | Interface | Contract |
 | --- | --- |
-| `/_toolframe/v1/status` | Core health, application readiness, candidates and observed generations. |
+| `/_toolframe/v1/status` | Core health, application readiness, candidates, observed generations and dependency/impact graph. |
 | `/_toolframe/v1/readiness` | HTTP 200 when required capabilities are ready; otherwise 503. Reports `ready` and optional `degraded` independently. |
 | `/_toolframe/v1/operations` | GET history; POST `{ "action": "reload", "params": { "id": "plugin-id" } }` returns HTTP 202. |
 | `/_toolframe/v1/operations/{id}` | Durable operation status; POST `/{id}/cancel` requests cancellation at a safe boundary. |

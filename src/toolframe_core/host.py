@@ -20,6 +20,7 @@ from toolframe_sdk import PluginError, Principal, digest
 
 from .access import Access, operation_scopes
 from .config import ConfigFile, HostLock, PluginRequest, atomic_write, management_token
+from .diagnostics import dependency_snapshot
 from .graph import Graph
 from .network import bind_host
 from .packages import Packages, source_files
@@ -2063,6 +2064,7 @@ class Host:
         except PluginError as error:
             self.configuration_error = error.as_dict()
         plugins = []
+        candidates = {}
         for name in sorted(
             set(self.composition.plugins) | {row["id"] for row in self.state.plugins()}
         ):
@@ -2074,6 +2076,8 @@ class Host:
                 if row["last_candidate"]
                 else None
             )
+            if candidate:
+                candidates[name] = candidate
             plugins.append(
                 {
                     "id": name,
@@ -2157,6 +2161,7 @@ class Host:
             or self.orphans
             or self.state.meta("forward_repair")
         )
+        cordis = self.manager.snapshot()
         return self.redact(
             {
                 "report_schema": 1,
@@ -2181,6 +2186,14 @@ class Host:
                 "plugins": plugins,
                 "presentations": self.publication,
                 "operations": self.state.operations(),
-                "cordis": self.manager.snapshot(),
+                "cordis": cordis,
+                "dependency_graph": dependency_snapshot(
+                    self.graph,
+                    plugins,
+                    candidates,
+                    self.composition.bindings,
+                    cordis,
+                    self.publication,
+                ),
             }
         )

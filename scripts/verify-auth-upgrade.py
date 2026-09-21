@@ -150,7 +150,9 @@ def main():
         stop(process, log)
     desired = tomlkit.parse(composition.read_text())
     for name, request in desired["plugins"].items():
-        version = "0.2.1" if name == "entry-register" else "0.2.0"
+        version = {"entry-register": "0.2.2", "streamlit-dashboard": "0.3.0"}.get(
+            name, "0.2.0"
+        )
         request["source"] = request["source"].split("==")[0] + "==" + version
     composition.write_text(tomlkit.dumps(desired))
     process, log, client, status = serve(new, "compatible")
