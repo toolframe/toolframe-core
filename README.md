@@ -40,7 +40,7 @@ dependencies. This is not a fully offline cold-start distribution.
 
 Plain `init` still creates an empty application. Bundling makes plugins available;
 the chosen composition controls installation and activation. The default build
-also writes `dist/toolframe-0.4.1-standard-aarch64-apple-darwin` (or the selected
+also writes `dist/toolframe-0.5.0-standard-aarch64-apple-darwin` (or the selected
 target's equivalent). `--bundle core` builds the smaller three-wheel variant.
 
 The commands below use `toolframe` for the built executable. Pass `--home PATH`
@@ -88,7 +88,7 @@ address (it creates and stops a separate temporary application):
 
 ```sh
 uv run python scripts/verify-network.py \
-  --binary dist/toolframe-0.4.1-standard-aarch64-apple-darwin \
+  --binary dist/toolframe-0.5.0-standard-aarch64-apple-darwin \
   --address SERVER_LAN_IP --output build/lan-access.json
 ```
 
@@ -268,6 +268,24 @@ through management rather than hiding the repair surface.
 CLI, API and the Dashboard management page use the same durable operation engine.
 The Dashboard shows a plan before applying lifecycle changes and can reload its
 own provider; its UI session can reconnect while core completes the operation.
+
+Operation history uses permanent, increasing `sequence` numbers, newest first.
+The Dashboard displays each number with its creation time in the browser's time
+zone, and defaults to 10 rows per page (also 25/50). Plugin, action and result
+filters query the entire journal, including operations for removed plugins.
+Previews are labeled with their planned action, such as `plan reload`.
+
+`GET /_toolframe/v1/operations?page=1&page_size=10` returns an envelope containing
+`items`, `page`, `pages`, `page_size`, `total`, `through`, `newer_count` and filter
+choices. Optional `target`, `kind` and `status` filters combine with AND; empty
+`target=` selects application-level operations. Page size is bounded to 1–100.
+Send the returned `through` on subsequent pages to exclude newer arrivals until
+an explicit refresh. Statuses remain current, so filtering by a changing status
+can change the result count. Out-of-range pages clamp to the last page.
+Requests without query parameters retain the legacy list of the latest 50
+operations. All history reads require `system.plugins.read` and redact secrets.
+The Dashboard uses the same query through `context.manage("operations", params)`;
+reading or filtering history never creates a journal operation.
 
 | Interface | Contract |
 | --- | --- |

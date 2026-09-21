@@ -150,7 +150,7 @@ def main():
         stop(process, log)
     desired = tomlkit.parse(composition.read_text())
     for name, request in desired["plugins"].items():
-        version = {"entry-register": "0.2.3", "streamlit-dashboard": "0.3.1"}.get(
+        version = {"entry-register": "0.2.4", "streamlit-dashboard": "0.4.0"}.get(
             name, "0.2.0"
         )
         request["source"] = request["source"].split("==")[0] + "==" + version

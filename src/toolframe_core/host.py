@@ -1684,6 +1684,8 @@ class Host:
                 return self.status()
             if action == "operation":
                 return self.redact(self.state.operation(params["params"]["id"]))
+            if action == "operations":
+                return self.redact(self.state.operation_page(params.get("params", {})))
             if action == "cancel":
                 identifier = params["params"]["id"]
                 self.state.operation(identifier)

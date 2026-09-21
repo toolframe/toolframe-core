@@ -8,11 +8,22 @@ import time
 import uuid
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from toolframe_sdk import PluginError
 
 
 def encode(value):
     return json.dumps(value, separators=(",", ":"), allow_nan=False)
+
+
+class OperationQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=10, ge=1, le=100)
+    through: int | None = Field(default=None, ge=0)
+    target: str | None = Field(default=None, max_length=256)
+    kind: str | None = Field(default=None, max_length=64)
+    status: str | None = Field(default=None, max_length=64)
 
 
 class CoreState:
@@ -25,7 +36,7 @@ class CoreState:
         self.connection.execute("PRAGMA journal_mode=WAL")
         self.connection.execute("PRAGMA busy_timeout=5000")
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1):
+        if version not in (0, 1, 2):
             self.connection.close()
             raise PluginError(
                 "core_schema_incompatible", f"Unsupported core schema {version}"
@@ -44,8 +55,37 @@ class CoreState:
                 phase TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL,
                 request TEXT NOT NULL, result TEXT, error TEXT, idempotency TEXT UNIQUE
             );
-            PRAGMA user_version=1;
         """)
+        # Serialize the migration and recheck after acquiring the write lock.
+        # UUIDs, payloads and idempotency keys survive; old records get stable
+        # numbers in creation order, with insertion order breaking timestamp ties.
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            if self.connection.execute("PRAGMA user_version").fetchone()[0] < 2:
+                self.connection.execute(
+                    "ALTER TABLE operations RENAME TO operations_v1"
+                )
+                self.connection.execute("""
+                    CREATE TABLE operations(
+                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, target TEXT,
+                        status TEXT NOT NULL, phase TEXT NOT NULL,
+                        created REAL NOT NULL, updated REAL NOT NULL,
+                        request TEXT NOT NULL, result TEXT, error TEXT,
+                        idempotency TEXT UNIQUE
+                    )
+                """)
+                self.connection.execute("""
+                    INSERT INTO operations(id,kind,target,status,phase,created,updated,request,result,error,idempotency)
+                    SELECT id,kind,target,status,phase,created,updated,request,result,error,idempotency
+                    FROM operations_v1 ORDER BY created, rowid
+                """)
+                self.connection.execute("DROP TABLE operations_v1")
+                self.connection.execute("PRAGMA user_version=2")
+            for field in ("target", "kind", "status"):
+                self.connection.execute(
+                    f"CREATE INDEX IF NOT EXISTS operations_{field}_sequence ON operations({field}, sequence)"
+                )
         self.connection.commit()
 
     def close(self):
@@ -181,7 +221,7 @@ class CoreState:
         now = time.time()
         with self.connection:
             self.connection.execute(
-                "INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO operations(id,kind,target,status,phase,created,updated,request,result,error,idempotency) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     identifier,
                     kind,
@@ -221,9 +261,64 @@ class CoreState:
         return [
             self.operation(row[0])
             for row in self.connection.execute(
-                "SELECT id FROM operations ORDER BY created DESC LIMIT ?", (limit,)
+                "SELECT id FROM operations ORDER BY sequence DESC LIMIT ?", (limit,)
             )
         ]
+
+    def operation_page(self, params=None):
+        try:
+            query = OperationQuery.model_validate(params or {})
+        except ValidationError as error:
+            raise PluginError(
+                "invalid_request", "Invalid operation history query"
+            ) from error
+        latest = self.connection.execute(
+            "SELECT COALESCE(MAX(sequence), 0) FROM operations"
+        ).fetchone()[0]
+        through = min(query.through, latest) if query.through is not None else latest
+        clauses, values = ["sequence <= ?"], [through]
+        for field in ("target", "kind", "status"):
+            value = getattr(query, field)
+            if value is not None:
+                if field == "target" and value == "":
+                    clauses.append("target IS NULL")
+                else:
+                    clauses.append(f"{field}=?")
+                    values.append(value)
+        where = " AND ".join(clauses)
+        total = self.connection.execute(
+            f"SELECT COUNT(*) FROM operations WHERE {where}", values
+        ).fetchone()[0]
+        pages = max(1, (total + query.page_size - 1) // query.page_size)
+        page = min(query.page, pages)
+        items = [
+            self.operation(row[0])
+            for row in self.connection.execute(
+                f"SELECT id FROM operations WHERE {where} ORDER BY sequence DESC LIMIT ? OFFSET ?",
+                (*values, query.page_size, (page - 1) * query.page_size),
+            )
+        ]
+        filters = {
+            field: [
+                row[0]
+                for row in self.connection.execute(
+                    f"SELECT DISTINCT {field} FROM operations WHERE {field} IS NOT NULL ORDER BY {field}"
+                )
+            ]
+            for field in ("target", "kind", "status")
+        }
+        return {
+            "items": items,
+            "page": page,
+            "page_size": query.page_size,
+            "pages": pages,
+            "total": total,
+            "through": through,
+            "newer_count": self.connection.execute(
+                "SELECT COUNT(*) FROM operations WHERE sequence > ?", (through,)
+            ).fetchone()[0],
+            "filters": filters,
+        }
 
     def reconcile_startup(self, host_run):
         with self.connection:

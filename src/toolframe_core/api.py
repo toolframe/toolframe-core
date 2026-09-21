@@ -318,8 +318,30 @@ def create_app(host, *, manage_lifespan=True):
         return {"toml": text, "revision": host.config.revision, "secrets": "redacted"}
 
     @app.get("/_toolframe/v1/operations")
-    async def operations(request: Request):
+    async def operations(
+        request: Request,
+        page: int | None = None,
+        page_size: int = 10,
+        through: int | None = None,
+        target: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
+    ):
         await require(request, "operations")
+        if request.query_params:
+            return host.redact(
+                host.state.operation_page(
+                    {
+                        "page": page if page is not None else 1,
+                        "page_size": page_size,
+                        "through": through,
+                        "target": target,
+                        "kind": kind,
+                        "status": status,
+                    }
+                )
+            )
+        # Preserve the existing bounded list response for clients without queries.
         return host.redact(host.state.operations())
 
     @app.get("/_toolframe/v1/operations/{identifier}")
