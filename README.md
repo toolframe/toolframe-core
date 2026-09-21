@@ -40,7 +40,7 @@ dependencies. This is not a fully offline cold-start distribution.
 
 Plain `init` still creates an empty application. Bundling makes plugins available;
 the chosen composition controls installation and activation. The default build
-also writes `dist/toolframe-0.4.0-standard-aarch64-apple-darwin` (or the selected
+also writes `dist/toolframe-0.4.1-standard-aarch64-apple-darwin` (or the selected
 target's equivalent). `--bundle core` builds the smaller three-wheel variant.
 
 The commands below use `toolframe` for the built executable. Pass `--home PATH`
@@ -88,7 +88,7 @@ address (it creates and stops a separate temporary application):
 
 ```sh
 uv run python scripts/verify-network.py \
-  --binary dist/toolframe-0.4.0-standard-aarch64-apple-darwin \
+  --binary dist/toolframe-0.4.1-standard-aarch64-apple-darwin \
   --address SERVER_LAN_IP --output build/lan-access.json
 ```
 
@@ -184,8 +184,20 @@ toolframe --home ./example plugin reload plugin-id --plan-id PLAN_ID
 toolframe --home ./example plugin status plugin-id --json --check
 ```
 
-`update` stages a candidate; it does not change the active generation. Ordinary
-`reload` can also capture the current source directly. A reviewed plan binds the
+`enable` and `apply` reuse the latest installed candidate when its source matches
+composition, including after the original source or an older binary bundle is
+removed. They verify the retained wheel and rerun import/configuration preflight.
+`reload` and `validate` likewise reuse an installed exact `pypi:package==version`
+wheel; local directories, wheel paths, Git refs and unpinned index requests are
+captured afresh. A missing or modified retained wheel is an error, never an
+implicit package upgrade. Rebuilding a missing environment may require cached or
+downloadable dependencies.
+
+`update` explicitly resolves the source again and stages a candidate; it does not
+change the active generation. Use it to pick up a replaced wheel or dependency
+resolution, or to change the requested source/version. `reload` does not enable a
+disabled plugin: use `enable` to restore its services, pages and tools.
+A reviewed plan binds the
 candidate content, desired revision, worker generations, catalog and schema
 history. Changed inputs produce a stale-plan error instead of applying a different
 candidate. `--expected-revision` protects managed edits to composition.

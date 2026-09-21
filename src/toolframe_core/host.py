@@ -23,7 +23,7 @@ from .config import ConfigFile, HostLock, PluginRequest, atomic_write, managemen
 from .diagnostics import dependency_snapshot
 from .graph import Graph
 from .network import bind_host
-from .packages import Packages, source_files
+from .packages import Packages, pinned_index_source, source_files
 from .process import WorkerProcess, group_exists, process_inventory, stop_group
 from .redaction import redact, secret_values
 from .state import CoreState
@@ -356,10 +356,21 @@ class Host:
         if os.environ.get("TOOLFRAME_OFFLINE") == "1":
             self.packages.settings.offline = True
 
-    async def _prepare(self, name, operation):
+    async def _prepare(self, name, operation, *, installed=False):
         self.phase(operation, "capture_validate", {"plugin_id": name})
         request = self.composition.plugins[name]
-        candidate = await self.packages.prepare(name, request.source, request.config)
+        stored = self.state.plugin(name)
+        previous = stored["last_candidate"] or stored["current_candidate"]
+        retained = self.state.candidate(previous) if previous else None
+        if (
+            not retained
+            or retained["source"]["request"] != request.source
+            or not (installed or pinned_index_source(request.source))
+        ):
+            retained = None
+        candidate = await self.packages.prepare(
+            name, request.source, request.config, retained=retained
+        )
         if self.config.revision != self.revision:
             raise PluginError(
                 "stale_plan", "Composition changed while preparing the candidate"
@@ -555,6 +566,16 @@ class Host:
             )
             return {"migration": plan["plan_id"], "candidate": candidate["id"]}
         if action in ("reload", "enable", "disable", "remove", "stop"):
+            if action in ("reload", "enable"):
+                candidate = (
+                    self.state.candidate(
+                        approved.get("target_candidate") or approved["candidates"][name]
+                    )
+                    if approved
+                    else await self._prepare(
+                        name, operation, installed=action == "enable"
+                    )
+                )
             if action == "stop":
                 self.state.stopped(name, True)
             if action in ("enable", "disable", "remove"):
@@ -569,13 +590,6 @@ class Host:
             proposed = self.selected()
             if action in ("reload", "enable"):
                 self.state.stopped(name, False)
-                candidate = (
-                    self.state.candidate(
-                        approved.get("target_candidate") or approved["candidates"][name]
-                    )
-                    if approved
-                    else await self._prepare(name, operation)
-                )
                 if self.composition.plugins[name].enabled:
                     proposed[name] = candidate
             else:
@@ -587,21 +601,12 @@ class Host:
             for member, request in self.composition.plugins.items():
                 self.check_cancel(operation)
                 self.state.stopped(member, False)
-                existing = self.state.plugin(member)
-                previous = (
-                    approved["candidates"].get(member)
-                    if approved
-                    else existing["last_candidate"] or existing["current_candidate"]
-                )
-                candidate = self.state.candidate(previous) if previous else None
-                if (
-                    not candidate
-                    or candidate["source"]["request"] != request.source
-                    or candidate["config"] != request.config
-                ):
-                    candidate = await self._prepare(member, operation)
                 if request.enabled:
-                    proposed[member] = candidate
+                    proposed[member] = (
+                        self.state.candidate(approved["candidates"][member])
+                        if approved
+                        else await self._prepare(member, operation, installed=True)
+                    )
             changed = {
                 member
                 for member in proposed.keys() | self.graph.candidates.keys()
@@ -762,9 +767,13 @@ class Host:
             proposed = {}
             for member, request in self.composition.plugins.items():
                 if request.enabled:
-                    proposed[member] = await self._prepare(member, operation)
+                    proposed[member] = await self._prepare(
+                        member, operation, installed=True
+                    )
         elif action in {"reload", "enable"}:
-            candidate = await self._prepare(name, operation)
+            candidate = await self._prepare(
+                name, operation, installed=action == "enable"
+            )
             if action == "enable" or self.composition.plugins[name].enabled:
                 proposed[name] = candidate
         else:

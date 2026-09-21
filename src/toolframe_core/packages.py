@@ -192,6 +192,20 @@ def wheel_metadata(path):
         }
 
 
+def pinned_index_source(source):
+    """Only an exact index version can be reloaded without resolving an update."""
+    if not source.startswith("pypi:"):
+        return False
+    requirement = Requirement(source.removeprefix("pypi:"))
+    versions = list(requirement.specifier)
+    return (
+        not requirement.url
+        and len(versions) == 1
+        and versions[0].operator == "=="
+        and "*" not in versions[0].version
+    )
+
+
 class Packages:
     def __init__(self, home, settings):
         self.home, self.settings = Path(home).resolve(), settings
@@ -583,14 +597,47 @@ class Packages:
                 "lock": lock,
             }
 
-    async def prepare(self, identifier, source, config):
-        artifact = await self.capture(source)
+    async def prepare(self, identifier, source, config, *, retained=None):
+        if retained is None:
+            artifact = await self.capture(source)
+            environment = None
+        else:
+            # Lifecycle operations can reuse an installed immutable wheel even
+            # after a release stops bundling it or its original source is gone.
+            # Still check integrity and rerun import/config preflight below.
+            if retained["source"]["request"] != source:
+                raise PluginError(
+                    "source_mismatch", "Retained candidate source differs"
+                )
+            path = self.home / retained["artifact"]
+            if not path.is_file():
+                raise PluginError(
+                    "artifact_missing", "Retained plugin wheel is missing"
+                )
+            if (
+                hashlib.sha256(path.read_bytes()).hexdigest()
+                != retained["artifact_hash"]
+            ):
+                raise PluginError(
+                    "artifact_hash_mismatch", "Retained plugin wheel was modified"
+                )
+            artifact = {
+                **wheel_metadata(path),
+                "artifact": retained["artifact"],
+                "artifact_hash": retained["artifact_hash"],
+                "source": retained["source"],
+            }
+            environment = retained["environment"]
+            python = self.home / environment["python"]
+            if not python.is_file() or not (python.parent.parent / ".ready").is_file():
+                environment = None
         if artifact["plugin_id"] != identifier:
             raise PluginError(
                 "identity_mismatch",
                 "Entry point name differs from configured plugin ID",
             )
-        environment = await self.environment([artifact])
+        if environment is None:
+            environment = await self.environment([artifact])
 
         async def unavailable(method, params):
             raise PluginError(

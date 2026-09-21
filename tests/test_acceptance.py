@@ -377,7 +377,12 @@ async def test_descendant_survivor_blocks_replacement_until_explicit_force(
     assert forced["status"] == "succeeded", forced
     assert not group_exists(old.worker.pid)
     fixture_source(tmp_path, "alpha", version="repaired")
+    # Enable restores the installed snapshot; explicitly stage the repaired code.
+    assert (await operate(host, "update", id="alpha"))["status"] == "succeeded"
     assert (await operate(host, "enable", id="alpha"))["status"] == "succeeded"
+    assert await host.call_service("alpha", "alpha.service", "echo", {}) == {
+        "version": "repaired"
+    }
 
 
 async def test_resume_barrier_never_admits_a_partial_cohort(host):
@@ -444,8 +449,8 @@ async def test_manual_toml_edit_during_preparation_preserves_old_generation(
     old = host.runtimes["alpha"].generation
     prepare = host.packages.prepare
 
-    async def edit_while_preparing(*args):
-        candidate = await prepare(*args)
+    async def edit_while_preparing(*args, **kwargs):
+        candidate = await prepare(*args, **kwargs)
         host.config.path.write_text(
             host.config.path.read_text() + "\n# operator edit\n"
         )
@@ -473,7 +478,9 @@ async def test_cancelled_transaction_rolls_back_before_root_lease_is_released(
             ),
             0.2,
         )
-    assert not host.roots
+    # Periodic health probes can own read-only roots concurrently. The cancelled
+    # transaction's write lease must be gone before the empty-store read below.
+    assert all(root.read_only for root in host.roots.values())
     assert await host.call_service("alpha", "alpha.service", "read", {}) == []
 
 
