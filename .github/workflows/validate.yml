@@ -1,0 +1,101 @@
+name: Validate distributions and launchers
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# Concurrency belongs to the caller: a reusable workflow must not cancel it.
+jobs:
+  python:
+    name: Python integration and distribution
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      # github.repository_owner is the base repository owner, including fork PRs.
+      TOOLFRAME_REPOSITORY_OWNER: ${{ vars.TOOLFRAME_REPOSITORY_OWNER || github.repository_owner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14.7'
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.8'
+          enable-cache: false
+      - name: Validate in a fresh pinned workspace
+        run: >-
+          python scripts/ci/validate.py --checks python --output build/ci-python
+          --repository-owner "$TOOLFRAME_REPOSITORY_OWNER"
+      - name: Save validated Python distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-dist
+          path: build/ci-python/python-dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Save Python validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-validation
+          path: |
+            build/ci-python/*.json
+            build/ci-python/*.xml
+            build/ci-python/workspace.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  launcher:
+    name: Launcher (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      TOOLFRAME_REPOSITORY_OWNER: ${{ vars.TOOLFRAME_REPOSITORY_OWNER || github.repository_owner }}
+      RUSTUP_TOOLCHAIN: '1.94.1'
+      TOOLFRAME_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14.7'
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.8'
+          enable-cache: false
+      - name: Install the explicit Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal --component rustfmt
+      - name: Check Rust, build standard bundle, and exercise the copied executable
+        run: >-
+          python scripts/ci/validate.py --checks launcher --target "$TOOLFRAME_TARGET"
+          --output build/ci-launcher --repository-owner "$TOOLFRAME_REPOSITORY_OWNER"
+      - name: Save validated launcher archive and checksums
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: launcher-${{ matrix.target }}
+          path: build/ci-launcher/launcher/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Save launcher validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: launcher-validation-${{ matrix.target }}
+          path: |
+            build/ci-launcher/*.json
+            build/ci-launcher/workspace.txt
+          if-no-files-found: warn
+          retention-days: 14

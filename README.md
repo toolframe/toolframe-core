@@ -342,6 +342,9 @@ client reconnection; backend-only changes can preserve MCP sessions.
 
 ## Build and verify
 
+For isolated local validation, GitHub Actions, Python Trusted Publishing setup,
+and validated macOS launcher artifacts, see [CI and release preparation](docs/ci.md).
+
 The standard Rust executable embeds core, SDK, the independent Cordis 0.2.0 wheel,
 SQLite, Streamlit Dashboard, FastMCP, llms.txt, auth, Dashboard auth and Entry Register. The Intel build
 also embeds the pinned native cryptography wheel. Only core/SDK/Cordis are installed
