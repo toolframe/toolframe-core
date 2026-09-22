@@ -7,7 +7,7 @@ storage and Entry Register are independently packaged plugins.
 
 ## Run the local workspace
 
-The nine Toolframe repositories and `fastapi-cordis` must be siblings.
+The Toolframe repositories and `fastapi-cordis` must be siblings.
 Python 3.14.7, uv 0.12.8 and Rust are the tested build tools.
 
 ```sh
@@ -306,7 +306,9 @@ Management accepts direct local control, a bearer token/sign-in cookie, or an
 access password with the required system scopes. The management token remains in
 `.toolframe/management.token` with owner-only permissions. The gateway defaults
 to loopback and validates Host/Origin. Dashboard business access follows the
-configured public/protected policy. MCP and llms entrances remain public on LAN.
+configured public/protected policy. MCP has an independent public/protected
+policy with optional bearer keys; see [MCP authentication](docs/mcp-authentication.md).
+The llms entrance remains public on LAN.
 See [authentication](docs/authentication.md) for scope and fallback behavior.
 
 Mutations support `Idempotency-Key`. Identical retries return the original

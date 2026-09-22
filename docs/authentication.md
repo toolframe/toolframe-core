@@ -58,14 +58,16 @@ not blindly retry credential creation.
 | --- | --- |
 | Dashboard and `POST /_toolframe/v1/services/OWNER/SERVICE/METHOD` | Effective Dashboard policy and method scopes; internal services excluded |
 | `POST /api/OWNER/SERVICE/METHOD` | Public only when the business method explicitly sets `public_api=True` |
-| MCP tools and llms documents | Public, independent of Dashboard passwords |
+| MCP tools | Independent MCP policy: public by default, or bearer keys in protected mode; see [MCP authentication](mcp-authentication.md) |
+| llms documents | Public, independent of Dashboard passwords |
 | Management API and plugin management UI | Explicit `system.*` grants, local control or existing management token |
 | Internal SQL/auth services | Host/plugin dependency calls only, never generic browser APIs |
 
 `system.plugins.read` permits diagnostics; `system.plugins.manage` controls package
 and lifecycle operations; `system.migrations.manage` controls migrations;
 `system.settings.manage` edits access policy; `system.auth.passwords` manages
-passwords. The password management page requires the latter. Select read access
+passwords; `system.auth.mcp_keys` manages MCP keys. The password management page
+requires `system.auth.passwords`. Select read access
 as well when granting remote plugin management so its status page is usable.
 
 Dynamic business grants include newly installed business scopes and exclude

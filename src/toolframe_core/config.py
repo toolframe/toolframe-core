@@ -76,6 +76,16 @@ class AccessPolicy(Model):
         return validate_plugin_id(value)
 
 
+class McpAccessPolicy(Model):
+    mode: Literal["public", "protected"] = "public"
+    auth_provider: str = "mcp-auth"
+
+    @field_validator("auth_provider")
+    @classmethod
+    def identity(cls, value):
+        return validate_plugin_id(value)
+
+
 class Composition(Model):
     schema_version: Literal[1] = 1
     application: Application
@@ -85,6 +95,7 @@ class Composition(Model):
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     packages: PackageSettings = Field(default_factory=PackageSettings)
     access: AccessPolicy = Field(default_factory=AccessPolicy)
+    mcp_access: McpAccessPolicy = Field(default_factory=McpAccessPolicy)
 
     @field_validator("plugins")
     @classmethod

@@ -15,6 +15,7 @@ URL_QUERY = re.compile(
     r"([?&](?:token|api[_-]?key|password|secret|authorization)=)[^&\s]+", re.IGNORECASE
 )
 BEARER = re.compile(r"(\bBearer\s+)[^\s\"']+", re.IGNORECASE)
+MCP_KEY = re.compile(r"tf_mcp_[A-Za-z0-9_-]{43}")
 
 
 def secret_values(value, schema=None, *, key="", root=None):
@@ -100,7 +101,7 @@ def redact(value, secrets, *, field=""):
             )
     value = URL_AUTH.sub(r"\1[REDACTED]@", value)
     value = URL_QUERY.sub(r"\1[REDACTED]", value)
-    return BEARER.sub(r"\1[REDACTED]", value)
+    return MCP_KEY.sub(REDACTED, BEARER.sub(r"\1[REDACTED]", value))
 
 
 def redact_toml(text, redactor):

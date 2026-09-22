@@ -304,6 +304,8 @@ class Access:
             self.login_slots -= 1
 
     async def manage(self, identity, action, params):
+        if action.startswith("mcp."):
+            return await self.host.mcp_access.manage(identity, action[4:], params)
         if action == "presentation":
             return await self.presentation(identity)
         if action == "catalog":

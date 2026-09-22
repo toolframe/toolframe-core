@@ -17,6 +17,7 @@ REPOSITORIES = (
     "toolframe-demo-entry-register",
     "toolframe-auth",
     "toolframe-dashboard-auth",
+    "toolframe-mcp-auth",
 )
 
 
@@ -42,6 +43,7 @@ def test_repository_uses_only_its_implementation_and_public_sdk(repository):
         "toolframe-sample-notes",
         "toolframe-auth",
         "toolframe-dashboard-auth",
+        "toolframe-mcp-auth",
     }:
         forbidden_libraries.add("sqlite3")
     for file in (root / "src").rglob("*.py"):
