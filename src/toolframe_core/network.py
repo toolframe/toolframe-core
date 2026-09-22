@@ -37,7 +37,9 @@ def http_url(host: str, port: int) -> str:
     return f"http://{authority}:{port}"
 
 
-def trusted(headers, listen_host: str, *, public_url=None, cross_site=False) -> bool:
+def trusted(
+    headers, listen_host: str, *, public_url=None, cross_site=False, navigation=False
+) -> bool:
     authority = headers.get("host", "")
     try:
         target = urlsplit(f"http://{authority}")
@@ -79,4 +81,17 @@ def trusted(headers, listen_host: str, *, public_url=None, cross_site=False) -> 
         )
     ):
         return False
-    return cross_site or headers.get("sec-fetch-site") != "cross-site"
+    # An IdP redirect chain remains cross-site even after returning to the app.
+    # Only explicitly selected landing pages may admit top-level navigation;
+    # this does not exempt Origin checks, embedded content or local control URLs.
+    return (
+        cross_site
+        or headers.get("sec-fetch-site") != "cross-site"
+        or (
+            navigation
+            and public_authority is not None
+            and authority == public_authority
+            and headers.get("sec-fetch-mode") == "navigate"
+            and headers.get("sec-fetch-dest") == "document"
+        )
+    )

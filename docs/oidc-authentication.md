@@ -71,7 +71,12 @@ admitted roots finish under the existing lifecycle contract.
 
 Only OAuth machine endpoints and metadata expose noncredentialed CORS. External
 browser entry is allowed for authorization/login/callback GETs. Consent POSTs,
-Dashboard and management routes retain origin checks. HTTP bodies are bounded;
+Dashboard and management routes retain origin checks. The canonical Dashboard
+root and login page accept top-level GET navigation after an IdP redirect, whose
+`Sec-Fetch-Site` remains `cross-site` throughout the redirect chain. This exception
+requires `Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: document`; it does not
+admit fetches, frames, other routes, writes or local-control URLs. Dashboard
+session admission still applies. HTTP bodies are bounded;
 OIDC transaction/session cookies are HttpOnly, Secure on HTTPS, and SameSite=Lax
 for cross-site OIDC returns. Password/operator cookies remain SameSite=Strict and
 are Secure when a canonical HTTPS origin is configured. Core strips these cookies

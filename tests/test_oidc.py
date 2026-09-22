@@ -6,10 +6,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from test_auth import ROOT, app_host, client, operate  # noqa: F401
+from test_auth import ROOT, app_host, client, credential, operate  # noqa: F401
 from test_mcp_auth import key, mcp_host, policy  # noqa: F401
 from toolframe_sdk import PluginError
 
+from toolframe_core import api
 from toolframe_core.access import Access
 from toolframe_core.api import create_app
 from toolframe_core.config import Application
@@ -68,6 +69,83 @@ def test_public_origin_does_not_inherit_proxy_loopback_authority():
 def test_invalid_public_origin(url):
     with pytest.raises(ValueError):
         Application(id="test", public_url=url)
+
+
+async def test_dashboard_return_keeps_auth_and_cross_site_api_protection(
+    app_host, monkeypatch
+):
+    host = app_host
+    await credential(host)
+    host.composition.application.public_url = "https://app.example"
+    host.graph.providers["dashboard"] = "fixture-dashboard"
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        api,
+        "provider_for",
+        lambda host, path: (
+            "dashboard",
+            SimpleNamespace(name="fixture-dashboard"),
+            "http://127.0.0.1:12345",
+        ),
+    )
+    monkeypatch.setattr(
+        api.httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, stream=httpx.ByteStream(b"Dashboard")
+                )
+            )
+        ),
+    )
+    navigation = {
+        "Sec-Fetch-Site": "cross-site",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+    }
+    async with original_client(
+        transport=httpx.ASGITransport(
+            create_app(host, manage_lifespan=False), client=("127.0.0.1", 5000)
+        ),
+        base_url="https://app.example",
+    ) as browser:
+        # Returning from an IdP may navigate, but still requires a local session.
+        anonymous = await browser.get("/", headers=navigation)
+        assert anonymous.status_code == 303
+        assert anonymous.headers["location"] == "/_toolframe/auth/login"
+        assert (
+            await browser.get(anonymous.headers["location"], headers=navigation)
+        ).status_code == 200
+        login = await browser.post(
+            "/_toolframe/auth/login", json={"password": "test-password-read"}
+        )
+        assert login.status_code == 303
+        landing = await browser.get("/", headers=navigation)
+        assert landing.status_code == 200 and landing.text == "Dashboard"
+        for method, path, extra in (
+            ("POST", "/", {}),
+            ("POST", "/_toolframe/auth/login", {}),
+            ("POST", "/oauth/consent", {}),
+            ("GET", "/_toolframe/v1/status", {}),
+            ("GET", "/_toolframe/session", {}),
+            ("GET", "/mcp", {}),
+            ("GET", "/", {"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}),
+            ("GET", "/", {"Sec-Fetch-Dest": "iframe"}),
+            ("GET", "/", {"Origin": "https://identity.example"}),
+            ("GET", "/", {"Host": "127.0.0.1:9876"}),
+        ):
+            rejected = await browser.request(
+                method, path, headers={**navigation, **extra}
+            )
+            assert rejected.status_code == 403, (method, path, extra)
+            assert rejected.json()["error"]["code"] == "untrusted_origin"
+        # The proxy's loopback peer must not promote the session to operator.
+        assert (await browser.get("/_toolframe/v1/status")).status_code == 403
+        host.composition.application.public_url = "http://127.0.0.1:9876"
+        assert (
+            await browser.get("/", headers={**navigation, "Host": "127.0.0.1:9876"})
+        ).status_code == 403
 
 
 async def test_discovery_gateway_and_optional_oidc_failure_preserve_keys(

@@ -149,11 +149,15 @@ def create_app(host, *, manage_lifespan=True):
     @app.middleware("http")
     async def application_operator(request, call_next):
         path = request.url.path
+        identity = host.access.identity(request)
         if not trusted(
             request.headers,
             host.listen_host,
             public_url=host.composition.application.public_url,
             cross_site=cross_site_route(path, request.method),
+            navigation=request.method == "GET"
+            and path in {"/", "/_toolframe/auth/login"}
+            and not identity.local,
         ):
             return JSONResponse(
                 {
@@ -164,7 +168,7 @@ def create_app(host, *, manage_lifespan=True):
                 },
                 status_code=403,
             )
-        request.state.identity = host.access.identity(request)
+        request.state.identity = identity
         try:
             response = await call_next(request)
             if path in PUBLIC_PATHS:
