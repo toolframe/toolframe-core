@@ -37,7 +37,7 @@ def http_url(host: str, port: int) -> str:
     return f"http://{authority}:{port}"
 
 
-def trusted(headers, listen_host: str) -> bool:
+def trusted(headers, listen_host: str, *, public_url=None, cross_site=False) -> bool:
     authority = headers.get("host", "")
     try:
         target = urlsplit(f"http://{authority}")
@@ -53,7 +53,10 @@ def trusted(headers, listen_host: str) -> bool:
             or target.port == 0
         ):
             return False
-        if hostname != "localhost":
+        public_authority = urlsplit(public_url).netloc if public_url else None
+        if authority == public_authority:
+            pass
+        elif hostname != "localhost":
             address = ipaddress.ip_address(hostname)
             if not address.is_loopback:
                 if listen_host == "localhost":
@@ -66,9 +69,14 @@ def trusted(headers, listen_host: str) -> bool:
     # Numeric Host headers avoid allowing arbitrary DNS names on wildcard
     # listeners. Browser requests must still originate from the same authority.
     origin = headers.get("origin")
-    if origin and origin.rstrip("/") not in (
-        f"http://{authority}",
-        f"https://{authority}",
+    if (
+        not cross_site
+        and origin
+        and origin.rstrip("/")
+        not in (
+            f"http://{authority}",
+            f"https://{authority}",
+        )
     ):
         return False
-    return headers.get("sec-fetch-site") != "cross-site"
+    return cross_site or headers.get("sec-fetch-site") != "cross-site"

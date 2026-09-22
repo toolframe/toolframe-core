@@ -24,3 +24,7 @@ Normal startup/reload is a separate transient: new protected operations wait
 until auth is ready, rather than temporarily becoming public. An actual failure
 or explicit disablement activates fallback. Transition deadlines and request-error
 classification are described in [authentication](../authentication.md).
+
+[ADR 0008](0008-shared-oidc-authentication.md) adds an explicit `closed` failure
+mode for protected deployments. The behavior above remains the compatibility
+default when that option is not selected.

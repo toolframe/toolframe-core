@@ -948,7 +948,9 @@ class Host:
 
     async def probe(self, runtime, method="runtime.health", params=None):
         members = self.graph.closure(
-            runtime.name, optional=True, available=self.runtimes
+            runtime.name,
+            optional=True,
+            available=self.available_dependencies(),
         )
         leases = ExitStack()
         root = None
@@ -1044,6 +1046,7 @@ class Host:
                         "auth",
                         "dashboard-auth",
                         "mcp-auth",
+                        "oidc-auth",
                     }
                     or name not in self.optional_new
                 ):
@@ -1152,7 +1155,15 @@ class Host:
             name
             for name, definition in replacement.definitions.items()
             if definition.provider_kind
-            in {"dashboard", "mcp", "llms", "auth", "dashboard-auth", "mcp-auth"}
+            in {
+                "dashboard",
+                "mcp",
+                "llms",
+                "auth",
+                "dashboard-auth",
+                "mcp-auth",
+                "oidc-auth",
+            }
             and name not in self.runtimes
         }
         self.optional_failures = {}
@@ -1537,7 +1548,11 @@ class Host:
             or not self.runtimes[owner].admitted
         ):
             raise PluginError("plugin_reloading", f"{owner} is not admitting new calls")
-        members = self.graph.closure(owner, optional=True, available=self.runtimes)
+        members = self.graph.closure(
+            owner,
+            optional=True,
+            available=self.available_dependencies(),
+        )
         leases = ExitStack()
         try:
             for name in members:
@@ -1919,7 +1934,9 @@ class Host:
                 # Preparation may take minutes. Keep probing unrelated admitted
                 # workers while the mutation writer owns its operation lock.
                 members = self.graph.closure(
-                    name, optional=True, available=self.runtimes
+                    name,
+                    optional=True,
+                    available=self.available_dependencies(),
                 )
                 if any(
                     member in self.gated
@@ -2080,6 +2097,9 @@ class Host:
         for operation in self.state.operations():
             secrets.update(secret_values(operation["request"]))
         return redact(value, secrets)
+
+    def available_dependencies(self):
+        return {name for name in self.graph.definitions if self.healthy_runtime(name)}
 
     def healthy_runtime(self, name):
         runtime = self.runtimes.get(name)

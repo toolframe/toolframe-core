@@ -12,10 +12,11 @@ SENSITIVE_KEY = re.compile(
 )
 URL_AUTH = re.compile(r"((?:git\+)?(?:https?|ssh)://)[^\s/@]+@", re.IGNORECASE)
 URL_QUERY = re.compile(
-    r"([?&](?:token|api[_-]?key|password|secret|authorization)=)[^&\s]+", re.IGNORECASE
+    r"([?&](?:token|api[_-]?key|password|secret|authorization|code|state|code_verifier)=)[^&\s]+",
+    re.IGNORECASE,
 )
 BEARER = re.compile(r"(\bBearer\s+)[^\s\"']+", re.IGNORECASE)
-MCP_KEY = re.compile(r"tf_mcp_[A-Za-z0-9_-]{43}")
+MCP_KEY = re.compile(r"tf_(?:mcp|oauth|refresh|user)_[A-Za-z0-9_-]{43}")
 
 
 def secret_values(value, schema=None, *, key="", root=None):

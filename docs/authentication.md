@@ -32,6 +32,7 @@ mode = "protected"        # public is the default
 local_control = true
 auth_provider = "auth"
 dashboard_auth = "dashboard-auth"
+failure_mode = "public"   # choose "closed" to preserve protection during outages
 
 [plugins.auth]
 source = "pypi:toolframe-auth==0.1.1"
@@ -82,7 +83,7 @@ record with new authority. Anyone who remembers that secret can explicitly log
 in under the new grant; old sessions never transfer to it. Expiry extension cannot
 create a collision with an existing valid record.
 
-Sessions use HttpOnly/SameSite=Strict cookies. Their default absolute maximum is
+Password sessions use HttpOnly/SameSite=Strict cookies (Secure with a configured HTTPS origin). Their default absolute maximum is
 seven days, idle limit 24 hours, capped by password expiry. Polling and denied calls
 do not update last use or idle activity. Revocation/expiry blocks the next protected
 operation, including queued management work before it starts. Already admitted
@@ -93,7 +94,9 @@ admission. Healthy reload/restart retains eligible sessions, not Streamlit memor
 ## Failure and recovery
 
 An active auth provider or Dashboard Auth integration failure/disablement selects
-**public business access**, with its reason in the common header. System operations
+**public business access** by default, with its reason in the common header.
+With `access.failure_mode = "closed"`, it instead makes protected access unavailable.
+System operations
 remain controlled. Recovery resumes saved policy without changing TOML. Normal
 startup/reload of a protected chain returns retryable unavailability; it does not
 briefly open access. Invalid passwords, expiry, denied scopes, malformed requests
@@ -103,9 +106,11 @@ active generation's access mode intact.
 The existing management token at `APP/.toolframe/management.token` remains an
 independent recovery credential for CLI/API and `toolframe open`. Direct socket
 loopback peers obtain local control by default; connecting to the machine's LAN
-address is remote. Host/Origin checks remain enforced and forwarded headers are
-ignored. This release covers direct localhost/LAN HTTP; it does not implement a
-trusted reverse-proxy mode or TLS termination.
+address is remote. Host/Origin checks remain enforced. Requests bearing forwarded
+headers or a configured public hostname never inherit proxy-loopback authority.
+Core supports a canonical HTTPS public origin behind a TLS-terminating reverse
+proxy; forwarded identity/issuer values are not trusted. See [OIDC authentication](oidc-authentication.md)
+for shared user sessions, the additional management actions and proxy configuration.
 
 Back up the composition, `data/plugins/auth/data.sqlite` (using a consistent SQLite
 backup) and `.toolframe/secrets/auth/password-lookup.key` together. Core creates the

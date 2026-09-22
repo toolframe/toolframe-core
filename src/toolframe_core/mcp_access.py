@@ -50,6 +50,9 @@ class McpAccess:
                 "auth_unavailable", "MCP authentication provider is unavailable"
             )
         try:
+            if method in {"verify", "resolve"}:
+                origin = self.host.composition.application.public_url
+                params = {**params, "resource": origin + "/mcp" if origin else None}
             result = await self.host.call_service(
                 name, "toolframe.mcp-auth", method, params, principal=principal
             )
@@ -58,7 +61,7 @@ class McpAccess:
             if method in {"verify", "resolve"}:
                 actor = Principal.model_validate(result["principal"])
                 if (
-                    actor.kind != "mcp_key"
+                    actor.kind not in {"mcp_key", "delegated"}
                     or not actor.credential_id
                     or actor.all_business
                     or any(s.startswith("system.") for s in actor.scopes)
@@ -69,6 +72,14 @@ class McpAccess:
                     )
                 ):
                     raise ValueError("Invalid MCP principal")
+                if actor.kind == "delegated" and (
+                    not all(
+                        (actor.user_id, actor.client_id, actor.grant_id, actor.resource)
+                    )
+                    or actor.resource != params["resource"]
+                    or actor.expires_at is None
+                ):
+                    raise ValueError("Invalid delegated MCP principal")
                 if actor.expires_at is not None:
                     if not math.isfinite(actor.expires_at):
                         raise ValueError("Invalid MCP expiry")

@@ -28,6 +28,7 @@ from websockets.exceptions import ConnectionClosed
 
 from .access import CONTEXT_HEADER, PASSWORD_COOKIE, operation_scopes
 from .network import trusted
+from .oidc_access import BROWSER_COOKIE, PUBLIC_PATHS, cross_site_route, install_routes
 from .redaction import redact_toml
 
 COOKIE = "toolframe_session"
@@ -48,7 +49,7 @@ HOP_HEADERS = {
 def provider_cookies(connection):
     cookies = SimpleCookie()
     for name, value in connection.cookies.items():
-        if name not in {COOKIE, PASSWORD_COOKIE}:
+        if name not in {COOKIE, PASSWORD_COOKIE, BROWSER_COOKIE}:
             cookies[name] = value
     return cookies.output(header="", sep=";").strip()
 
@@ -147,7 +148,13 @@ def create_app(host, *, manage_lifespan=True):
 
     @app.middleware("http")
     async def application_operator(request, call_next):
-        if not trusted(request.headers, host.listen_host):
+        path = request.url.path
+        if not trusted(
+            request.headers,
+            host.listen_host,
+            public_url=host.composition.application.public_url,
+            cross_site=cross_site_route(path, request.method),
+        ):
             return JSONResponse(
                 {
                     "error": {
@@ -157,10 +164,16 @@ def create_app(host, *, manage_lifespan=True):
                 },
                 status_code=403,
             )
-        path = request.url.path
         request.state.identity = host.access.identity(request)
         try:
             response = await call_next(request)
+            if path in PUBLIC_PATHS:
+                response.headers["access-control-allow-origin"] = "*"
+                response.headers["access-control-allow-methods"] = "GET, POST, OPTIONS"
+                response.headers["access-control-allow-headers"] = (
+                    "Authorization, Content-Type"
+                )
+                response.headers["cache-control"] = "no-store"
             if path.startswith("/_toolframe/"):
                 response.headers["cache-control"] = "no-store"
                 response.headers["referrer-policy"] = "no-referrer"
@@ -205,6 +218,8 @@ def create_app(host, *, manage_lifespan=True):
     async def health():
         return {"core": "ready", "host_run": host.host_run}
 
+    install_routes(app, host)
+
     @app.get("/_toolframe/auth/context")
     async def access_context(request: Request):
         return await host.access.presentation(request.state.identity)
@@ -227,6 +242,8 @@ def create_app(host, *, manage_lifespan=True):
                 result["token"],
                 httponly=True,
                 samesite="strict",
+                secure=host.composition.application.public_url.startswith("https://")
+                or request.url.scheme == "https",
                 max_age=max(1, int(result["expires_at"] - time.time())),
             )
             return response
@@ -289,7 +306,12 @@ def create_app(host, *, manage_lifespan=True):
                 )
             response = RedirectResponse("/", status_code=303)
             response.set_cookie(
-                COOKIE, token, httponly=True, samesite="strict", secure=False
+                COOKIE,
+                token,
+                httponly=True,
+                samesite="strict",
+                secure=host.composition.application.public_url.startswith("https://")
+                or request.url.scheme == "https",
             )
             response.headers["referrer-policy"] = "no-referrer"
             response.headers["cache-control"] = "no-store"
@@ -481,6 +503,17 @@ def create_app(host, *, manage_lifespan=True):
                     if error.code == "invalid_credentials"
                     else "Bearer"
                 )
+                if (
+                    host.composition.access.oidc_provider
+                    and host.composition.application.public_url
+                ):
+                    separator = ", " if challenge != "Bearer" else " "
+                    challenge += (
+                        separator
+                        + 'resource_metadata="'
+                        + host.composition.application.public_url
+                        + '/.well-known/oauth-protected-resource/mcp"'
+                    )
                 return JSONResponse(
                     {"error": error.as_dict()},
                     status_code=status,
@@ -549,9 +582,11 @@ def create_app(host, *, manage_lifespan=True):
 
     @app.websocket("/{path:path}")
     async def websocket(path: str, downstream: WebSocket):
-        if not trusted(downstream.headers, host.listen_host) or path.startswith(
-            "_toolframe/"
-        ):
+        if not trusted(
+            downstream.headers,
+            host.listen_host,
+            public_url=host.composition.application.public_url,
+        ) or path.startswith("_toolframe/"):
             await downstream.close(code=1008)
             return
         try:

@@ -29,9 +29,11 @@ Rust 1.94.1 is installed with rustup and includes rustfmt.
 
 ## Pinned sibling sources
 
-The nine required siblings and full commit IDs are in
+The eleven required siblings and full commit IDs are in
 [`scripts/ci/dependencies.json`](../scripts/ci/dependencies.json). These are the
-SDK, Cordis, six providers, and Entry Register. Core's architecture tests inspect
+SDK, Cordis, eight providers, and Entry Register. MCP Auth and OIDC Auth
+are fetched for coordinated authentication tests; they are not automatically
+added to the standard launcher bundle. Core's architecture tests inspect
 their sources; integration tests need a newly built SDK wheel at the expected
 `toolframe-sdk/dist` path; standard launcher builds embed their wheels.
 

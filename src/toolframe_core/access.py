@@ -7,6 +7,7 @@ import secrets
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from toolframe_sdk import SYSTEM_SCOPES, PluginError, Principal
 
@@ -82,6 +83,28 @@ class Access:
             local = bool(connection.client and loopback(connection.client.host))
         except ValueError:
             local = False
+        # A public virtual host is remote even if its proxy omits forwarded headers.
+        public_url = self.host.composition.application.public_url
+        if (
+            public_url
+            and connection.headers.get("host", "").lower()
+            == urlsplit(public_url).netloc.lower()
+        ):
+            try:
+                local = local and loopback(urlsplit(public_url).hostname)
+            except ValueError:
+                local = False
+        # A reverse proxy's loopback socket is not a local human operator.
+        if any(
+            name in connection.headers
+            for name in (
+                "forwarded",
+                "x-forwarded-for",
+                "x-forwarded-host",
+                "x-forwarded-proto",
+            )
+        ):
+            local = False
         return Identity(
             local=local and self.host.composition.access.local_control,
             operator=hmac.compare_digest(
@@ -141,7 +164,7 @@ class Access:
                 problems.append(f"{name}: unavailable")
         if problems:
             return {
-                "mode": "public",
+                "mode": "waiting" if policy.failure_mode == "closed" else "public",
                 "reason": "auth_unavailable",
                 "configured": "protected",
                 "detail": "; ".join(problems),
@@ -179,7 +202,11 @@ class Access:
                 raise TypeError("Invalid auth response")
             if method in {"resolve", "login"}:
                 actor = Principal.model_validate(result["principal"])
-                if actor.kind != "password" or not actor.credential_id:
+                if (
+                    actor.kind not in {"password", "user"}
+                    or not actor.credential_id
+                    or (actor.kind == "user" and not actor.user_id)
+                ):
                     raise ValueError("Invalid credential decision")
                 if method == "login" and (
                     not isinstance(result.get("token"), str)
@@ -247,9 +274,9 @@ class Access:
                     "Operator or scoped password sign-in required",
                 )
             raise PluginError(
-                "forbidden", "This password does not grant the required scope"
+                "forbidden", "Your account does not grant the required scope"
             )
-        if activity and actor.kind == "password":
+        if activity and actor.kind in {"password", "user"}:
             # Check/touch only after the requested operation's scopes were granted.
             # Public business access continues even if the optional session expires.
             try:
@@ -276,6 +303,7 @@ class Access:
             **self.mode(),
             "local_control": actor.kind == "local",
             "actor": actor.kind,
+            "user_id": actor.user_id,
             "allowed_scopes": [s for s in catalog if actor.allows([s], catalog)],
             "login_url": "/_toolframe/auth/login",
             "logout_url": "/_toolframe/auth/logout",
@@ -308,6 +336,29 @@ class Access:
             return await self.host.mcp_access.manage(identity, action[4:], params)
         if action == "presentation":
             return await self.presentation(identity)
+        if action == "user_catalog":
+            actor = await self.admit(identity, ["system.auth.users"], effective=False)
+            catalog = self.catalog()
+            return {
+                "scopes": {
+                    name: spec
+                    for name, spec in catalog.items()
+                    if actor.allows([name], catalog)
+                }
+            }
+        if action in {"users", "user_update", "grants", "revoke_grant"}:
+            scope = (
+                "system.auth.users"
+                if action in {"users", "user_update"}
+                else "system.auth.self"
+            )
+            actor = await self.admit(
+                identity,
+                [scope],
+                effective=False,
+                activity=action not in {"users", "grants"},
+            )
+            return await self.auth(action, params, principal=actor)
         if action == "catalog":
             await self.admit(identity, ["system.auth.passwords"], effective=False)
             return {

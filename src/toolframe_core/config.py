@@ -10,6 +10,7 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -35,6 +36,34 @@ class Application(Model):
     name: str = "Toolframe"
     host: str = "127.0.0.1"
     port: int = Field(default=9876, ge=0, le=65535)
+    public_url: str = ""
+
+    @field_validator("public_url")
+    @classmethod
+    def public_origin(cls, value):
+        if not value:
+            return ""
+        uri = urlsplit(value)
+        if (
+            not uri.hostname
+            or uri.username
+            or uri.password
+            or uri.path not in {"", "/"}
+            or uri.query
+            or uri.fragment
+            or uri.port == 0
+            or (
+                uri.scheme != "https"
+                and not (
+                    uri.scheme == "http"
+                    and uri.hostname in {"localhost", "127.0.0.1", "::1"}
+                )
+            )
+        ):
+            raise ValueError(
+                "public_url must be an HTTPS origin or HTTP loopback origin"
+            )
+        return value.rstrip("/")
 
     @field_validator("host")
     @classmethod
@@ -69,6 +98,13 @@ class AccessPolicy(Model):
     local_control: bool = True
     auth_provider: str = "auth"
     dashboard_auth: str = "dashboard-auth"
+    oidc_provider: str = ""
+    failure_mode: Literal["public", "closed"] = "public"
+
+    @field_validator("oidc_provider")
+    @classmethod
+    def oidc_identity(cls, value):
+        return validate_plugin_id(value) if value else ""
 
     @field_validator("auth_provider", "dashboard_auth")
     @classmethod

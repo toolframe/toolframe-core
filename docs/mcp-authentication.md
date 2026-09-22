@@ -1,4 +1,4 @@
-# MCP bearer keys
+# MCP authentication
 
 MCP uses an independent access policy. Existing applications default to public
 MCP. Enable `toolframe-mcp-auth` with the SQLite provider, then use **MCP keys**
@@ -30,8 +30,10 @@ Each key uses 32 random bytes (256 bits), encoded as `tf_mcp_` plus 43 URL-safe
 characters. Copy the 50-character key when it is shown: it cannot be retrieved
 again. Configure the client with the public application's `/mcp` URL and send
 `Authorization: Bearer <key>` on every HTTP request. Use HTTPS for remote access.
-Only clients supporting preconfigured bearer tokens/custom headers are covered;
-OAuth discovery and browser sign-in are outside this version.
+This path supports clients with preconfigured bearer tokens/custom headers.
+For OAuth discovery and browser authorization, install the shared OIDC plugin;
+see [OIDC authentication](oidc-authentication.md). Keys and delegated OAuth tokens
+coexist in protected mode, with independent revocation.
 
 Issue one key per client. Rotation is creating a replacement, updating the client,
 then revoking the old key. Expired/revoked keys cannot be restored. There is no

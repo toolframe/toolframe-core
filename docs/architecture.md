@@ -147,3 +147,12 @@ public entrances, protected access and recovery rules are defined in
 
 See the [glossary](glossary.md) for terminology, [dependency diagnostics](dependency-graph.md)
 for operator views and [testing guide](testing.md) for verification requirements.
+
+## Shared federated authentication
+
+The optional OIDC Auth provider sits above local Auth and supplies Authlib-based
+upstream identity and downstream OAuth endpoints. Core owns HTTP routing and
+canonical origin checks; MCP Auth consumes its optional token-verification
+service. Business implementations remain scope-based.
+[OIDC authentication](oidc-authentication.md) describes configuration and routes;
+[ADR 0008](adr/0008-shared-oidc-authentication.md) records ownership and tradeoffs.

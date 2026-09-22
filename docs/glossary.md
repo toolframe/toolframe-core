@@ -172,3 +172,12 @@ Public Dashboard access following an auth-plugin error or disablement, accompani
 by a persistent public-access notice in the page header. It preserves the
 Configured Access Policy, which takes effect again when auth recovers.
 _Avoid_: Successful authentication or a grant of system privileges.
+
+## Federated User and Agent Grant
+
+A **Federated User** is a local identity linked to a verified issuer/subject pair,
+with explicit local permissions. An **Agent Grant** records that user's consent
+for one client, issuer, resource, scope set and expiry. A **Delegated Principal**
+is the short-lived admission identity derived from a local access token and its
+still-valid grant. Upstream identity tokens prove login; they do not grant app
+resource access.

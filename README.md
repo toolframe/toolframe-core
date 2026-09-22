@@ -88,6 +88,10 @@ names and cross-origin browser requests; use the server's numeric IP for LAN
 access. Provider worker ports remain private loopback listeners behind core.
 The public `/healthz` endpoint continues to report core liveness.
 
+For a canonical HTTPS origin, shared OIDC Dashboard login and revocable Agent
+access, install the optional OIDC plugin and follow
+[OIDC authentication](docs/oidc-authentication.md).
+
 To repeat the real executable/LAN acceptance probe with this machine's IPv4
 address (it creates and stops a separate temporary application):
 
