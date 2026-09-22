@@ -22,6 +22,7 @@ from .access import Access, operation_scopes
 from .config import ConfigFile, HostLock, PluginRequest, atomic_write, management_token
 from .diagnostics import dependency_snapshot
 from .graph import Graph
+from .mcp_access import McpAccess
 from .network import bind_host
 from .packages import Packages, pinned_index_source, source_files
 from .process import WorkerProcess, group_exists, process_inventory, stop_group
@@ -115,6 +116,7 @@ class Host:
         self.starting = True
         self.transitioning = set()
         self.access = Access(self)
+        self.mcp_access = McpAccess(self)
         self.operation_identities = {}
 
     async def start(self, *, apply=True, wait=True):
@@ -1035,7 +1037,14 @@ class Host:
             except Exception as error:
                 if (
                     self.graph.definitions[name].provider_kind
-                    not in {"dashboard", "mcp", "llms", "auth", "dashboard-auth"}
+                    not in {
+                        "dashboard",
+                        "mcp",
+                        "llms",
+                        "auth",
+                        "dashboard-auth",
+                        "mcp-auth",
+                    }
                     or name not in self.optional_new
                 ):
                     raise
@@ -1143,7 +1152,7 @@ class Host:
             name
             for name, definition in replacement.definitions.items()
             if definition.provider_kind
-            in {"dashboard", "mcp", "llms", "auth", "dashboard-auth"}
+            in {"dashboard", "mcp", "llms", "auth", "dashboard-auth", "mcp-auth"}
             and name not in self.runtimes
         }
         self.optional_failures = {}
@@ -1660,6 +1669,14 @@ class Host:
             raise PluginError(
                 "stale_generation", "Worker generation is no longer current"
             )
+        if method == "mcp.access":
+            if runtime.candidate["definition"].get("provider_kind") != "mcp":
+                raise PluginError(
+                    "forbidden", "Only the MCP provider may resolve MCP requests"
+                )
+            return await self.mcp_access.presentation(
+                runtime, params.get("access_context")
+            )
         if method in {"management.call", "access.call"}:
             if runtime.candidate["definition"].get("provider_kind") != "dashboard":
                 raise PluginError(
@@ -1766,7 +1783,15 @@ class Host:
                     raise PluginError(
                         "forbidden", "MCP cannot publish system operations"
                     )
-                principal = Principal(kind="public", all_business=True)
+                principal = await self.mcp_access.resolve(
+                    runtime,
+                    params.get("access_context"),
+                    scopes=(
+                        *resource.resource.required_scopes,
+                        *specification.required_scopes,
+                    ),
+                    activity=True,
+                )
             else:
                 identity = self.access.context(params.get("access_context"))
                 principal = await self.access.admit(
@@ -2178,6 +2203,7 @@ class Host:
                 "report_schema": 1,
                 "core": "ready",
                 "access": self.access.mode(),
+                "mcp_access": self.mcp_access.status(),
                 "ready": ready,
                 "degraded": degraded,
                 "configuration_error": self.configuration_error,

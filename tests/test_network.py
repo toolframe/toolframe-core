@@ -148,7 +148,12 @@ async def test_lan_http_auth_session_and_origin_checks(tmp_path, monkeypatch):
     original_client = httpx.AsyncClient
 
     def upstream(request):
-        assert "authorization" not in request.headers
+        if request.url.path == "/mcp":
+            scheme, reference = request.headers["authorization"].split(" ", 1)
+            assert scheme == "Bearer" and reference != host.token
+            assert host.mcp_access.requests[reference].credential_id is None
+        else:
+            assert "authorization" not in request.headers
         if "origin" in request.headers:
             assert request.headers["origin"] == "http://127.0.0.1:12345"
         return httpx.Response(200, stream=httpx.ByteStream(b"provider response"))
@@ -188,6 +193,7 @@ async def test_lan_http_auth_session_and_origin_checks(tmp_path, monkeypatch):
             assert (
                 await client.get("/mcp", headers=authorization)
             ).text == "provider response"
+            assert not host.mcp_access.requests
             assert (
                 await client.get("/healthz", headers={"Host": "attacker.example"})
             ).status_code == 403

@@ -263,6 +263,12 @@ def create_app(host, *, manage_lifespan=True):
             request.state.identity, action, await bounded_body(request)
         )
 
+    @app.post("/_toolframe/v1/mcp-auth/{action}")
+    async def mcp_auth_operation(action: str, request: Request):
+        return await host.mcp_access.manage(
+            request.state.identity, action, await bounded_body(request)
+        )
+
     @app.api_route("/_toolframe/session", methods=["GET", "POST"])
     async def session(request: Request):
         token = request.query_params.get("token", "")
@@ -464,6 +470,26 @@ def create_app(host, *, manage_lifespan=True):
                 if error.code == "authentication_required":
                     return RedirectResponse("/_toolframe/auth/login", status_code=303)
                 raise
+        mcp_reference = None
+        if kind == "mcp":
+            try:
+                mcp_reference = await host.mcp_access.register(runtime, request.headers)
+            except PluginError as error:
+                status = error_status(error)
+                challenge = (
+                    'Bearer error="invalid_token"'
+                    if error.code == "invalid_credentials"
+                    else "Bearer"
+                )
+                return JSONResponse(
+                    {"error": error.as_dict()},
+                    status_code=status,
+                    headers={
+                        "Cache-Control": "no-store",
+                        **({"WWW-Authenticate": challenge} if status == 401 else {}),
+                        **({"Retry-After": "1"} if status == 503 else {}),
+                    },
+                )
         headers = {
             key: value
             for key, value in request.headers.items()
@@ -473,6 +499,8 @@ def create_app(host, *, manage_lifespan=True):
         }
         if "origin" in headers:
             headers["origin"] = address
+        if mcp_reference:
+            headers["authorization"] = "Bearer " + mcp_reference
         if cookies := provider_cookies(request):
             headers["cookie"] = cookies
         url = f"{address}/{path}"
@@ -485,14 +513,17 @@ def create_app(host, *, manage_lifespan=True):
             )
             upstream = await client.send(upstream_request, stream=True)
         except ClientDisconnect:
+            host.mcp_access.release(mcp_reference)
             await client.aclose()
             # The caller left before its upload finished; this is not a server error.
             return Response(status_code=499)
-        except Exception:
+        except BaseException:
+            host.mcp_access.release(mcp_reference)
             await client.aclose()
             raise
 
         async def close():
+            host.mcp_access.release(mcp_reference)
             await upstream.aclose()
             await client.aclose()
 

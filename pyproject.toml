@@ -24,7 +24,7 @@ dependencies = [
 toolframe-core = "toolframe_core.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.12,<1", "hatchling>=1.27,<2"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.12,<1", "hatchling>=1.27,<2", "fastmcp==4.0.0"]
 
 [tool.uv.sources]
 toolframe-sdk = { path = "../toolframe-sdk", editable = true }
