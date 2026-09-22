@@ -40,7 +40,7 @@ dependencies. This is not a fully offline cold-start distribution.
 
 Plain `init` still creates an empty application. Bundling makes plugins available;
 the chosen composition controls installation and activation. The default build
-also writes `dist/toolframe-0.5.1-standard-aarch64-apple-darwin` (or the selected
+also writes `dist/toolframe-0.5.2-standard-aarch64-apple-darwin` (or the selected
 target's equivalent). `--bundle core` builds the smaller three-wheel variant.
 
 The commands below use `toolframe` for the built executable. Pass `--home PATH`
@@ -88,7 +88,7 @@ address (it creates and stops a separate temporary application):
 
 ```sh
 uv run python scripts/verify-network.py \
-  --binary dist/toolframe-0.5.1-standard-aarch64-apple-darwin \
+  --binary dist/toolframe-0.5.2-standard-aarch64-apple-darwin \
   --address SERVER_LAN_IP --output build/lan-access.json
 ```
 
@@ -156,8 +156,13 @@ toolframe --home APP skill install --output ./toolframe-plugin-design --json
 
 `--output` names the exact skill directory. Installation needs no running server,
 application configuration or management token. The skill has its own semantic
-version in the `SKILL.md` YAML frontmatter, currently `version: "0.3.0"`.
+version in the `SKILL.md` YAML frontmatter, currently `version: "0.3.1"`.
 An installation receipt records that version and every shipped file's SHA-256.
+The skill's top-level `evals/` directory is development-only: it stays in the
+source repository and is excluded from the core wheel, installed copies and
+`.toolframe-install.json`. Upgrading an unmodified older copy removes its bundled
+evals and their receipt entries. Customized older copies retain the confirmation
+and backup protections described below.
 
 After a binary update, `serve` refreshes the bundled skill before starting core.
 Updates affect only the installed skill; generated/customized business plugins

@@ -1,6 +1,6 @@
 ---
 name: toolframe-plugin-design
-version: "0.3.0"
+version: "0.3.1"
 description: Load when designing, creating, or extending a Toolframe business plugin, including its domain model, persistence, or dashboard and MCP interfaces. Excludes routine application operation, calling existing tools, standalone Streamlit apps, Codex plugins, and Toolframe runtime/provider internals.
 ---
 

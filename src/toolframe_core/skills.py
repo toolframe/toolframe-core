@@ -22,15 +22,18 @@ def bundled_skill():
     return files("toolframe_core").joinpath("bundled_skills", SKILL_NAME)
 
 
-def _hashes(directory, *, include_receipt=False):
+def _hashes(directory, *, include_receipt=False, exclude_evals=False):
     if not directory.is_dir() or directory.is_symlink():
         return None
     result = {}
     for path in sorted(directory.rglob("*")):
+        relative = path.relative_to(directory)
+        if exclude_evals and relative.parts[0] == "evals":
+            continue
         if path.is_symlink():
             return None
         if path.is_file():
-            relative = path.relative_to(directory).as_posix()
+            relative = relative.as_posix()
             if relative != RECEIPT or include_receipt:
                 result[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
         elif not path.is_dir():
@@ -65,7 +68,13 @@ def _publish(source, destination, record, expected, *, backup):
     backup_path = None
     try:
         candidate = staging / "candidate"
-        shutil.copytree(source, candidate)
+        candidate.mkdir()
+        # Publish exactly the files in the receipt, excluding development evals
+        # even when this installer runs directly from a source checkout.
+        for relative in record["files"]:
+            target = candidate / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / relative, target)
         (candidate / RECEIPT).write_text(json.dumps(record, indent=2) + "\n")
         if destination.exists() or destination.is_symlink():
             if (
@@ -134,7 +143,7 @@ def install_skill(
                 "format": 1,
                 "name": SKILL_NAME,
                 "version": version,
-                "files": _hashes(source),
+                "files": _hashes(source, exclude_evals=True),
             }
             result = {
                 "name": SKILL_NAME,

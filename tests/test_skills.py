@@ -33,10 +33,15 @@ def test_init_delivers_complete_skill(tmp_path, capsys, template):
     assert destination == home / ".agents/skills" / SKILL_NAME
     with as_file(bundled_skill()) as source:
         for path in source.rglob("*"):
-            if path.is_file():
+            if path.is_file() and path.relative_to(source).parts[0] != "evals":
                 assert (
                     destination / path.relative_to(source)
                 ).read_bytes() == path.read_bytes()
+    assert not (destination / "evals").exists()
+    assert not any(
+        name.startswith("evals/")
+        for name in json.loads((destination / RECEIPT).read_text())["files"]
+    )
     assert not (home / ".toolframe/management.token").exists()
 
 
@@ -117,6 +122,67 @@ def bump_bundle(source):
         document.read_text().replace('version: "0.1.0"', 'version: "0.2.0"')
     )
     (source / "references/design.md").write_text("New release design guidance\n")
+
+
+@pytest.mark.parametrize("alternate_output", [False, True])
+def test_install_excludes_development_evals_from_files_and_receipt(
+    tmp_path, mutable_bundle, alternate_output
+):
+    home = tmp_path / "app"
+    nested = mutable_bundle / "evals/nested"
+    nested.mkdir(parents=True)
+    (nested / "case.json").write_text('{"development": true}\n')
+    output = tmp_path / "exported" if alternate_output else None
+    installed = install_skill(home, output=output)
+    destination = Path(installed["path"])
+    receipt = json.loads((destination / RECEIPT).read_text())
+    assert not (destination / "evals").exists()
+    assert not any(name.startswith("evals/") for name in receipt["files"])
+    assert set(receipt["files"]) == {
+        path.relative_to(destination).as_posix()
+        for path in destination.rglob("*")
+        if path.is_file() and path.name != RECEIPT
+    }
+    assert (destination / "assets/sample-plugin/pyproject.toml").is_file()
+    assert (destination / "references/plugin-api.md").is_file()
+    (nested / "case.json").write_text('{"development": "changed"}\n')
+    assert install_skill(home, output=output)["status"] == "unchanged"
+
+
+@pytest.mark.parametrize("customized", [None, "SKILL.md", "evals/cases.json"])
+def test_legacy_eval_install_upgrade_preserves_customizations(
+    tmp_path, mutable_bundle, customized
+):
+    home = tmp_path / "app"
+    destination = home / ".agents/skills" / SKILL_NAME
+    # Reproduce a pre-exclusion binary's complete copy and receipt.
+    copytree(mutable_bundle, destination)
+    (destination / RECEIPT).write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "name": SKILL_NAME,
+                "version": "0.1.0",
+                "files": skills._hashes(destination),
+            }
+        )
+    )
+    if customized:
+        (destination / customized).write_text("User customization\n")
+    before = skills._hashes(destination, include_receipt=True)
+    bump_bundle(mutable_bundle)
+    result = install_skill(home, upgrade_only=True)
+    if customized:
+        assert result["status"] == "preserved" and result["confirmation_required"]
+        assert skills._hashes(destination, include_receipt=True) == before
+    else:
+        assert result["status"] == "updated" and not result["confirmation_required"]
+        assert not (destination / "evals").exists()
+        assert not any(
+            name.startswith("evals/")
+            for name in json.loads((destination / RECEIPT).read_text())["files"]
+        )
+        assert install_skill(home, upgrade_only=True)["status"] == "unchanged"
 
 
 def test_clean_install_updates_from_new_bundle(tmp_path, mutable_bundle):

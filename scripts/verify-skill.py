@@ -68,7 +68,22 @@ def main():
     assert "references/design.md" in shipped
     assert "references/plugin-api.md" in shipped
     assert "references/operations.md" in shipped
-    assert "evals/cases.json" in shipped
+    assert not (skill / "evals").exists()
+    assert not any(name.startswith("evals/") for name in shipped)
+    receipt = skill / ".toolframe-install.json"
+    assert set(json.loads(receipt.read_text())["files"]) == set(shipped) - {
+        receipt.name
+    }
+    core_wheels = list((root / "runtime").rglob("toolframe_core-*.whl"))
+    assert core_wheels
+    for core_wheel in core_wheels:
+        with zipfile.ZipFile(core_wheel) as archive:
+            assert not any(
+                name.startswith(
+                    "toolframe_core/bundled_skills/toolframe-plugin-design/evals/"
+                )
+                for name in archive.namelist()
+            )
     assert not (authoring / "toolframe.toml").exists()
     assert not (authoring / ".toolframe").exists()
     assert (
@@ -115,6 +130,9 @@ def main():
         document.read_text().replace(f'version: "{version}"', 'version: "0.0.9"')
     )
     edited.write_text("Earlier release guidance\n")
+    # Older binaries also installed evaluation fixtures and tracked them.
+    (skill / "evals/nested").mkdir(parents=True)
+    (skill / "evals/nested/case.json").write_text('{"legacy": true}\n')
     receipt = skill / ".toolframe-install.json"
     prior = json.loads(receipt.read_text())
     prior["version"] = "0.0.9"
@@ -156,11 +174,13 @@ def main():
         "checks": {
             "copied_binary_without_source_or_wheelhouse": True,
             "complete_bundle_and_internal_links": True,
+            "evals_excluded_from_embedded_wheel_install_and_receipt": True,
             "no_application_or_token_needed": True,
             "idempotent_install": True,
             "customized_reference_preserved": True,
             "confirmed_replacement_with_original_backup": True,
             "unmodified_prior_release_receipt_updates_automatically": True,
+            "legacy_eval_files_and_receipt_entries_removed_on_clean_upgrade": True,
             "offline_alternate_output": True,
             "fresh_init_and_preserving_init": True,
             "starter_builds_independently_with_sql_and_docs": True,

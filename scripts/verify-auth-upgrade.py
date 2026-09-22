@@ -180,7 +180,7 @@ def main():
         assert "access" not in final and "auth" not in final["plugins"]
         assert source_hashes() == source_before
         assert (
-            'version: "0.3.0"'
+            'version: "0.3.1"'
             in (home / ".agents/skills/toolframe-plugin-design/SKILL.md").read_text()
         )
         report["checks"].append(
