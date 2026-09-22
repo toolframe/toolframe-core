@@ -5,6 +5,11 @@ Core owns composition, immutable package environments, worker lifecycles,
 management operations and `data/core.sqlite`. Dashboard, MCP, llms.txt, business
 storage and Entry Register are independently packaged plugins.
 
+The standard executable can start an empty host or an Entry Register application
+with Dashboard, MCP, documentation, storage and access-password plugins.
+Business data survives plugin replacement and removal. Plugins run trusted Python
+code; worker isolation is not a sandbox for untrusted packages.
+
 ## Run the local workspace
 
 The nine Toolframe repositories and `fastapi-cordis` must be siblings.
@@ -172,6 +177,16 @@ confirmation in an interactive terminal; the default answer keeps the local copy
 Noninteractive startup keeps customizations, prints how to resolve the conflict,
 and continues serving. It does not repeatedly ask about a customized copy when the
 binary still ships the same skill. `skill install` explicitly checks for replacement.
+
+JSON/noninteractive `skill install` returns exit 5 and `confirmation_required: true`
+when a decision is needed. After the user confirms, `skill install --overwrite`
+applies the replacement and saves the customized copy as a sibling ZIP archive.
+Use `--output` to compare or merge a separate copy instead. Destinations that are
+files or contain symlinks are retained; choose a new directory for those cases.
+The installer reports `installed`, `updated`, `unchanged`, or `preserved` and keeps
+`.toolframe-install.json` as its baseline. Global agent settings are untouched.
+The [testing guide](docs/testing.md) describes delivery, scaffolding and executable
+checks, including the limits of structural skill validation.
 
 ## Install, inspect and replace plugins
 
@@ -351,7 +366,7 @@ also embeds the pinned native cryptography wheel. Only core/SDK/Cordis are insta
 into the core environment; providers remain independently resolved workers.
 It prepares the exact Python 3.14.7 architecture and invokes Python core. The
 source for the pinned local Cordis wheel is `../fastapi-cordis`, whose `main`
-includes the reactive lifecycle release `25a870f`. Bundled files are extracted
+contains the reactive lifecycle implementation. Bundled files are extracted
 as an immutable content-addressed set and checked before use. Provider updates
 can still come from a local wheelhouse or explicit plugin source without rebuilding
 the launcher. `scripts/dev-wheelhouse.sh` remains available for that development
@@ -374,8 +389,8 @@ The integration tests expect the sibling repositories and check private-import
 boundaries. Run each provider/SDK repository's `uv run pytest -q` as well. The MCP
 repository has an additional `scripts/verify-gateway.py` acceptance driver.
 Its `scripts/verify-codex.py` probes a running local demo through the installed
-Codex app-server MCP client; see the CLI/Codex report for its tested approval and
-client-interface scope.
+Codex app-server MCP client; it verifies transport and invocation, not model
+execution or desktop UI behavior.
 
 The standard release probe copies the executable to a disposable directory,
 clears inherited wheelhouse settings, and uses fresh uv/Python caches. It checks
@@ -395,8 +410,17 @@ First preparation may download Python/dependencies. `--offline` uses exact cache
 content and fails when required assets are missing. Native arm64 and x86_64 under
 Rosetta were exercised on macOS 14.8.5. Physical Intel, the macOS 12 minimum,
 independent desktop MCP clients and remote CI/publication remain explicit release
-gates in the acceptance report. Linux/Windows, PostgreSQL, multiple instances,
+gates in the [testing guide](docs/testing.md). Linux/Windows, PostgreSQL, multiple instances,
 artifact storage and full business audit providers are outside this version.
+
+## Documentation
+
+- [Architecture](docs/architecture.md): ownership, packages, lifecycle and data contracts.
+- [Authentication](docs/authentication.md): access policy, scopes and recovery.
+- [Dependency diagnostics](docs/dependency-graph.md): status and operation impact.
+- [Glossary](docs/glossary.md): shared platform terminology.
+- [Testing](docs/testing.md) and [CI](docs/ci.md): reproducible validation and release gates.
+- [Changelog](CHANGELOG.md): development version changes.
 
 ## License
 

@@ -19,6 +19,9 @@ __pycache__/
 *.log
 .DS_Store
 
+/.coverage
+/htmlcov/
+
 # Local working documents, issue state, and development worktrees.
 /.local/
 /.issues/

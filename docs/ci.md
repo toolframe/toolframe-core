@@ -139,3 +139,10 @@ python3.14 scripts/ci/check-release.py --ref refs/tags/v0.5.2
    **Publish Python distribution** at that tag, initially with `testpypi`.
    Use a tag containing these workflow files. A failed/repeated upload is not
    silently ignored; package indexes do not permit replacing published files.
+
+No GitHub repository, publisher, environment, tag, release, or account setting is
+created by the local validator. Unsigned launcher artifacts are preparation for
+release review, not evidence of Apple signing/notarization or distribution on all
+supported machines. Native arm64, Intel under Rosetta, physical Intel, macOS 12,
+and GitHub-hosted execution must be reported separately. Linux/Windows application
+support is outside this launcher route. See the [testing guide](testing.md) for integration and release checks.
