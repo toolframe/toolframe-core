@@ -6,6 +6,13 @@ build-backend = "hatchling.build"
 name = "toolframe-core"
 version = "0.5.2"
 description = "Persistent control host for isolated Toolframe plugins"
+readme = "README.md"
+license = "Apache-2.0 AND MIT"
+license-files = [
+  "LICENSE", "NOTICE",
+  "src/toolframe_core/bundled_skills/toolframe-plugin-design/LICENSE",
+  "src/toolframe_core/bundled_skills/toolframe-plugin-design/assets/sample-plugin/LICENSE",
+]
 requires-python = ">=3.14"
 dependencies = [
   "toolframe-sdk==0.2.0", "fastapi-cordis==0.2.0", "fastapi==0.135.2",

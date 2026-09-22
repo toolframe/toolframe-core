@@ -52,7 +52,7 @@ def test_cli_defaults_and_json_are_local(tmp_path, monkeypatch, capsys, json_pos
         "status": "created",
     }
     assert sorted(path.name for path in home.iterdir()) == ["plugins"]
-    assert len(inventory(home)) == 7
+    assert len(inventory(home)) == 8
 
 
 def test_cli_exact_relative_output_and_text_preserve_application(
@@ -239,6 +239,11 @@ def test_names_resources_and_business_example_remain_consistent(
         "toolframe-a--b-plugin" if identifier == "a--b-" else f"toolframe-{identifier}"
     )
     assert project["name"] == expected_package
+    assert project["license"] == "MIT"
+    assert project["license-files"] == ["LICENSE"]
+    assert (source / "LICENSE").read_bytes() == bundled_skill().joinpath(
+        "assets/sample-plugin/LICENSE"
+    ).read_bytes()
     assert module == expected_package.replace("-", "_")
     assert project["entry-points"]["toolframe.plugins"] == {
         identifier: f"{module}.plugin:plugin"

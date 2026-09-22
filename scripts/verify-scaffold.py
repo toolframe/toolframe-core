@@ -77,7 +77,8 @@ def main():
         "status": "created",
     }
     assert sorted(path.name for path in home.iterdir()) == ["plugins"]
-    assert len(inventory(source)) == 7
+    assert len(inventory(source)) == 8
+    assert (source / "LICENSE").read_text().startswith("MIT License\n")
     custom = root / "custom/source"
     text = run(
         "--offline",

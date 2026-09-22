@@ -1,0 +1,14 @@
+toolframe-core
+Copyright 2026 byfb
+
+Toolframe Core and its Rust launcher are licensed under the Apache License,
+Version 2.0, except for the following separately licensed material:
+
+The plugin authoring guide and templates under
+src/toolframe_core/bundled_skills/toolframe-plugin-design/ are licensed under
+the MIT License. See that directory's LICENSE. The sample-plugin template
+also carries its own MIT LICENSE so generated plugins retain the notice.
+
+Distribution archives include both Apache-2.0 and MIT material. Their combined
+license expression is Apache-2.0 AND MIT; each license applies to its respective
+files. This is not a choice of license for the Core implementation.
