@@ -8,6 +8,20 @@ from toolframe_core.packages import Packages, snapshot
 from toolframe_core.state import CoreState
 
 
+def test_private_keys_are_not_regenerated_for_an_existing_remote_store(tmp_path):
+    from types import SimpleNamespace
+
+    from toolframe_core.access import Access
+
+    access = Access(SimpleNamespace(home=tmp_path))
+    definition = SimpleNamespace(id="auth", private_secrets=("password-lookup",))
+    with pytest.raises(PluginError, match="Restore the plugin private key"):
+        access.private_secrets(definition, store_exists=True)
+    assert not (tmp_path / ".toolframe/secrets/auth/password-lookup.key").exists()
+    first = access.private_secrets(definition, store_exists=False)
+    assert access.private_secrets(definition, store_exists=True) == first
+
+
 def test_configuration_cas_and_exclusive_host(tmp_path):
     config = ConfigFile(tmp_path)
     config.initialize()
@@ -35,8 +49,14 @@ def test_snapshot_tracks_content_and_excludes_runtime_data(tmp_path):
     (source / "plugin.py").write_text("version = 1")
     (source / "data").mkdir()
     (source / "data/private.sqlite").write_text("private")
+    (source / ".local").mkdir()
+    (source / ".local/runtime.env").write_text("private runtime credentials")
+    (source / ".worktrees").mkdir()
+    (source / ".worktrees/feature").symlink_to(tmp_path)
     captured, first = snapshot(source, snapshots)
     assert not (captured / "data").exists()
+    assert not (captured / ".local").exists()
+    assert not (captured / ".worktrees").exists()
     (source / "plugin.py").write_text("version = 2")
     _, second = snapshot(source, snapshots)
     assert first != second
@@ -79,7 +99,7 @@ build-backend = "hatchling.build"
 name = "toolframe-fixture"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = ["toolframe-sdk==0.2.0"]
+dependencies = ["toolframe-sdk==0.3.0"]
 [project.entry-points."toolframe.plugins"]
 fixture = "fixture:plugin"
 [tool.hatch.build.targets.wheel]

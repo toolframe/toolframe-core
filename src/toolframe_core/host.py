@@ -917,7 +917,15 @@ class Host:
         self.state.set_meta("worker_owners", self.worker_owners)
         self.record(runtime, "starting")
         await runtime.worker.request("runtime.describe")
-        private_secrets = self.access.private_secrets(definition)
+        store_exists = None
+        if definition.private_secrets and definition.store:
+            observed_store = await self.admin(
+                self._storage_runtime(name), "inspect", {"owner": name}
+            )
+            store_exists = observed_store["exists"]
+        private_secrets = self.access.private_secrets(
+            definition, store_exists=store_exists
+        )
         if definition.store:
             await self.change_schema(
                 self._storage_runtime(name),

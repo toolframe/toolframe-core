@@ -45,7 +45,7 @@ dependencies. This is not a fully offline cold-start distribution.
 
 Plain `init` still creates an empty application. Bundling makes plugins available;
 the chosen composition controls installation and activation. The default build
-also writes `dist/toolframe-0.5.2-standard-aarch64-apple-darwin` (or the selected
+also writes `dist/toolframe-0.5.3-standard-aarch64-apple-darwin` (or the selected
 target's equivalent). `--bundle core` builds the smaller three-wheel variant.
 
 The commands below use `toolframe` for the built executable. Pass `--home PATH`
@@ -97,7 +97,7 @@ address (it creates and stops a separate temporary application):
 
 ```sh
 uv run python scripts/verify-network.py \
-  --binary dist/toolframe-0.5.2-standard-aarch64-apple-darwin \
+  --binary dist/toolframe-0.5.3-standard-aarch64-apple-darwin \
   --address SERVER_LAN_IP --output build/lan-access.json
 ```
 
@@ -258,11 +258,12 @@ filename override the bundled copy. Bundle cache paths are not written into
 reload. Watch does not enable disabled or manually stopped plugins, migrate
 existing data, force termination or restart core.
 
-SQLite storage is a provider. Each business plugin receives a managed SQL and
-transaction client for its own retained `data/plugins/<id>/data.sqlite`. Plugins
-access another owner's data through its public business service. No raw database
-path or connection is supplied. This is ownership isolation for trusted local
-plugins, not an operating-system sandbox.
+Business storage is a replaceable provider. Each plugin receives a managed SQL
+and transaction client for its retained store. SQLite stores it at
+`data/plugins/<id>/data.sqlite`; the PostgreSQL provider uses a plugin-owned schema
+in the application database. Plugins access another owner's data through its
+public business service. No raw connection is supplied through the SDK client.
+Plugins remain trusted Python code, with access to their inherited environment.
 
 ```sh
 toolframe --home ./example migrate plan plugin-id
@@ -347,12 +348,13 @@ the exit code.
 | --- | --- |
 | `toolframe-core` | Persistent FastAPI/Cordis control host, gateway and thin Rust launcher. |
 | `toolframe-sdk` | Public definitions, worker protocol, services, resources and scoped clients. |
-| `toolframe-storage-sqlite` | Owner databases, SQL authorization, transactions, receipts and migrations. |
+| `toolframe-storage-sqlite` | Local owner databases, SQL authorization, transactions, receipts and migrations. |
+| `toolframe-storage-postgres` | External plugin stores, provisioning, restricted roles, migrations and database backups. |
 | `toolframe-streamlit-dashboard` | Native Streamlit pages, shared navigation and management UI. |
 | `toolframe-fastmcp` | MCP tools and Streamable HTTP transport. |
 | `toolframe-llms-txt` | Index composition and explicitly packaged Markdown assets. |
 | `toolframe-demo-entry-register` | Ordinary business service, page, read-only tool, docs and template. |
-| `toolframe-auth` | Password grants, sessions and authorization using its managed SQLite store. |
+| `toolframe-auth` | Password grants, sessions and authorization using its managed store. |
 | `toolframe-dashboard-auth` | Password login and scoped password-management page. |
 
 Core/SDK import no presentation provider. Workers have separate locked environments;

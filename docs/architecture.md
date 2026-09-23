@@ -13,7 +13,7 @@ Python code; process separation provides lifecycle and dependency isolation.
 | Core | Composition, package capture, worker supervision, dependency graph, gateway, core SQLite and durable management operations. |
 | fastapi-cordis | In-process dependency lifecycle, service leases, blocking and cleanup, connected to workers by Core's adapter. |
 | SDK | Public plugin definitions, worker protocol, service proxies, resource declarations, page bridge and scoped storage clients. |
-| SQLite provider | Business stores, SQL transactions, migration history and mutation receipts. |
+| Storage provider | Plugin-owned stores, SQL transactions, migration history and mutation receipts. |
 | Dashboard provider | Shared Streamlit environment, navigation, page sessions and management presentation. |
 | FastMCP provider | MCP tool adapters and Streamable HTTP sessions. |
 | llms.txt provider | Composed index and explicitly declared package documents. |
@@ -96,7 +96,8 @@ restart Core. Core, interpreter and incompatible protocol changes require restar
 ## Data ownership
 
 Each application has `data/core.sqlite`; each persistent business owner has a
-retained `data/plugins/<plugin-id>/data.sqlite`. Identity follows the stable owner,
+retained provider-managed store. SQLite uses `data/plugins/<plugin-id>/data.sqlite`;
+PostgreSQL uses a schema in an application-specific database. Identity follows the stable owner,
 not its package version or worker generation. Disable and uninstall retain data.
 Other plugins access it through the owner's public service.
 
@@ -105,7 +106,7 @@ transactions. Transaction identity is bound to owner, generation and admitted
 call. Lost workers or failed transactions roll back uncommitted work. Mutation
 receipts help distinguish a committed write from a lost acknowledgement; unknown
 outcomes must not be replayed blindly. Cross-store atomic transactions and general
-SQLite-to-PostgreSQL portability are outside this contract.
+translation of arbitrary SQLite SQL into PostgreSQL is outside this contract.
 
 A new empty store can initialize its declared schema. Existing data needs an
 explicit migration plan bound to the candidate and immutable SQL checksums, a
@@ -156,3 +157,16 @@ canonical origin checks; MCP Auth consumes its optional token-verification
 service. Business implementations remain scope-based.
 [OIDC authentication](oidc-authentication.md) describes configuration and routes;
 [ADR 0008](adr/0008-shared-oidc-authentication.md) records ownership and tradeoffs.
+
+## External plugin storage
+
+Core 0.5.3 and SDK 0.3 allow a storage provider to select explicit PostgreSQL
+migration SQL. Core asks the selected provider whether a plugin store is already
+initialized before generating private keys. If an initialized store's retained
+key is missing, activation requires restoring the key. This works for remote
+stores without relying on a local `data.sqlite` file.
+
+Core's own journal remains `data/core.sqlite`; private keys and package artifacts
+remain in the application home. Runtime database credentials can be injected as
+environment variables inherited by trusted plugin workers. Selecting an external
+storage provider does not provide multiple-Core coordination or stateless hosts.

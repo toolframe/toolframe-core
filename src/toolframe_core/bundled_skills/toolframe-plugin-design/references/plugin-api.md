@@ -1,6 +1,6 @@
 # Public plugin contract
 
-Target: `toolframe-sdk==0.2.0`, core 0.3, Python 3.14. Use this packaged reference
+Target: `toolframe-sdk==0.3.0`, core 0.3, Python 3.14. Use this packaged reference
 and the starter when the source workspace is unavailable. If the installed SDK
 version differs, inspect its public definitions before adapting these examples.
 

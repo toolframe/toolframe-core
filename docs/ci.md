@@ -117,7 +117,7 @@ Static checks and the publication gate can be repeated separately:
 ```sh
 actionlint
 bash -n scripts/build-release.sh scripts/dev-wheelhouse.sh
-python3.14 scripts/ci/check-release.py --ref refs/tags/v0.5.2
+python3.14 scripts/ci/check-release.py --ref refs/tags/v0.5.3
 ```
 
 ## External publication setup
@@ -132,12 +132,12 @@ python3.14 scripts/ci/check-release.py --ref refs/tags/v0.5.2
    `toolframe-core`, workflow filename `publish.yml`, and matching environment
    (`testpypi` or `pypi`). Follow the
    [PyPI Trusted Publishing instructions](https://docs.pypi.org/trusted-publishers/using-a-publisher/).
-4. Ensure `toolframe-sdk==0.2.0` and `fastapi-cordis==0.2.0` are available to
+4. Ensure `toolframe-sdk==0.3.0` and `fastapi-cordis==0.2.0` are available to
    consumers on the intended package index. Local pinned wheels prove the
    distribution's installation; they do not publish those dependency packages.
    TestPyPI may not contain every public dependency, so a TestPyPI install needs
    an explicit, carefully selected dependency source.
-5. Push the matching version tag (currently `v0.5.2`) and manually run
+5. Push the matching version tag (currently `v0.5.3`) and manually run
    **Publish Python distribution** at that tag, initially with `testpypi`.
    Use a tag containing these workflow files. A failed/repeated upload is not
    silently ignored; package indexes do not permit replacing published files.

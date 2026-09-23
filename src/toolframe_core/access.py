@@ -434,7 +434,7 @@ class Access:
             result["access"] = self.mode()
             return result
 
-    def private_secrets(self, definition):
+    def private_secrets(self, definition, *, store_exists=None):
         result = {}
         for name in definition.private_secrets:
             path = self.host.home / ".toolframe/secrets" / definition.id / f"{name}.key"
@@ -444,9 +444,12 @@ class Access:
                     "Private key must be an owner-controlled regular file",
                 )
             if not path.exists():
-                if (
-                    self.host.home / "data/plugins" / definition.id / "data.sqlite"
-                ).exists():
+                if store_exists or (
+                    store_exists is None
+                    and (
+                        self.host.home / "data/plugins" / definition.id / "data.sqlite"
+                    ).exists()
+                ):
                     raise PluginError(
                         "secret_missing",
                         "Restore the plugin private key from the application backup",
