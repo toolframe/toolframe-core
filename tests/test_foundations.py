@@ -180,3 +180,26 @@ async def test_git_branch_wheel_index_and_offline_cached_resolution(tmp_path):
     ] == indexed["artifact_hash"]
     with pytest.raises(PluginError, match="Unknown local source"):
         await package.capture(str(source))
+
+
+async def test_external_state_rejects_scratch_validation_before_worker_start(tmp_path):
+    from types import SimpleNamespace
+
+    from toolframe_sdk import AuthorizationSpec, PluginDefinition
+
+    from toolframe_core.host import Host
+
+    definition = PluginDefinition(
+        id="external-storage",
+        kind="provider",
+        provider_kind="storage",
+        factory="external:Provider",
+        authorization=AuthorizationSpec(),
+        runtime_validation="separate_application",
+    )
+    candidate = {"definition": definition.model_dump()}
+    host = SimpleNamespace(
+        selected=dict, composition=SimpleNamespace(bindings={})
+    )
+    with pytest.raises(PluginError, match="separately provisioned test application"):
+        await Host.runtime_validate(host, "external-storage", candidate)

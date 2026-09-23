@@ -1904,16 +1904,25 @@ class Host:
     async def runtime_validate(self, name, candidate):
         import tempfile
 
+        proposed = {**self.selected(), name: candidate}
+        graph = Graph(proposed, self.composition.bindings)
+        if any(
+            definition.runtime_validation == "separate_application"
+            for definition in graph.definitions.values()
+        ):
+            raise PluginError(
+                "runtime_validation_unsupported",
+                "This composition requires a separately provisioned test application; use preflight validation on the live application",
+            )
         with tempfile.TemporaryDirectory(prefix="toolframe-runtime-") as temporary:
             home = Path(temporary)
             composition = self.composition.model_copy(deep=True)
+            composition.application.id = str(uuid.uuid4())
             composition.plugins[name].enabled = True
             atomic_write(
                 home / "toolframe.toml", tomlkit.dumps(composition.model_dump())
             )
             scratch = Host(home, scratch=True)
-            proposed = self.selected()
-            proposed[name] = candidate
             cloned = copy.deepcopy(proposed)
             for item in cloned.values():
                 item["artifact"] = str(self.home / item["artifact"])

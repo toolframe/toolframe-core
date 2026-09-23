@@ -170,3 +170,10 @@ Core's own journal remains `data/core.sqlite`; private keys and package artifact
 remain in the application home. Runtime database credentials can be injected as
 environment variables inherited by trusted plugin workers. Selecting an external
 storage provider does not provide multiple-Core coordination or stateless hosts.
+
+A plugin can declare `runtime_validation="separate_application"` when an isolated
+local directory cannot isolate its external state. Core rejects optional scratch
+runtime validation for that composition before starting workers; ordinary
+preflight remains available. Scratch applications also receive a distinct
+application ID. PostgreSQL runtime tests require a separately provisioned database
+and application environment.
