@@ -425,10 +425,11 @@ content and fails when required assets are missing. Native arm64 and x86_64 unde
 Rosetta were exercised on macOS 14.8.5. Physical Intel, the macOS 12 minimum,
 independent desktop MCP clients and remote CI/publication remain explicit release
 gates in the [testing guide](docs/testing.md). Linux/Windows, PostgreSQL, multiple instances,
-artifact storage and full business audit providers are outside this version.
+full business audit providers are outside this version.
 
 ## Documentation
 
+- [Object storage](docs/object-storage.md): local/S3 binary files and Image Gallery.
 - [Architecture](docs/architecture.md): ownership, packages, lifecycle and data contracts.
 - [Authentication](docs/authentication.md): access policy, scopes and recovery.
 - [Dependency diagnostics](docs/dependency-graph.md): status and operation impact.

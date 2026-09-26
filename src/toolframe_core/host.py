@@ -1057,6 +1057,8 @@ class Host:
                 "private_secrets": private_secrets,
                 "state_directory": str(self.home / "data/plugins")
                 if definition.provider_kind == "storage"
+                else str(self.home / "data/objects" / name)
+                if definition.provider_kind == "object-store"
                 else None,
             },
         )
