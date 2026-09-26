@@ -231,7 +231,7 @@ class McpAccess:
                 self.host.composition, self.host.revision = self.host.config.edit(
                     params.get("expected_revision"), edit
                 )
-                self.host.write_lock()
+                (await self.host.write_lock())
             return self.status()
         actor = await self.host.access.admit(
             identity,

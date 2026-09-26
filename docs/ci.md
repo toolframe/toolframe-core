@@ -148,3 +148,9 @@ release review, not evidence of Apple signing/notarization or distribution on al
 supported machines. Native arm64, Intel under Rosetta, physical Intel, macOS 12,
 and GitHub-hosted execution must be reported separately. Linux/Windows application
 support is outside this launcher route. See the [testing guide](testing.md) for integration and release checks.
+
+The PostgreSQL job provisions an isolated PostgreSQL 16 service and runs
+`validate.py --checks postgres`. It installs the optional driver and requires the
+Core state contract/failure suite; credentials remain in the test environment and
+are omitted from evidence. SQLite/distribution and launcher jobs retain their
+independent checks. Use a separate `UV_CACHE_DIR` for simultaneous local checks.

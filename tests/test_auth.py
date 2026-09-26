@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 async def operate(host, action, **params):
-    result = await host.wait_operation(host.submit(action, params)["id"])
+    result = await host.wait_operation((await host.submit(action, params))["id"])
     assert result["status"] == "succeeded", result.get("error")
     return result
 
@@ -33,7 +33,7 @@ async def app_host(tmp_path):
     composition.packages.find_links = [str(ROOT / "toolframe-sdk/dist")]
     composition.runtime.health_interval = 0.2
     atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
-    host = Host(tmp_path)
+    host = await Host.create(tmp_path)
     await host.start()
     try:
         for repo in (
@@ -106,7 +106,10 @@ async def test_public_default_protected_scopes_public_api_and_recovery(app_host)
             json={"password": "wrong"},
             headers={"Accept": "application/json"},
         )
-        assert invalid.status_code == 401 and host.access.mode()["mode"] == "protected"
+        assert (
+            invalid.status_code == 401
+            and (await host.access.mode())["mode"] == "protected"
+        )
         login = await remote.post(
             "/_toolframe/auth/login",
             json={"password": "test-password-read"},
@@ -152,7 +155,7 @@ async def test_public_default_protected_scopes_public_api_and_recovery(app_host)
             Identity(local=True), "revoke", {"id": record["credential"]["id"]}
         )
         assert (await remote.post(base + "list_entries", json={})).status_code == 401
-        assert host.access.mode()["mode"] == "protected"
+        assert (await host.access.mode())["mode"] == "protected"
         assert (await remote.post(public + "list_entries", json={})).status_code == 200
 
         before = host.config.read()[0].access.mode
@@ -167,7 +170,7 @@ async def test_public_default_protected_scopes_public_api_and_recovery(app_host)
         assert (await remote.get("/_toolframe/v1/status")).status_code == 401
         assert host.config.read()[0].access.mode == before == "protected"
         await operate(host, "enable", id="auth")
-        assert host.access.mode()["mode"] == "protected"
+        assert (await host.access.mode())["mode"] == "protected"
         assert (await remote.post(base + "list_entries", json={})).status_code == 401
 
 
@@ -264,7 +267,7 @@ async def test_reload_sessions_secrets_and_normal_transition_do_not_open(app_hos
 
     async def observe():
         while running:
-            observed.append(host.access.mode()["mode"])
+            observed.append((await host.access.mode())["mode"])
             await asyncio.sleep(0.01)
 
     task = asyncio.create_task(observe())
@@ -279,10 +282,10 @@ async def test_reload_sessions_secrets_and_normal_transition_do_not_open(app_hos
         await host.access.admit(identity, ["entry-register.read"])
     ).kind == "password"
     assert "test-password-read" not in json.dumps(
-        host.status()
-    ) + host.config.path.read_text() + json.dumps(host.state.operations())
-    assert login["token"] not in json.dumps(host.status()) + json.dumps(
-        host.state.operations()
+        await host.status()
+    ) + host.config.path.read_text() + json.dumps(await host.state.operations())
+    assert login["token"] not in json.dumps(await host.status()) + json.dumps(
+        await host.state.operations()
     )
     # A crashed verifier selects fallback, then reload proves process-group
     # cleanup and restores protection without changing business workers/data.
@@ -290,9 +293,9 @@ async def test_reload_sessions_secrets_and_normal_transition_do_not_open(app_hos
     business_pid = host.runtimes["entry-register"].worker.pid
     auth_worker.process.kill()
     await auth_worker.process.wait()
-    assert host.access.mode()["reason"] == "auth_unavailable"
+    assert (await host.access.mode())["reason"] == "auth_unavailable"
     await operate(host, "reload", id="auth")
-    assert host.access.mode()["mode"] == "protected"
+    assert (await host.access.mode())["mode"] == "protected"
     assert host.runtimes["entry-register"].worker.pid == business_pid
     assert key.read_bytes() == before
     assert (
@@ -300,10 +303,12 @@ async def test_reload_sessions_secrets_and_normal_transition_do_not_open(app_hos
     ).kind == "password"
     # A missing retained key is an explicit activation failure; it is never silently replaced.
     key.unlink()
-    result = await host.wait_operation(host.submit("reload", {"id": "auth"})["id"])
+    result = await host.wait_operation(
+        (await host.submit("reload", {"id": "auth"}))["id"]
+    )
     assert result["status"] != "succeeded"
     assert not key.exists()
-    assert host.access.mode()["reason"] == "auth_unavailable"
+    assert (await host.access.mode())["reason"] == "auth_unavailable"
 
 
 async def test_queued_management_rechecks_revocation_and_delegation_uses_own_grant(
@@ -339,7 +344,9 @@ async def test_queued_management_rechecks_revocation_and_delegation_uses_own_gra
             },
         )
     async with host.mutation:
-        operation = host.submit("disable", {"id": "entry-register"}, identity=identity)
+        operation = await host.submit(
+            "disable", {"id": "entry-register"}, identity=identity
+        )
         await host.access.auth(
             "revoke",
             {"id": record["credential"]["id"]},
@@ -358,12 +365,12 @@ async def test_verifier_fault_falls_back_but_expected_denials_do_not(
     for password in (None, [], "wrong", "\ud800" * 12):
         with pytest.raises(PluginError):
             await host.access.login(password, "peer")
-        assert host.access.mode()["mode"] == "protected"
+        assert (await host.access.mode())["mode"] == "protected"
     host.access.login_attempts["limited-peer"] = (time.monotonic(), 10)
     with pytest.raises(PluginError) as limited:
         await host.access.login("test-password-read", "limited-peer")
     assert limited.value.code == "rate_limited"
-    assert host.access.mode()["mode"] == "protected"
+    assert (await host.access.mode())["mode"] == "protected"
     original = host.call_service
 
     async def broken(owner, service, method, params, **kwargs):
@@ -375,7 +382,7 @@ async def test_verifier_fault_falls_back_but_expected_denials_do_not(
     with pytest.raises(PluginError) as fault:
         await host.access.login("test-password-read", "peer")
     assert fault.value.code == "auth_unavailable"
-    assert host.access.mode()["reason"] == "auth_unavailable"
+    assert (await host.access.mode())["reason"] == "auth_unavailable"
     assert not host.healthy_runtime("auth")
     assert (await host.access.presentation(Identity()))["mode"] == "public"
     with pytest.raises(PluginError):
@@ -395,7 +402,7 @@ async def test_first_password_policy_write_failure_returns_recoverable_secret(
     assert result["credential"]["id"] and len(result["password"]) >= 32
     assert result["policy_error"] and result["access"]["mode"] == "public"
     assert host.composition.access.mode == "public"
-    assert result["password"] not in json.dumps(host.state.operations())
+    assert result["password"] not in json.dumps(await host.state.operations())
     assert result["password"] not in host.config.path.read_text()
     login = await host.access.login(result["password"], "recovery-peer")
     assert login["principal"]["credential_id"] == result["credential"]["id"]

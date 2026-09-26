@@ -181,3 +181,10 @@ for one client, issuer, resource, scope set and expiry. A **Delegated Principal*
 is the short-lived admission identity derived from a local access token and its
 still-valid grant. Upstream identity tokens prove login; they do not grant app
 resource access.
+
+- **Core journal backend**: Core's own durable management-state implementation,
+  selected before plugin activation. SQLite and PostgreSQL implement the same
+  asynchronous interface; it is independent of a plugin storage provider.
+- **Core ownership marker**: The durable run/node identity paired with a
+  PostgreSQL session lock. Unclean release requires explicit recovery after
+  verifying the former Core and its workers have stopped.

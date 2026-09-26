@@ -294,9 +294,55 @@ def launcher_checks(root, core, output, target, env):
     )
 
 
+def postgres_checks(root, core, output, env):
+    if not os.environ.get("TOOLFRAME_CORE_TEST_ADMIN_DSN"):
+        raise RuntimeError(
+            "PostgreSQL validation requires TOOLFRAME_CORE_TEST_ADMIN_DSN"
+        )
+    run(
+        "uv",
+        "build",
+        "--no-sources",
+        "--wheel",
+        "--out-dir",
+        root / "workspace/toolframe-sdk/dist",
+        root / "workspace/toolframe-sdk",
+        cwd=core,
+        env=env,
+    )
+    run(
+        "uv",
+        "sync",
+        "--locked",
+        "--group",
+        "dev",
+        "--extra",
+        "postgres",
+        "--python",
+        PYTHON,
+        cwd=core,
+        env=env,
+    )
+    env = {
+        **env,
+        "TOOLFRAME_CORE_TEST_ADMIN_DSN": os.environ["TOOLFRAME_CORE_TEST_ADMIN_DSN"],
+    }
+    run(
+        "uv",
+        "run",
+        "--no-sync",
+        "python",
+        "scripts/ci/check-postgres.py",
+        cwd=core,
+        env=env,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--checks", choices=("python", "launcher"), required=True)
+    parser.add_argument(
+        "--checks", choices=("python", "launcher", "postgres"), required=True
+    )
     parser.add_argument(
         "--output", type=Path, required=True, help="A new evidence directory"
     )
@@ -356,6 +402,8 @@ def main():
     prepare_siblings(root, pins, args.source_root, args.repository_owner, env)
     if args.checks == "python":
         python_checks(root, core, output, env)
+    elif args.checks == "postgres":
+        postgres_checks(root, core, output, env)
     else:
         target = args.target or (
             "aarch64-apple-darwin"

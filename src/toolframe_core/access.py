@@ -135,7 +135,7 @@ class Access:
             (policy.dashboard_auth, "dashboard-auth"),
         )
 
-    def mode(self):
+    async def mode(self):
         host, policy = self.host, self.host.composition.access
         if policy.mode == "public":
             return {
@@ -147,7 +147,11 @@ class Access:
         for name, kind in self.chain():
             desired = host.composition.plugins.get(name)
             runtime = host.runtimes.get(name)
-            if not desired or not desired.enabled or host.state.plugin(name)["stopped"]:
+            if (
+                not desired
+                or not desired.enabled
+                or (await host.state.plugin(name))["stopped"]
+            ):
                 problems.append(f"{name}: disabled or not installed")
                 continue
             if runtime and self.failures.get(name) == runtime.generation:
@@ -175,7 +179,7 @@ class Access:
             "configured": "protected",
         }
 
-    def mark_failed(self, name):
+    async def mark_failed(self, name):
         runtime = self.host.runtimes.get(name)
         if not runtime:
             return
@@ -185,7 +189,11 @@ class Access:
             if active := self.host.runtimes.get(member):
                 active.admitted = False
                 self.host.gated.add(member)
-                self.host.record(active, "failed" if member == name else "blocked")
+                (
+                    await self.host.record(
+                        active, "failed" if member == name else "blocked"
+                    )
+                )
         self.host.health_publication_pending = True
 
     async def auth(self, method, params, *, principal=None):
@@ -221,12 +229,12 @@ class Access:
                 and (self.host.starting or name in self.host.transitioning)
             ):
                 raise
-            self.mark_failed(name)
+            (await self.mark_failed(name))
             raise PluginError(
                 "auth_unavailable", "Authentication provider failed"
             ) from None
         except Exception:  # noqa: BLE001 - verifier faults must select the explicit public fallback
-            self.mark_failed(name)
+            (await self.mark_failed(name))
             raise PluginError(
                 "auth_unavailable", "Authentication provider failed"
             ) from None
@@ -254,7 +262,7 @@ class Access:
                     raise
         if not effective:
             return actor
-        mode = self.mode()
+        mode = await self.mode()
         if mode["mode"] == "waiting":
             raise PluginError("auth_transition", "Access is preparing; retry shortly")
         if mode["mode"] == "public":
@@ -284,7 +292,7 @@ class Access:
                     "resolve", {"token": identity.session, "activity": True}
                 )
             except PluginError:
-                if self.mode()["mode"] != "public" or any(
+                if (await self.mode())["mode"] != "public" or any(
                     self.catalog().get(s, {}).get("category") == "system"
                     for s in scopes
                 ):
@@ -300,7 +308,7 @@ class Access:
             actor = Principal(kind="anonymous")
         catalog = self.catalog()
         return {
-            **self.mode(),
+            **(await self.mode()),
             "local_control": actor.kind == "local",
             "actor": actor.kind,
             "user_id": actor.user_id,
@@ -323,7 +331,7 @@ class Access:
         ):
             raise PluginError("rate_limited", "Too many login attempts; retry later")
         self.login_attempts[peer] = (start, count + 1)
-        if self.mode()["mode"] == "waiting":
+        if (await self.mode())["mode"] == "waiting":
             raise PluginError("auth_transition", "Access is preparing; retry shortly")
         self.login_slots += 1
         try:
@@ -391,8 +399,8 @@ class Access:
                 self.host.composition, self.host.revision = self.host.config.edit(
                     params.get("expected_revision"), edit
                 )
-                self.host.write_lock()
-            return self.mode()
+                (await self.host.write_lock())
+            return await self.mode()
         if action not in {"create", "list", "update", "revoke"}:
             raise PluginError("invalid_request", "Unknown password operation")
         actor = await self.admit(
@@ -424,14 +432,14 @@ class Access:
                     self.host.composition, self.host.revision = self.host.config.edit(
                         revision, protect
                     )
-                    self.host.write_lock()
+                    (await self.host.write_lock())
                 except PluginError, OSError, ValueError:
                     # Record was committed, so return its ID/one-time secret with an
                     # explicit recovery instruction instead of suggesting a blind retry.
                     result["policy_error"] = (
                         "Password created, but the policy update could not be confirmed. Refresh and explicitly confirm protected mode."
                     )
-            result["access"] = self.mode()
+            result["access"] = await self.mode()
             return result
 
     def private_secrets(self, definition, *, store_exists=None):

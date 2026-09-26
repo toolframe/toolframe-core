@@ -86,19 +86,14 @@ def test_serve_override_binds_and_records_endpoint_without_rewriting_toml(
     before = config.path.read_bytes()
     bindings = []
 
-    def serve(app, **kwargs):
-        bindings.append(kwargs)
+    async def serve(server):
+        bindings.append({"host": server.config.host})
+        app = server.config.app
+        async with app.router.lifespan_context(app):
+            endpoint = json.loads((tmp_path / ".toolframe/endpoint.json").read_text())
+            assert endpoint == {"host": "0.0.0.0", "port": 9876}
 
-        async def lifespan():
-            async with app.router.lifespan_context(app):
-                endpoint = json.loads(
-                    (tmp_path / ".toolframe/endpoint.json").read_text()
-                )
-                assert endpoint == {"host": "0.0.0.0", "port": 9876}
-
-        asyncio.run(lifespan())
-
-    monkeypatch.setattr(cli.uvicorn, "run", serve)
+    monkeypatch.setattr(cli.uvicorn.Server, "serve", serve)
     assert cli.main(["--home", str(tmp_path), "serve", "--host", "0.0.0.0"]) == 0
     assert bindings[0]["host"] == "0.0.0.0"
     assert config.path.read_bytes() == before
@@ -108,13 +103,13 @@ def test_serve_override_binds_and_records_endpoint_without_rewriting_toml(
 async def test_runtime_override_survives_composition_refresh(tmp_path):
     config = ConfigFile(tmp_path)
     config.initialize()
-    host = Host(tmp_path, listen_host="::")
+    host = await Host.create(tmp_path, listen_host="::")
     await host.start()
     try:
-        host.refresh()
+        (await host.refresh())
         assert host.listen_host == "::"
         assert host.composition.application.host == "127.0.0.1"
-        assert host.status()["configuration_error"] is None
+        assert (await host.status())["configuration_error"] is None
     finally:
         await host.close()
 
@@ -143,7 +138,7 @@ def test_host_admission(listener, authority, allowed):
 
 async def test_lan_http_auth_session_and_origin_checks(tmp_path, monkeypatch):
     ConfigFile(tmp_path).initialize(host="0.0.0.0")
-    host = Host(tmp_path)
+    host = await Host.create(tmp_path)
     await host.start()
     original_client = httpx.AsyncClient
 
@@ -226,9 +221,11 @@ async def test_lan_http_auth_session_and_origin_checks(tmp_path, monkeypatch):
         await host.close()
 
 
-def test_lan_websocket_keeps_auth_and_same_origin_validation(tmp_path, monkeypatch):
+async def test_lan_websocket_keeps_auth_and_same_origin_validation(
+    tmp_path, monkeypatch
+):
     ConfigFile(tmp_path).initialize(host="0.0.0.0")
-    host = Host(tmp_path)
+    host = await Host.create(tmp_path)
     connections = []
 
     class Upstream:
@@ -292,4 +289,4 @@ def test_lan_websocket_keeps_auth_and_same_origin_validation(tmp_path, monkeypat
         assert len(connections) == 1
         assert connections[0][1]["origin"] == "http://127.0.0.1:12345"
     finally:
-        host.state.close()
+        (await host.state.close())

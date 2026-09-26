@@ -5,7 +5,7 @@ from toolframe_sdk import PluginError
 
 from toolframe_core.config import ConfigFile, HostLock, PackageSettings, PluginRequest
 from toolframe_core.packages import Packages, snapshot
-from toolframe_core.state import CoreState
+from toolframe_core.state import SQLiteCoreState as CoreState
 
 
 def test_private_keys_are_not_regenerated_for_an_existing_remote_store(tmp_path):
@@ -198,8 +198,14 @@ async def test_external_state_rejects_scratch_validation_before_worker_start(tmp
         runtime_validation="separate_application",
     )
     candidate = {"definition": definition.model_dump()}
+    from unittest.mock import AsyncMock
+
+    from toolframe_core.state import StateSettings
+
     host = SimpleNamespace(
-        selected=dict, composition=SimpleNamespace(bindings={})
+        selected=AsyncMock(return_value={}),
+        composition=SimpleNamespace(bindings={}),
+        state=SimpleNamespace(settings=StateSettings()),
     )
     with pytest.raises(PluginError, match="separately provisioned test application"):
         await Host.runtime_validate(host, "external-storage", candidate)

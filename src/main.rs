@@ -59,7 +59,15 @@ async fn main() -> Result<()> {
         env::consts::OS,
         env::consts::ARCH
     );
-    fingerprint.update(b"toolframe-core==0.5.3;bootstrap3");
+    let postgres = env::var("TOOLFRAME_CORE_STATE_BACKEND").as_deref() == Ok("postgresql")
+        || forwarded.iter().any(|argument| argument == "state");
+    let core_requirement = if postgres {
+        "toolframe-core[postgres]==0.6.0"
+    } else {
+        "toolframe-core==0.6.0"
+    };
+    fingerprint.update(core_requirement.as_bytes());
+    fingerprint.update(b"bootstrap4");
     fingerprint.update(python_request.as_bytes());
     let bundles = bundle::extract(&root.join("bundles"), WHEELS)?;
     for (name, content) in WHEELS {
@@ -121,7 +129,11 @@ async fn main() -> Result<()> {
             }
         }
         if requirements.is_empty() {
-            requirements.push("toolframe-core==0.5.3".into());
+            requirements.push(core_requirement.into());
+        } else if postgres {
+            // The bundled Core wheel provides the distribution; the extra adds
+            // the driver and remains optional for ordinary SQLite bootstraps.
+            requirements.push(core_requirement.into());
         }
         let input = environment.join("requirements.in");
         fs::write(&input, requirements.join("\n") + "\n")?;

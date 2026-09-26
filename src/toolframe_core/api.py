@@ -87,6 +87,8 @@ def error_status(error):
         return 422
     if code in {
         "host_closing",
+        "core_state_unavailable",
+        "core_state_ownership_lost",
         "plugin_reloading",
         "dependency_unavailable",
         "presentation_unavailable",
@@ -130,9 +132,9 @@ def provider_for(host, path):
 def create_app(host, *, manage_lifespan=True):
     @asynccontextmanager
     async def lifespan(app):
-        if manage_lifespan:
-            await host.start(wait=False)
         try:
+            if manage_lifespan:
+                await host.start(wait=False)
             yield
         finally:
             if manage_lifespan:
@@ -330,12 +332,12 @@ def create_app(host, *, manage_lifespan=True):
     @app.get("/_toolframe/v1/status")
     async def status(request: Request):
         await require(request, "status")
-        return host.status()
+        return await host.status()
 
     @app.get("/_toolframe/v1/readiness")
     async def readiness(request: Request):
         await require(request, "readiness")
-        report = host.status()
+        report = await host.status()
         return JSONResponse(report, status_code=200 if report["ready"] else 503)
 
     @app.get("/_toolframe/v1/composition")
@@ -362,7 +364,7 @@ def create_app(host, *, manage_lifespan=True):
         await require(request, "operations")
         if request.query_params:
             return host.redact(
-                host.state.operation_page(
+                await host.state.operation_page(
                     {
                         "page": page if page is not None else 1,
                         "page_size": page_size,
@@ -374,16 +376,16 @@ def create_app(host, *, manage_lifespan=True):
                 )
             )
         # Preserve the existing bounded list response for clients without queries.
-        return host.redact(host.state.operations())
+        return host.redact(await host.state.operations())
 
     @app.get("/_toolframe/v1/operations/{identifier}")
     async def operation(identifier: str, request: Request):
         await require(request, "operation")
-        return host.redact(host.state.operation(identifier))
+        return host.redact(await host.state.operation(identifier))
 
     @app.post("/_toolframe/v1/operations/{identifier}/cancel")
     async def cancel(identifier: str, request: Request):
-        current = host.state.operation(identifier)
+        current = await host.state.operation(identifier)
         await require(request, current["kind"], current["request"], activity=True)
         if current["status"] not in ("queued", "running"):
             return {"id": identifier, "requested": False, "status": current["status"]}
@@ -395,7 +397,7 @@ def create_app(host, *, manage_lifespan=True):
     async def submit(request: Request, body: OperationRequest):
         await require(request, body.action, body.params)
         return host.redact(
-            host.submit(
+            await host.submit(
                 body.action,
                 body.params,
                 idempotency=request.headers.get("idempotency-key"),
@@ -409,7 +411,7 @@ def create_app(host, *, manage_lifespan=True):
     ):
         await require(request, action, {**body, "id": identifier})
         return host.redact(
-            host.submit(
+            await host.submit(
                 action,
                 {**body, "id": identifier},
                 idempotency=request.headers.get("idempotency-key"),
@@ -608,7 +610,7 @@ def create_app(host, *, manage_lifespan=True):
         except PluginError:
             await downstream.close(code=1008)
             return
-        initial_mode = host.access.mode()
+        initial_mode = await host.access.mode()
         url = address.replace("http://", "ws://", 1) + "/" + path
         if downstream.url.query:
             url += "?" + downstream.url.query
@@ -664,7 +666,7 @@ def create_app(host, *, manage_lifespan=True):
                             return
                         if (
                             not initial_actor.unrestricted
-                            and host.access.mode() != initial_mode
+                            and (await host.access.mode()) != initial_mode
                         ):
                             return
 

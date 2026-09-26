@@ -148,8 +148,8 @@ async def test_management_and_http_authentication_are_separate(mcp_host):
                 ).status_code == 401
         assert (
             created["token"]
-            not in json.dumps(host.status())
-            + json.dumps(host.state.operations())
+            not in json.dumps(await host.status())
+            + json.dumps(await host.state.operations())
             + host.config.path.read_text()
         )
         assert (
@@ -339,7 +339,7 @@ async def test_provider_failure_disable_reload_and_expiry_never_open_mcp(mcp_hos
     await host.close()
     from toolframe_core.host import Host
 
-    restarted = Host(host.home)
+    restarted = await Host.create(host.home)
     await restarted.start()
     try:
         assert restarted.composition.mcp_access.mode == "protected"

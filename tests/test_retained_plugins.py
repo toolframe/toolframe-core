@@ -43,7 +43,7 @@ async def test_pinned_plugin_survives_bundle_replacement(
         params = {} if action == "apply" else {"id": "retained"}
         if reviewed and action != "validate":
             revision = host.config.revision
-            pending = host.submit("plan", {"action": action, **params})
+            pending = await host.submit("plan", {"action": action, **params})
             plan = await host.wait_operation(pending["id"])
             assert plan["status"] == "succeeded", plan
             assert host.config.revision == revision
@@ -153,7 +153,7 @@ async def test_damaged_retained_wheel_does_not_enable_or_change_intent(
     source = fixture_source(tmp_path, "damaged")
     added = await operate(host, "add", source=str(source))
     assert added["status"] == "succeeded", added
-    candidate = host.state.candidate(added["result"]["candidate"])
+    candidate = await host.state.candidate(added["result"]["candidate"])
     wheel = host.home / candidate["artifact"]
     if damage == "modified":
         wheel.write_bytes(b"damaged wheel")

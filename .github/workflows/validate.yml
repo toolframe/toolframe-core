@@ -8,6 +8,48 @@ permissions:
 
 # Concurrency belongs to the caller: a reusable workflow must not cancel it.
 jobs:
+  postgres:
+    name: PostgreSQL Core journal
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.14-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TOOLFRAME_CORE_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      TOOLFRAME_REPOSITORY_OWNER: ${{ vars.TOOLFRAME_REPOSITORY_OWNER || github.repository_owner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14.7'
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.8'
+          enable-cache: false
+      - name: Verify both journals and PostgreSQL failure recovery
+        run: >-
+          python scripts/ci/validate.py --checks postgres --output build/ci-postgres
+          --repository-owner "$TOOLFRAME_REPOSITORY_OWNER"
+      - name: Save PostgreSQL validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: postgres-validation
+          path: |
+            build/ci-postgres/*.json
+            build/ci-postgres/workspace.txt
+          if-no-files-found: warn
   python:
     name: Python integration and distribution
     runs-on: macos-15

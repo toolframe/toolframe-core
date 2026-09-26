@@ -104,3 +104,16 @@ change the tool's bound.
 Use ordinary test fixtures for another data owner, required-service consumers,
 slow/failing workers and schema upgrades. Cross-owner SQL rejection verifies
 trusted-plugin ownership guards, not an operating-system sandbox.
+
+## PostgreSQL management journal
+
+The default suite exercises SQLite and skips database-backed Core cases without
+an isolated `TOOLFRAME_CORE_TEST_ADMIN_DSN`. To require real PostgreSQL validation,
+install the `postgres` extra and run `python scripts/ci/check-postgres.py`. The
+reusable workflow runs a separate PostgreSQL 16 service job. This check fails when
+its DSN or driver is absent; it covers both journal adapters, lost acknowledgements,
+cancellation, connection failure, ownership recovery and worker shutdown.
+
+Internal host tests construct hosts with `await Host.create(...)` and await journal
+and management methods. SQLite-only migration tests may inspect `SQLiteCoreState`
+directly; production callers use the asynchronous `CoreState` interface.

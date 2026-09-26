@@ -12,7 +12,7 @@ from toolframe_sdk import PluginError
 
 from toolframe_core.access import Identity
 from toolframe_core.api import create_app
-from toolframe_core.state import CoreState
+from toolframe_core.state import SQLiteCoreState as CoreState
 
 
 def test_v1_history_migration_retains_records_and_stable_sequence(tmp_path):
@@ -120,7 +120,11 @@ def test_invalid_history_queries_are_rejected(tmp_path, params):
 
 async def test_history_api_and_dashboard_bridge_are_read_only_and_authorized(host):
     for _ in range(65):
-        host.state.new_operation("reload", "retired", {"management_token": host.token})
+        (
+            await host.state.new_operation(
+                "reload", "retired", {"management_token": host.token}
+            )
+        )
     transport = httpx.ASGITransport(
         create_app(host, manage_lifespan=False), client=("192.168.0.9", 1200)
     )
@@ -149,7 +153,7 @@ async def test_history_api_and_dashboard_bridge_are_read_only_and_authorized(hos
     )
     host.runtimes[dashboard.name] = dashboard
     reference = host.access.register(Identity(local=True))
-    before = host.state.operations(limit=100)
+    before = await host.state.operations(limit=100)
     try:
         result = await host.worker_call(
             dashboard,
@@ -162,7 +166,7 @@ async def test_history_api_and_dashboard_bridge_are_read_only_and_authorized(hos
         )
         assert result == page
         assert host.token not in json.dumps(result)
-        assert host.state.operations(limit=100) == before
+        assert (await host.state.operations(limit=100)) == before
         with pytest.raises(PluginError):
             await host.worker_call(
                 dashboard,
@@ -176,12 +180,12 @@ async def test_history_api_and_dashboard_bridge_are_read_only_and_authorized(hos
 
 async def test_dependency_graph_tracks_installation_not_source_creation(host, tmp_path):
     source = fixture_source(tmp_path, "new-graph-plugin")
-    assert host.status()["dependency_graph"]["nodes"] == []
+    assert (await host.status())["dependency_graph"]["nodes"] == []
     added = await operate(host, "add", source=str(source))
     assert added["status"] == "succeeded", added
-    nodes = host.status()["dependency_graph"]["nodes"]
+    nodes = (await host.status())["dependency_graph"]["nodes"]
     assert nodes[0]["id"] == "new-graph-plugin" and nodes[0]["state"] == "disabled"
     assert (await operate(host, "enable", id="new-graph-plugin"))[
         "status"
     ] == "succeeded"
-    assert host.status()["dependency_graph"]["nodes"][0]["healthy"]
+    assert (await host.status())["dependency_graph"]["nodes"][0]["healthy"]

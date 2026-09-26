@@ -3,7 +3,16 @@ import signal
 import pytest
 from toolframe_sdk import PluginError
 
-from toolframe_core.process import group_exists, stop_group
+from toolframe_core.process import child_environment, group_exists, stop_group
+
+
+def test_core_database_credentials_are_not_inherited_by_workers(monkeypatch):
+    monkeypatch.setenv("TOOLFRAME_CORE_DATABASE_URL", "private-core-dsn")
+    monkeypatch.setenv("TOOLFRAME_CORE_SETUP_DSN", "private-admin-dsn")
+    monkeypatch.setenv("TOOLFRAME_POSTGRES_DSN", "plugin-dsn")
+    environment = child_environment()
+    assert not any(key.startswith("TOOLFRAME_CORE_") for key in environment)
+    assert environment["TOOLFRAME_POSTGRES_DSN"] == "plugin-dsn"
 
 
 @pytest.mark.parametrize("disappears", [True, False])

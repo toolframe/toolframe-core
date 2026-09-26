@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "toolframe-core"
-version = "0.5.3"
+version = "0.6.0"
 description = "Persistent control host for isolated Toolframe plugins"
 readme = "README.md"
 license = "Apache-2.0 AND MIT"
@@ -19,6 +19,9 @@ dependencies = [
   "uvicorn==0.42.0", "httpx>=0.28,<1", "websockets>=15,<17",
   "tomlkit>=0.13,<1", "packaging>=25", "watchfiles>=1,<2", "pyyaml>=6,<7",
 ]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.3,<4"]
 
 [project.scripts]
 toolframe-core = "toolframe_core.cli:main"

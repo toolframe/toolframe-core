@@ -223,7 +223,10 @@ async def test_discovery_gateway_and_optional_oidc_failure_preserve_keys(
             "/_toolframe/oidc/callback/fixture?state=invalid&code=invalid",
             headers={"sec-fetch-site": "cross-site"},
         )
-        assert invalid.status_code == 422 and host.access.mode()["mode"] == "protected"
+        assert (
+            invalid.status_code == 422
+            and (await host.access.mode())["mode"] == "protected"
+        )
         assert (
             await browser.post(
                 "/oauth/register",
@@ -241,6 +244,6 @@ async def test_discovery_gateway_and_optional_oidc_failure_preserve_keys(
     assert (await host.probe(host.runtimes["mcp-auth"]))["runtime"] == "ready"
     with pytest.raises(PluginError):
         await host.mcp_access.auth("verify", {"token": "tf_oauth_" + "a" * 43})
-    host.access.mark_failed("auth")
-    assert host.access.mode()["mode"] == "waiting"
+    await host.access.mark_failed("auth")
+    assert (await host.access.mode())["mode"] == "waiting"
     await asyncio.sleep(0)

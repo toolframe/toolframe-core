@@ -34,7 +34,7 @@ from toolframe_sdk import (
 from toolframe_sdk import __version__ as SDK_VERSION
 
 from .config import atomic_write
-from .process import WorkerProcess
+from .process import WorkerProcess, child_environment
 
 IGNORED = {
     ".git",
@@ -60,6 +60,7 @@ async def command(*arguments, cwd=None, timeout=300):
     process = await asyncio.create_subprocess_exec(
         *map(str, arguments),
         cwd=cwd,
+        env=child_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,

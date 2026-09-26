@@ -2,13 +2,19 @@
 
 Toolframe is a persistent local control host for replaceable Python plugins.
 Core owns composition, immutable package environments, worker lifecycles,
-management operations and `data/core.sqlite`. Dashboard, MCP, llms.txt, business
+management operations and a durable Core journal. SQLite (`data/core.sqlite`) is
+the default; Core 0.6 also supports a dedicated PostgreSQL database through runtime
+environment configuration. Dashboard, MCP, llms.txt, business
 storage and Entry Register are independently packaged plugins.
 
 The standard executable can start an empty host or an Entry Register application
 with Dashboard, MCP, documentation, storage and access-password plugins.
 Business data survives plugin replacement and removal. Plugins run trusted Python
 code; worker isolation is not a sandbox for untrusted packages.
+
+For PostgreSQL provisioning, startup and recovery, see
+[PostgreSQL Core state](docs/postgresql-state.md). Both backends run one Core per
+application and retain configuration, private keys and artifacts in its home.
 
 ## Run the local workspace
 
@@ -45,7 +51,7 @@ dependencies. This is not a fully offline cold-start distribution.
 
 Plain `init` still creates an empty application. Bundling makes plugins available;
 the chosen composition controls installation and activation. The default build
-also writes `dist/toolframe-0.5.3-standard-aarch64-apple-darwin` (or the selected
+also writes `dist/toolframe-0.6.0-standard-aarch64-apple-darwin` (or the selected
 target's equivalent). `--bundle core` builds the smaller three-wheel variant.
 
 The commands below use `toolframe` for the built executable. Pass `--home PATH`
@@ -97,7 +103,7 @@ address (it creates and stops a separate temporary application):
 
 ```sh
 uv run python scripts/verify-network.py \
-  --binary dist/toolframe-0.5.3-standard-aarch64-apple-darwin \
+  --binary dist/toolframe-0.6.0-standard-aarch64-apple-darwin \
   --address SERVER_LAN_IP --output build/lan-access.json
 ```
 

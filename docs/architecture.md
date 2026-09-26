@@ -10,7 +10,7 @@ Python code; process separation provides lifecycle and dependency isolation.
 | Component | Owns |
 | --- | --- |
 | Rust launcher | Runtime preparation, embedded wheels, architecture selection and invocation of the Python CLI. |
-| Core | Composition, package capture, worker supervision, dependency graph, gateway, core SQLite and durable management operations. |
+| Core | Composition, package capture, worker supervision, dependency graph, gateway, Core journal and durable management operations. |
 | fastapi-cordis | In-process dependency lifecycle, service leases, blocking and cleanup, connected to workers by Core's adapter. |
 | SDK | Public plugin definitions, worker protocol, service proxies, resource declarations, page bridge and scoped storage clients. |
 | Storage provider | Plugin-owned stores, SQL transactions, migration history and mutation receipts. |
@@ -35,7 +35,7 @@ presentation dependencies affect the corresponding entrance.
 
 `toolframe.toml` is the desired-state authority: sources, enabled intent,
 configuration and bindings. `toolframe.lock` records exact resolved artifacts and
-environments. Core SQLite stores candidates, observed generations, validation
+environments. The Core journal stores candidates, observed generations, validation
 results and operations. It does not override the composition file.
 
 A distribution exports one `toolframe.plugins` entry point and one stable plugin
@@ -95,11 +95,12 @@ restart Core. Core, interpreter and incompatible protocol changes require restar
 
 ## Data ownership
 
-Each application has `data/core.sqlite`; each persistent business owner has a
-retained provider-managed store. SQLite uses `data/plugins/<plugin-id>/data.sqlite`;
-PostgreSQL uses a schema in an application-specific database. Identity follows the stable owner,
-not its package version or worker generation. Disable and uninstall retain data.
-Other plugins access it through the owner's public service.
+Each application has a Core journal (SQLite by default, optionally a dedicated
+PostgreSQL database); each persistent business owner has a retained provider-managed
+store. SQLite uses `data/plugins/<plugin-id>/data.sqlite`; PostgreSQL uses a schema
+in an application-specific database. Identity follows the stable owner, not its
+package version or worker generation. Disable and uninstall retain data. Other
+plugins access it through the owner's public service.
 
 Scoped SQL clients provide parameterized operations and provider-owned
 transactions. Transaction identity is bound to owner, generation and admitted
@@ -166,10 +167,12 @@ initialized before generating private keys. If an initialized store's retained
 key is missing, activation requires restoring the key. This works for remote
 stores without relying on a local `data.sqlite` file.
 
-Core's own journal remains `data/core.sqlite`; private keys and package artifacts
-remain in the application home. Runtime database credentials can be injected as
-environment variables inherited by trusted plugin workers. Selecting an external
-storage provider does not provide multiple-Core coordination or stateless hosts.
+Core defaults to `data/core.sqlite`; Core 0.6 can select a dedicated PostgreSQL
+journal at bootstrap. Private keys and package artifacts remain in the application
+home. Plugin-storage credentials can be injected as environment variables inherited
+by trusted plugin workers; Core journal credentials are removed from those worker
+environments. Selecting an external storage provider does not provide multiple-Core
+coordination or stateless hosts.
 
 A plugin can declare `runtime_validation="separate_application"` when an isolated
 local directory cannot isolate its external state. Core rejects optional scratch
@@ -177,3 +180,7 @@ runtime validation for that composition before starting workers; ordinary
 preflight remains available. Scratch applications also receive a distinct
 application ID. PostgreSQL runtime tests require a separately provisioned database
 and application environment.
+
+Core journal backend selection, ownership recovery and backup requirements are
+described in [PostgreSQL Core state](postgresql-state.md) and its
+[architecture decision](adr/0009-replaceable-core-journal.md).

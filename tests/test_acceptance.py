@@ -16,8 +16,13 @@ from toolframe_core.config import atomic_write
 
 
 async def until(predicate, timeout=12):
+    import inspect
+
     async with asyncio.timeout(timeout):
-        while not predicate():
+        while True:
+            value = predicate()
+            if await value if inspect.isawaitable(value) else value:
+                return
             await asyncio.sleep(0.05)
 
 
@@ -70,7 +75,7 @@ async def test_reviewed_plan_is_immutable_and_rejects_stale_runtime(host, tmp_pa
     assert updated["status"] == "succeeded"
     assert host.runtimes["alpha"].generation == old
     planned = await host.wait_operation(
-        host.submit("plan", {"action": "reload", "id": "alpha"})["id"]
+        (await host.submit("plan", {"action": "reload", "id": "alpha"}))["id"]
     )
     assert planned["status"] == "succeeded", planned
     plan = planned["result"]
@@ -100,7 +105,7 @@ async def test_default_validation_checks_resources_and_reports_activation_blocke
     )
     invalid = await operate(host, "validate", id="alpha")
     assert invalid["error"]["code"] == "resource_target_invalid", invalid
-    candidate = host.status()["plugins"][0]["candidate_status"]
+    candidate = (await host.status())["plugins"][0]["candidate_status"]
     assert candidate["validation"]["preflight"] == "failed"
     assert candidate["validation"]["stages"]["dependency_graph"]["status"] == "failed"
     assert host.runtimes["alpha"].generation == old
@@ -183,7 +188,7 @@ async def test_migration_requires_review_and_lost_commit_ack_never_restarts_old_
     )
     assert applied["error"]["code"] == "forward_repair_required", applied
     assert "alpha" not in host.runtimes
-    assert host.status()["forward_repair"]
+    assert (await host.status())["forward_repair"]
     monkeypatch.setattr(host, "admin", real_admin)
     info = await host.admin(
         host.runtimes["storage-sqlite"], "inspect", {"owner": "alpha"}
@@ -198,7 +203,7 @@ async def test_migration_requires_review_and_lost_commit_ack_never_restarts_old_
     assert await host.call_service("alpha", "alpha.service", "read", {}) == [
         {"id": 1, "label": "survives", "version": 1}
     ]
-    assert host.status()["forward_repair"] is None
+    assert (await host.status())["forward_repair"] is None
 
 
 async def test_optional_provider_failure_keeps_business_running(host, tmp_path):
@@ -222,7 +227,7 @@ async def test_optional_provider_failure_keeps_business_running(host, tmp_path):
     assert await host.call_service("alpha", "alpha.service", "echo", {}) == {
         "version": "old"
     }
-    assert host.status()["application"] == "degraded"
+    assert (await host.status())["application"] == "degraded"
 
 
 async def test_business_health_and_expiry_are_separate_from_core_and_optional_readiness(
@@ -249,7 +254,7 @@ async def test_business_health_and_expiry_are_separate_from_core_and_optional_re
     ) as client:
         async with host.mutation:
             host.runtimes["alpha"].observed = 0
-            stale = host.status()
+            stale = await host.status()
             assert stale["ready"] and stale["degraded"]
             assert not stale["plugins"][0]["healthy"]
             with pytest.raises(PluginError, match="unavailable"):
@@ -274,7 +279,7 @@ async def test_business_health_and_expiry_are_separate_from_core_and_optional_re
         composition = host.composition.model_copy(deep=True)
         composition.required_capabilities = ["service:alpha.service"]
         atomic_write(host.config.path, tomlkit.dumps(composition.model_dump()))
-        host.refresh()
+        (await host.refresh())
         required = await client.get("/_toolframe/v1/readiness")
         assert required.status_code == 503
         assert required.json()["missing_required"] == ["service:alpha.service"]
@@ -290,20 +295,28 @@ async def test_watch_debounces_and_never_enables_disabled_or_manually_stopped_pl
     composition.plugins["alpha"].watch = True
     composition.runtime.watch_debounce_ms = 50
     atomic_write(host.config.path, tomlkit.dumps(composition.model_dump()))
-    host.refresh()
+    (await host.refresh())
     await asyncio.sleep(0.2)
-    old = host.state.plugin("alpha")["last_candidate"]
+    old = (await host.state.plugin("alpha"))["last_candidate"]
     fixture_source(tmp_path, "alpha", version="second")
-    await until(lambda: host.state.plugin("alpha")["last_candidate"] != old)
+
+    async def candidate_changed():
+        return (await host.state.plugin("alpha"))["last_candidate"] != old
+
+    await until(candidate_changed)
     assert not host.runtimes
     assert (await operate(host, "enable", id="alpha"))["status"] == "succeeded"
     assert (await operate(host, "stop", id="alpha", force=True))[
         "status"
     ] == "succeeded"
-    old = host.state.plugin("alpha")["last_candidate"]
+    old = (await host.state.plugin("alpha"))["last_candidate"]
     fixture_source(tmp_path, "alpha", version="third")
-    await until(lambda: host.state.plugin("alpha")["last_candidate"] != old)
-    assert not host.runtimes and host.state.plugin("alpha")["stopped"]
+
+    async def candidate_changed():
+        return (await host.state.plugin("alpha"))["last_candidate"] != old
+
+    await until(candidate_changed)
+    assert not host.runtimes and (await host.state.plugin("alpha"))["stopped"]
 
 
 async def test_api_rejects_invalid_requests_and_reports_conflicts(host):
@@ -429,8 +442,12 @@ async def test_cancel_during_drain_retains_generation_and_does_not_cancel_admitt
         host.call_service("alpha", "alpha.service", "echo", {"delay": 2})
     )
     await until(lambda: bool(host.roots))
-    operation = host.submit("reload", {"id": "alpha"})
-    await until(lambda: host.state.operation(operation["id"])["phase"] == "draining")
+    operation = await host.submit("reload", {"id": "alpha"})
+
+    async def is_draining():
+        return (await host.state.operation(operation["id"]))["phase"] == "draining"
+
+    await until(is_draining)
     host.cancellations.add(operation["id"])
     host.changed.set()
     result = await host.wait_operation(operation["id"])
@@ -490,17 +507,19 @@ async def test_invalid_composition_keeps_core_management_available(tmp_path):
 
     home = tmp_path / "broken-app"
     ConfigFile(home).initialize(port=12345)
-    first = Host(home)
+    first = await Host.create(home)
     await first.start()
     await first.close()
     (home / "toolframe.toml").write_text("broken = [")
-    second = Host(home)
+    second = await Host.create(home)
     try:
         await second.start()
         assert second.composition.application.port == 12345
-        assert second.status()["core"] == "ready"
-        assert second.status()["application"] == "not_ready"
-        assert second.status()["configuration_error"]["code"] == "configuration_invalid"
+        assert (await second.status())["core"] == "ready"
+        assert (await second.status())["application"] == "not_ready"
+        assert (await second.status())["configuration_error"][
+            "code"
+        ] == "configuration_invalid"
         assert (home / ".toolframe/endpoint.json").is_file()
     finally:
         await second.close()
@@ -570,7 +589,7 @@ async def test_core_crash_reconciles_surviving_worker_before_reactivation(tmp_pa
         worker_pid = status["plugins"][0]["runtime"]["pid"]
         process.kill()
         await process.wait()
-        second = Host(home)
+        second = await Host.create(home)
         await second.start(apply=False)
         assert second.orphans["survivor"]["pid"] == worker_pid
         result = await operate(second, "enable", id="survivor")

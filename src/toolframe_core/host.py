@@ -27,7 +27,7 @@ from .network import bind_host
 from .packages import Packages, pinned_index_source, source_files
 from .process import WorkerProcess, group_exists, process_inventory, stop_group
 from .redaction import redact, secret_values
-from .state import CoreState
+from .state import CoreState, StateSettings
 
 
 @dataclass
@@ -56,10 +56,35 @@ class Root:
 
 
 class Host:
-    def __init__(self, home, *, scratch=False, listen_host=None):
+    @classmethod
+    async def create(
+        cls, home, *, scratch=False, listen_host=None, state_settings=None
+    ):
+        host = cls()
+        try:
+            await host._initialize(
+                home,
+                scratch=scratch,
+                listen_host=listen_host,
+                state_settings=state_settings,
+            )
+            return host
+        except BaseException:
+            if getattr(host, "state", None):
+                await host.state.close()
+            if getattr(host, "lock", None):
+                host.lock.close()
+            raise
+
+    async def _initialize(
+        self, home, *, scratch=False, listen_host=None, state_settings=None
+    ):
         self.home = Path(home).resolve()
         self.config = ConfigFile(self.home)
-        self.state = CoreState(self.home)
+        self.lock = HostLock(self.home)
+        self.lock.acquire()
+        self.state = await CoreState.open(self.home, settings=state_settings)
+        self.journal_error = None
         self.configuration_error = None
         try:
             self.composition, self.revision = self.config.read()
@@ -67,7 +92,7 @@ class Host:
             from .config import Application, Composition
 
             self.configuration_error = error.as_dict()
-            previous = self.state.meta("last_valid_composition")
+            previous = await self.state.meta("last_valid_composition")
             self.composition = (
                 Composition.model_validate(previous)
                 if previous
@@ -81,7 +106,14 @@ class Host:
             else self.composition.application.host
         )
         self.host_run = uuid.uuid4().hex
-        self.lock = HostLock(self.home)
+        if (
+            self.state.settings.backend == "postgresql"
+            and self.composition.application.id != self.state.settings.application_id
+        ):
+            raise PluginError(
+                "core_state_identity_mismatch",
+                "Composition and Core database identities differ",
+            )
         self.token = management_token(self.home)
         self.packages = Packages(self.home, self.composition.packages)
         self._package_overrides()
@@ -99,6 +131,7 @@ class Host:
         self.cancellations = set()
         self.tasks = []
         self.closing = False
+        self._closed = False
         self.scratch = scratch
         self.epoch = None
         self.publication = {}
@@ -112,7 +145,7 @@ class Host:
         self.orphans = {}
         self.failed_roots = set()
         self.cleanup_blocked = set()
-        self.worker_owners = self.state.meta("worker_owners", {})
+        self.worker_owners = await self.state.meta("worker_owners", {})
         self.starting = True
         self.transitioning = set()
         self.access = Access(self)
@@ -120,10 +153,17 @@ class Host:
         self.operation_identities = {}
 
     async def start(self, *, apply=True, wait=True):
-        self.lock.acquire()
+        previous_node = await self.state.meta("host_node")
+        node = self.state.settings.node_id
+        if node and previous_node and previous_node != node and self.worker_owners:
+            raise PluginError(
+                "core_state_recovery_required",
+                "Worker history belongs to another node; verify cleanup before recovery",
+            )
         await self.reconcile_workers()
-        self.state.reconcile_startup(self.host_run)
-        self.state.set_meta("host_run", self.host_run)
+        (await self.state.reconcile_startup(self.host_run))
+        (await self.state.set_meta("host_run", self.host_run))
+        await self.state.set_meta("host_node", node)
         await self.manager.start()
         atomic_write(
             self.home / ".toolframe/endpoint.json",
@@ -135,7 +175,7 @@ class Host:
             ),
         )
         if apply:
-            operation = self.submit("apply", {"startup": True})
+            operation = await self.submit("apply", {"startup": True})
             if wait:
                 await self.wait_operation(operation["id"])
         else:
@@ -146,9 +186,59 @@ class Host:
                 asyncio.create_task(self._watch_loop()),
                 asyncio.create_task(self._exit_loop()),
             ]
+            if self.state.settings.backend == "postgresql":
+                self.tasks.append(asyncio.create_task(self._journal_loop()))
+
+    async def _journal_loop(self):
+        while not self.closing:
+            await asyncio.sleep(0.5)
+            try:
+                await self.state.ping()
+            except PluginError as error:
+                self.journal_error = error.as_dict()
+                await self._stop_after_journal_loss()
+                return
+
+    async def _stop_after_journal_loss(self):
+        self.closing = True
+        self.gated.update(self.runtimes)
+        current = asyncio.current_task()
+        pending = [
+            task
+            for task in [*self.tasks, *self.operations.values()]
+            if task is not current
+        ]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        for sessions in self.gateway_sessions.values():
+            for task in list(sessions):
+                task.cancel()
+        # EOF cleanup may finish gracefully; failures remain visible and leave the
+        # durable ownership marker dirty. There is never an automatic takeover.
+        for runtime in list(self.runtimes.values()):
+            runtime.admitted = False
+            if runtime.worker:
+                try:
+                    await runtime.worker.close(
+                        timeout=self.composition.runtime.disposal_timeout,
+                        allow_exited=True,
+                    )
+                except BaseException as error:
+                    if isinstance(error, asyncio.CancelledError):
+                        raise
+                    self.orphans[runtime.name] = {
+                        "pid": runtime.worker.pid,
+                        "reason": "journal_loss_cleanup_unproven",
+                    }
+        try:
+            await self.manager.close()
+        except Exception:  # noqa: BLE001 - preserve a failed cleanup for explicit recovery
+            # Cleanup failures keep the durable marker dirty for operator recovery.
+            self.journal_error = {**(self.journal_error or {}), "cleanup": "unproven"}
 
     async def reconcile_workers(self):
-        previous_run = self.state.meta("host_run")
+        previous_run = await self.state.meta("host_run")
         inventory = await process_inventory()
         # Also find the narrow spawn-before-journal window using the previous run's
         # token, which is durable before any worker is launched.
@@ -181,7 +271,7 @@ class Host:
                 self.orphans[owner["name"]] = {"pid": int(pid), **owner}
             else:
                 self.worker_owners.pop(pid)
-        self.state.set_meta("worker_owners", self.worker_owners)
+        (await self.state.set_meta("worker_owners", self.worker_owners))
 
     async def stop_orphan(self, name):
         orphan = self.orphans[name]
@@ -199,28 +289,39 @@ class Host:
             await stop_group(orphan["pid"])
         self.orphans.pop(name)
         self.worker_owners.pop(str(orphan["pid"]), None)
-        self.state.set_meta("worker_owners", self.worker_owners)
-        self.state.stopped(name, True)
+        (await self.state.set_meta("worker_owners", self.worker_owners))
+        (await self.state.stopped(name, True))
 
     async def close(self):
+        if self._closed:
+            return
         self.closing = True
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
-        for operation in self.operations.values():
-            if not operation.done():
-                await asyncio.shield(operation)
+        if self.state.failed:
+            await self._stop_after_journal_loss()
+        else:
+            for operation in self.operations.values():
+                if not operation.done():
+                    await asyncio.shield(operation)
         self.gated.update(self.runtimes)
+        clean = False
         try:
-            await self._drain(
-                set(self.runtimes), self.composition.runtime.drain_timeout
-            )
-            await self.manager.close()
+            if not self.state.failed:
+                await self._drain(
+                    set(self.runtimes), self.composition.runtime.drain_timeout
+                )
+                await self.manager.close()
+                clean = not self.orphans and not self.worker_owners
         finally:
             self.lock.close()
-            self.state.close()
+            await self.state.close(clean=clean)
+            self._closed = True
 
-    def submit(self, action, params, *, idempotency=None, identity=None):
+    async def submit(self, action, params, *, idempotency=None, identity=None):
+        if self.state.failed:
+            raise PluginError("core_state_unavailable", "Core journal is unavailable")
         if self.closing:
             raise PluginError("host_closing", "Core is shutting down")
         actions = {
@@ -256,7 +357,7 @@ class Host:
             raise PluginError("invalid_request", "Add requires a package source")
         # A retry refers to the original operation, whose own successful write
         # may already have changed the desired revision.
-        existing = self.state.idempotent_operation(
+        existing = await self.state.idempotent_operation(
             action, params.get("id"), params, idempotency
         )
         if existing is not None:
@@ -268,7 +369,7 @@ class Host:
             raise PluginError(
                 "stale_revision", "Composition changed; refresh before submitting"
             )
-        operation, created = self.state.new_operation(
+        operation, created = await self.state.new_operation(
             action, params.get("id"), params, idempotency
         )
         if created:
@@ -283,10 +384,10 @@ class Host:
         task = self.operations.get(identifier)
         if task:
             await asyncio.shield(task)
-        return self.state.operation(identifier)
+        return await self.state.operation(identifier)
 
-    def phase(self, operation, phase, result=None):
-        self.state.update_operation(operation, phase=phase, result=result)
+    async def phase(self, operation, phase, result=None):
+        (await self.state.update_operation(operation, phase=phase, result=result))
 
     def check_cancel(self, operation):
         if operation in self.cancellations:
@@ -295,7 +396,11 @@ class Host:
     async def _operate(self, operation):
         identifier = operation["id"]
         async with self.mutation:
-            self.state.update_operation(identifier, status="running", phase="planning")
+            (
+                await self.state.update_operation(
+                    identifier, status="running", phase="planning"
+                )
+            )
             try:
                 self.check_cancel(identifier)
                 if identity := self.operation_identities.get(identifier):
@@ -308,8 +413,10 @@ class Host:
                 result = await self._dispatch(
                     operation["kind"], operation["request"], identifier
                 )
-                self.state.update_operation(
-                    identifier, status="succeeded", phase="complete", result=result
+                (
+                    await self.state.update_operation(
+                        identifier, status="succeeded", phase="complete", result=result
+                    )
                 )
             except Exception as error:  # noqa: BLE001 - durable boundary, keep management alive
                 detail = (
@@ -328,8 +435,10 @@ class Host:
                     if detail["code"] == "cancelled"
                     else "failed"
                 )
-                self.state.update_operation(
-                    identifier, status=status, error=self.redact(detail)
+                (
+                    await self.state.update_operation(
+                        identifier, status=status, error=self.redact(detail)
+                    )
                 )
             finally:
                 self.cancellations.discard(identifier)
@@ -337,7 +446,7 @@ class Host:
                 if operation["request"].get("startup"):
                     self.starting = False
 
-    def refresh(self):
+    async def refresh(self):
         composition, revision = self.config.read()
         if composition.application.model_dump() != self.initial_application:
             raise PluginError(
@@ -349,7 +458,7 @@ class Host:
         self.packages.settings = composition.packages
         self._package_overrides()
         self.manager.drain_timeout = composition.runtime.drain_timeout
-        self.state.set_meta("last_valid_composition", composition.model_dump())
+        (await self.state.set_meta("last_valid_composition", composition.model_dump()))
 
     def _package_overrides(self):
         wheelhouse = os.environ.get("TOOLFRAME_WHEELHOUSE")
@@ -359,11 +468,11 @@ class Host:
             self.packages.settings.offline = True
 
     async def _prepare(self, name, operation, *, installed=False):
-        self.phase(operation, "capture_validate", {"plugin_id": name})
+        (await self.phase(operation, "capture_validate", {"plugin_id": name}))
         request = self.composition.plugins[name]
-        stored = self.state.plugin(name)
+        stored = await self.state.plugin(name)
         previous = stored["last_candidate"] or stored["current_candidate"]
-        retained = self.state.candidate(previous) if previous else None
+        retained = (await self.state.candidate(previous)) if previous else None
         if (
             not retained
             or retained["source"]["request"] != request.source
@@ -377,27 +486,27 @@ class Host:
             raise PluginError(
                 "stale_plan", "Composition changed while preparing the candidate"
             )
-        self.state.save_candidate(candidate)
+        (await self.state.save_candidate(candidate))
         return candidate
 
-    def selected(self):
+    async def selected(self):
         selected = {}
         for name, request in self.composition.plugins.items():
-            if request.enabled and not self.state.plugin(name)["stopped"]:
-                stored = self.state.plugin(name)
+            if request.enabled and not (await self.state.plugin(name))["stopped"]:
+                stored = await self.state.plugin(name)
                 candidate = stored["current_candidate"] or stored["last_candidate"]
                 if candidate:
-                    selected[name] = self.state.candidate(candidate)
+                    selected[name] = await self.state.candidate(candidate)
         return selected
 
     async def _dispatch(self, action, params, operation):
-        self.refresh()
+        (await self.refresh())
         name = params.get("id")
-        if params.get("startup") and self.state.meta("forward_repair"):
+        if params.get("startup") and (await self.state.meta("forward_repair")):
             raise PluginError(
                 "forward_repair_required",
                 "Interrupted schema operation requires explicit inspection and repair",
-                self.state.meta("forward_repair"),
+                (await self.state.meta("forward_repair")),
             )
         if (
             params.get("expected_revision")
@@ -410,7 +519,7 @@ class Host:
             return await self.plan(params, operation)
         approved = None
         if params.get("plan_id") and action != "migrate-apply":
-            approved = self.state.meta(f"plan/{params['plan_id']}")
+            approved = await self.state.meta(f"plan/{params['plan_id']}")
             if (
                 not approved
                 or approved["action"] != action
@@ -440,12 +549,12 @@ class Host:
             self.composition, self.revision = self.config.put_plugin(
                 name, request, self.revision
             )
-            self.state.save_candidate(candidate)
+            (await self.state.save_candidate(candidate))
             if request.enabled:
-                proposed = self.selected()
+                proposed = await self.selected()
                 proposed[name] = candidate
                 await self.replace(proposed, {name}, operation)
-            self.write_lock()
+            (await self.write_lock())
             return {
                 "plugin_id": name,
                 "candidate": candidate["id"],
@@ -481,8 +590,8 @@ class Host:
                 raise PluginError(
                     "stale_plan", "Composition changed while staging update"
                 )
-            self.state.save_candidate(candidate)
-            self.write_lock()
+            (await self.state.save_candidate(candidate))
+            (await self.write_lock())
             return {
                 "candidate": candidate["id"],
                 "validation": candidate["validation"],
@@ -494,8 +603,8 @@ class Host:
             if params.get("runtime"):
                 await self.runtime_validate(name, candidate)
                 candidate["validation"]["runtime"] = "passed_scratch"
-                self.state.save_candidate(candidate)
-            self.write_lock()
+                (await self.state.save_candidate(candidate))
+            (await self.write_lock())
             return {"candidate": candidate["id"], "validation": candidate["validation"]}
         if action == "stop" and params.get("force"):
             if name in self.orphans:
@@ -511,7 +620,7 @@ class Host:
                     # A failed Cordis disposer has already consumed its scope;
                     # record confirmed termination even when it cannot run again.
                     await self._dispose(runtime)
-                self.state.stopped(member, True)
+                (await self.state.stopped(member, True))
             for root in list(self.roots.values()):
                 if affected & root.runtimes.keys():
                     await self.end_root(root)
@@ -535,20 +644,22 @@ class Host:
             storage = self._storage_runtime(name)
             plan = await self.admin(storage, "plan", {"owner": name, "schema": schema})
             if action == "migrate-plan":
-                self.state.set_meta(
-                    f"migration/{name}",
-                    {
-                        "plan": plan,
-                        "candidate": candidate["id"],
-                        "revision": self.revision,
-                    },
+                (
+                    await self.state.set_meta(
+                        f"migration/{name}",
+                        {
+                            "plan": plan,
+                            "candidate": candidate["id"],
+                            "revision": self.revision,
+                        },
+                    )
                 )
                 return {
                     **plan,
                     "candidate": candidate["id"],
                     "desired_revision": self.revision,
                 }
-            saved = self.state.meta(f"migration/{name}")
+            saved = await self.state.meta(f"migration/{name}")
             if (
                 not saved
                 or params.get("plan_id") != plan["plan_id"]
@@ -558,7 +669,7 @@ class Host:
                 raise PluginError(
                     "stale_plan", "Review a current migration plan before applying"
                 )
-            proposed = self.selected()
+            proposed = await self.selected()
             proposed[name] = candidate
             await self.replace(
                 proposed,
@@ -570,8 +681,11 @@ class Host:
         if action in ("reload", "enable", "disable", "remove", "stop"):
             if action in ("reload", "enable"):
                 candidate = (
-                    self.state.candidate(
-                        approved.get("target_candidate") or approved["candidates"][name]
+                    (
+                        await self.state.candidate(
+                            approved.get("target_candidate")
+                            or approved["candidates"][name]
+                        )
                     )
                     if approved
                     else await self._prepare(
@@ -579,7 +693,7 @@ class Host:
                     )
                 )
             if action == "stop":
-                self.state.stopped(name, True)
+                (await self.state.stopped(name, True))
             if action in ("enable", "disable", "remove"):
 
                 def edit(document):
@@ -589,9 +703,9 @@ class Host:
                         document["plugins"][name]["enabled"] = action == "enable"
 
                 self.composition, self.revision = self.config.edit(self.revision, edit)
-            proposed = self.selected()
+            proposed = await self.selected()
             if action in ("reload", "enable"):
-                self.state.stopped(name, False)
+                (await self.state.stopped(name, False))
                 if self.composition.plugins[name].enabled:
                     proposed[name] = candidate
             else:
@@ -602,10 +716,10 @@ class Host:
             proposed = {}
             for member, request in self.composition.plugins.items():
                 self.check_cancel(operation)
-                self.state.stopped(member, False)
+                (await self.state.stopped(member, False))
                 if request.enabled:
                     proposed[member] = (
-                        self.state.candidate(approved["candidates"][member])
+                        (await self.state.candidate(approved["candidates"][member]))
                         if approved
                         else await self._prepare(member, operation, installed=True)
                     )
@@ -633,12 +747,12 @@ class Host:
     async def validate_candidate(self, candidate, operation):
         """Validate a hypothetical target without publishing or changing live stores."""
         name = candidate["plugin_id"]
-        proposed = {**self.selected(), name: candidate}
+        proposed = {**(await self.selected()), name: candidate}
         validation = candidate["validation"]
         stages = validation.setdefault("stages", {})
         stage = "dependency_graph"
         try:
-            self.phase(operation, "preflight", {"plugin_id": name})
+            (await self.phase(operation, "preflight", {"plugin_id": name}))
             graph = Graph(proposed, self.composition.bindings)
             blockers = {
                 member: graph.missing[member]
@@ -736,7 +850,7 @@ class Host:
             )
             raise
         finally:
-            self.state.save_candidate(candidate)
+            (await self.state.save_candidate(candidate))
 
     async def plan_basis(self):
         schemas = {}
@@ -753,7 +867,7 @@ class Host:
             "epoch": self.epoch,
             "schemas": schemas,
             "stopped": sorted(
-                row["id"] for row in self.state.plugins() if row["stopped"]
+                [row["id"] for row in (await self.state.plugins()) if row["stopped"]]
             ),
         }
 
@@ -764,7 +878,7 @@ class Host:
         if action != "apply" and name not in self.composition.plugins:
             raise PluginError("plugin_missing", "Plan requires a declared plugin ID")
         basis = await self.plan_basis()
-        proposed = self.selected()
+        proposed = await self.selected()
         if action == "apply":
             proposed = {}
             for member, request in self.composition.plugins.items():
@@ -820,7 +934,7 @@ class Host:
         if basis != await self.plan_basis():
             raise PluginError("stale_plan", "Runtime changed while planning")
         result["plan_id"] = digest(result)
-        self.state.set_meta(f"plan/{result['plan_id']}", result)
+        (await self.state.set_meta(f"plan/{result['plan_id']}", result))
         return result
 
     def _storage_runtime(self, owner):
@@ -859,15 +973,17 @@ class Host:
     async def change_schema(self, storage, method, params):
         owner = params["owner"]
         before = await self.admin(storage, "inspect", {"owner": owner})
-        previous_repair = self.state.meta("forward_repair")
-        self.state.set_meta(
-            "forward_repair",
-            {
-                "owner": owner,
-                "before": before,
-                "target": params["schema"],
-                "state": "in_progress",
-            },
+        previous_repair = await self.state.meta("forward_repair")
+        (
+            await self.state.set_meta(
+                "forward_repair",
+                {
+                    "owner": owner,
+                    "before": before,
+                    "target": params["schema"],
+                    "state": "in_progress",
+                },
+            )
         )
         try:
             result = await self.admin(storage, method, params)
@@ -885,13 +1001,13 @@ class Host:
                     {"owner": owner, "state": "committed_or_unknown"}
                 )
             else:
-                self.state.set_meta("forward_repair", previous_repair)
+                (await self.state.set_meta("forward_repair", previous_repair))
             raise
         if result.get("committed"):
             self.schema_changed = True
             self.schema_events.append({"owner": owner, "state": "committed", **result})
         else:
-            self.state.set_meta("forward_repair", previous_repair)
+            (await self.state.set_meta("forward_repair", previous_repair))
         return result
 
     async def _activate(self, name, context):
@@ -914,8 +1030,8 @@ class Host:
             "name": name,
             "token": f"{self.host_run}/{name}/{generation}",
         }
-        self.state.set_meta("worker_owners", self.worker_owners)
-        self.record(runtime, "starting")
+        (await self.state.set_meta("worker_owners", self.worker_owners))
+        (await self.record(runtime, "starting"))
         await runtime.worker.request("runtime.describe")
         store_exists = None
         if definition.private_secrets and definition.store:
@@ -951,7 +1067,7 @@ class Host:
             raise PluginError(
                 "health_failed", f"{name} did not become ready", runtime.health
             )
-        self.record(runtime, "prepared")
+        (await self.record(runtime, "prepared"))
         return runtime
 
     async def probe(self, runtime, method="runtime.health", params=None):
@@ -1004,29 +1120,34 @@ class Host:
                     allow_exited=True,
                 )
         except BaseException:
-            self.record(runtime, "cleanup_failed")
+            if not self.state.failed:
+                await self.record(runtime, "cleanup_failed")
             raise
         else:
             if runtime.worker:
                 self.worker_owners.pop(str(runtime.worker.pid), None)
-                self.state.set_meta("worker_owners", self.worker_owners)
+                if not self.state.failed:
+                    await self.state.set_meta("worker_owners", self.worker_owners)
             if self.runtimes.get(runtime.name) is runtime:
                 self.runtimes.pop(runtime.name)
-            self.record(runtime, "stopped")
+            if not self.state.failed:
+                await self.record(runtime, "stopped")
 
-    def record(self, runtime, state):
-        self.state.runtime(
-            runtime.name,
-            {
-                "state": state,
-                "generation": runtime.generation,
-                "candidate": runtime.candidate["id"],
-                "pid": runtime.worker.pid if runtime.worker else None,
-                "health": runtime.health,
-                "observed": runtime.observed,
-                "host_run": self.host_run,
-                "epoch": runtime.epoch,
-            },
+    async def record(self, runtime, state):
+        (
+            await self.state.runtime(
+                runtime.name,
+                {
+                    "state": state,
+                    "generation": runtime.generation,
+                    "candidate": runtime.candidate["id"],
+                    "pid": runtime.worker.pid if runtime.worker else None,
+                    "health": runtime.health,
+                    "observed": runtime.observed,
+                    "host_run": self.host_run,
+                    "epoch": runtime.epoch,
+                },
+            )
         )
 
     async def _register_set(self, names):
@@ -1064,9 +1185,15 @@ class Host:
                 if name in {item["name"] for item in self.manager.snapshot()}:
                     await self.manager.unregister(name)
                 self.optional_failures[name] = str(error)
-                self.state.runtime(
-                    name,
-                    {"state": "failed", "error": str(error), "host_run": self.host_run},
+                (
+                    await self.state.runtime(
+                        name,
+                        {
+                            "state": "failed",
+                            "error": str(error),
+                            "host_run": self.host_run,
+                        },
+                    )
                 )
             finally:
                 # Registration remains present when setup raises; cleanup/recovery must remove it.
@@ -1104,8 +1231,10 @@ class Host:
                             try:
                                 await self.end_root(root)
                             except Exception:  # noqa: BLE001 - retain lease until cleanup is proven
-                                self.state.set_meta(
-                                    "cleanup_pending", sorted(self.failed_roots)
+                                (
+                                    await self.state.set_meta(
+                                        "cleanup_pending", sorted(self.failed_roots)
+                                    )
                                 )
                     self.changed.clear()
                     try:
@@ -1135,7 +1264,7 @@ class Host:
             runtime = self.runtimes.get(name)
             if runtime:
                 runtime.admitted = True
-                self.record(runtime, "active")
+                (await self.record(runtime, "active"))
                 if name not in self.cleanup_blocked:
                     self.gated.discard(name)
         self.changed.set()
@@ -1149,7 +1278,7 @@ class Host:
             self.transitioning.clear()
 
     async def _replace(self, proposed, changed, operation, *, migration=None):
-        self.schema_changed = bool(self.state.meta("forward_repair"))
+        self.schema_changed = bool(await self.state.meta("forward_repair"))
         self.schema_events = []
         if self.orphans:
             raise PluginError(
@@ -1208,16 +1337,18 @@ class Host:
                     if name not in self.optional_new:
                         raise
                     self.optional_failures[name] = str(error)
-                    self.state.runtime(
-                        name,
-                        {
-                            "state": "failed",
-                            "error": str(error),
-                            "host_run": self.host_run,
-                        },
+                    (
+                        await self.state.runtime(
+                            name,
+                            {
+                                "state": "failed",
+                                "error": str(error),
+                                "host_run": self.host_run,
+                            },
+                        )
                     )
         replacement = Graph(proposed, self.composition.bindings)
-        self.phase(operation, "prepare_resources")
+        (await self.phase(operation, "prepare_resources"))
         for kind, provider in replacement.providers.items():
             if (
                 kind not in {"dashboard", "mcp", "llms"}
@@ -1245,13 +1376,15 @@ class Host:
                     if provider not in self.optional_new:
                         raise
                     self.optional_failures[provider] = str(error)
-                    self.state.runtime(
-                        provider,
-                        {
-                            "state": "failed",
-                            "error": str(error),
-                            "host_run": self.host_run,
-                        },
+                    (
+                        await self.state.runtime(
+                            provider,
+                            {
+                                "state": "failed",
+                                "error": str(error),
+                                "host_run": self.host_run,
+                            },
+                        )
                     )
         # Existing stores are inspected before quiescence. A schema change is never hidden in reload.
         for name in changed & replacement.candidates.keys():
@@ -1271,17 +1404,22 @@ class Host:
         if self.config.revision != self.revision:
             raise PluginError("stale_plan", "Composition changed before cutover")
         self.check_cancel(operation)
-        self.phase(
-            operation,
-            "quiesce",
-            {
-                "affected": sorted(affected),
-                "old": {
-                    name: value["id"] for name, value in old_graph.candidates.items()
+        (
+            await self.phase(
+                operation,
+                "quiesce",
+                {
+                    "affected": sorted(affected),
+                    "old": {
+                        name: value["id"]
+                        for name, value in old_graph.candidates.items()
+                    },
+                    "candidate": {
+                        name: value["id"] for name, value in proposed.items()
+                    },
+                    "revision": self.revision,
                 },
-                "candidate": {name: value["id"] for name, value in proposed.items()},
-                "revision": self.revision,
-            },
+            )
         )
         self.gated.update(affected)
         self.transitioning.update(affected)
@@ -1292,7 +1430,7 @@ class Host:
                     worker = self.runtimes[name].worker
                     if worker.process.returncode is None:
                         await worker.request("runtime.quiesce")
-            self.phase(operation, "draining")
+            (await self.phase(operation, "draining"))
             await self._drain(
                 affected, self.composition.runtime.drain_timeout, operation
             )
@@ -1305,7 +1443,7 @@ class Host:
         except BaseException:
             await self._resume(affected)
             raise
-        self.phase(operation, "disposing")
+        (await self.phase(operation, "disposing"))
         for name in reversed(old_graph.order):
             if name in affected and name in self.registered:
                 try:
@@ -1319,23 +1457,25 @@ class Host:
                     ) from error
         try:
             if migration:
-                self.phase(operation, "migrating")
+                (await self.phase(operation, "migrating"))
                 storage = self._storage_runtime(migration["owner"])
                 result = await self.change_schema(storage, "apply", migration)
-                self.phase(operation, "migration_committed", result)
+                (await self.phase(operation, "migration_committed", result))
             self.graph = replacement
-            self.phase(operation, "activating")
+            (await self.phase(operation, "activating"))
             await self._register_set(set(proposed) - self.registered)
-            self.phase(operation, "publishing")
+            (await self.phase(operation, "publishing"))
             await self.publish()
             for name, candidate in proposed.items():
-                self.state.save_candidate(candidate)
-                if self.state.plugin(name)["current_candidate"] != candidate["id"]:
-                    self.state.select(name, candidate["id"])
-            self.write_lock()
+                (await self.state.save_candidate(candidate))
+                if (await self.state.plugin(name))["current_candidate"] != candidate[
+                    "id"
+                ]:
+                    (await self.state.select(name, candidate["id"]))
+            (await self.write_lock())
             await self._resume(affected | (set(proposed) - set(old_graph.candidates)))
             self.gated.difference_update(affected - self.runtimes.keys())
-            self.state.set_meta("forward_repair", None)
+            (await self.state.set_meta("forward_repair", None))
         except Exception as failure:
             self.gated.update(affected)
             for name in reversed(self.graph.order):
@@ -1350,15 +1490,17 @@ class Host:
                             {"error": str(cleanup)},
                         ) from cleanup
             if self.schema_changed:
-                self.state.set_meta(
-                    "forward_repair",
-                    {
-                        "operation": operation,
-                        "schemas": self.schema_events,
-                        "candidates": {
-                            name: item["id"] for name, item in proposed.items()
+                (
+                    await self.state.set_meta(
+                        "forward_repair",
+                        {
+                            "operation": operation,
+                            "schemas": self.schema_events,
+                            "candidates": {
+                                name: item["id"] for name, item in proposed.items()
+                            },
                         },
-                    },
+                    )
                 )
                 raise PluginError(
                     "forward_repair_required",
@@ -1369,16 +1511,18 @@ class Host:
             recover = affected & old_graph.candidates.keys()
             if not recover:
                 raise
-            self.phase(operation, "recovering")
+            (await self.phase(operation, "recovering"))
             try:
                 await self._register_set(recover - self.registered)
                 await self.publish()
                 await self._resume(recover)
                 for name in recover:
                     old = old_graph.candidates[name]
-                    if self.state.plugin(name)["current_candidate"] != old["id"]:
-                        self.state.select(name, old["id"])
-                self.write_lock()
+                    if (await self.state.plugin(name))["current_candidate"] != old[
+                        "id"
+                    ]:
+                        (await self.state.select(name, old["id"]))
+                (await self.write_lock())
             except Exception as recovery:
                 raise PluginError(
                     "recovery_failed",
@@ -1463,12 +1607,14 @@ class Host:
             )
         ]
         self.epoch = epoch
-        self.state.set_meta(
-            "catalog",
-            {
-                "epoch": epoch,
-                "resources": [resource.model_dump() for resource in resources],
-            },
+        (
+            await self.state.set_meta(
+                "catalog",
+                {
+                    "epoch": epoch,
+                    "resources": [resource.model_dump() for resource in resources],
+                },
+            )
         )
         for kind, resource_kind in (
             ("dashboard", "dashboard.page"),
@@ -1514,10 +1660,10 @@ class Host:
                     "error": str(error),
                 }
 
-    def write_lock(self):
+    async def write_lock(self):
         plugins = {}
         for name in self.composition.plugins:
-            row = self.state.plugin(name)
+            row = await self.state.plugin(name)
             candidates = {}
             for selection in (
                 "current_candidate",
@@ -1525,7 +1671,7 @@ class Host:
                 "previous_candidate",
             ):
                 if row[selection]:
-                    candidate = self.state.candidate(row[selection])
+                    candidate = await self.state.candidate(row[selection])
                     candidates[selection] = {
                         key: candidate[key]
                         for key in (
@@ -1546,8 +1692,12 @@ class Host:
             )
             + "\n",
         )
-        self.state.set_meta("desired_revision", self.revision)
-        self.state.set_meta("last_valid_composition", self.composition.model_dump())
+        (await self.state.set_meta("desired_revision", self.revision))
+        (
+            await self.state.set_meta(
+                "last_valid_composition", self.composition.model_dump()
+            )
+        )
 
     def begin_root(self, owner, *, deadline=None, principal=None):
         if (
@@ -1713,7 +1863,7 @@ class Host:
                     identity, action, params.get("params", {})
                 )
             if action == "cancel":
-                operation = self.state.operation(params["params"]["id"])
+                operation = await self.state.operation(params["params"]["id"])
                 scopes = operation_scopes(operation["kind"], operation["request"])
             else:
                 scopes = operation_scopes(action, params.get("params"))
@@ -1721,19 +1871,21 @@ class Host:
                 identity, scopes, effective=False, activity=action == "cancel"
             )
             if action == "status":
-                return self.status()
+                return await self.status()
             if action == "operation":
-                return self.redact(self.state.operation(params["params"]["id"]))
+                return self.redact(await self.state.operation(params["params"]["id"]))
             if action == "operations":
-                return self.redact(self.state.operation_page(params.get("params", {})))
+                return self.redact(
+                    await self.state.operation_page(params.get("params", {}))
+                )
             if action == "cancel":
                 identifier = params["params"]["id"]
-                self.state.operation(identifier)
+                (await self.state.operation(identifier))
                 self.cancellations.add(identifier)
                 self.changed.set()
                 return {"id": identifier, "requested": True}
             return self.redact(
-                self.submit(action, params.get("params", {}), identity=identity)
+                await self.submit(action, params.get("params", {}), identity=identity)
             )
         if method == "resource.call":
             resource = next(
@@ -1904,7 +2056,12 @@ class Host:
     async def runtime_validate(self, name, candidate):
         import tempfile
 
-        proposed = {**self.selected(), name: candidate}
+        if self.state.settings.backend != "sqlite":
+            raise PluginError(
+                "runtime_validation_unsupported",
+                "Use a separate application and Core database for runtime validation",
+            )
+        proposed = {**(await self.selected()), name: candidate}
         graph = Graph(proposed, self.composition.bindings)
         if any(
             definition.runtime_validation == "separate_application"
@@ -1922,7 +2079,9 @@ class Host:
             atomic_write(
                 home / "toolframe.toml", tomlkit.dumps(composition.model_dump())
             )
-            scratch = Host(home, scratch=True)
+            scratch = await Host.create(
+                home, scratch=True, state_settings=StateSettings()
+            )
             cloned = copy.deepcopy(proposed)
             for item in cloned.values():
                 item["artifact"] = str(self.home / item["artifact"])
@@ -1932,7 +2091,7 @@ class Host:
                 item.pop("ui_environment", None)
             try:
                 await scratch.start(apply=False)
-                operation, _ = scratch.state.new_operation(
+                operation, _ = await scratch.state.new_operation(
                     "runtime-validation", name, {}
                 )
                 await scratch.replace(cloned, set(cloned), operation["id"])
@@ -1978,7 +2137,11 @@ class Host:
                             "health_failed", "Worker probe is not ready", health
                         )
                     runtime.health, runtime.observed = health, time.time()
-                    self.record(runtime, "active" if runtime.admitted else "gated")
+                    (
+                        await self.record(
+                            runtime, "active" if runtime.admitted else "gated"
+                        )
+                    )
                 except Exception as error:  # noqa: BLE001 - failed workers stay repairable via core
                     if (
                         self.runtimes.get(name) is not runtime
@@ -1998,9 +2161,11 @@ class Host:
                     for member in affected:
                         if member in self.runtimes:
                             self.runtimes[member].admitted = False
-                            self.record(
-                                self.runtimes[member],
-                                "failed" if member == name else "blocked",
+                            (
+                                await self.record(
+                                    self.runtimes[member],
+                                    "failed" if member == name else "blocked",
+                                )
                             )
                     self.health_publication_pending = True
             if self.health_publication_pending and not self.mutation.locked():
@@ -2018,7 +2183,11 @@ class Host:
                 try:
                     await self.end_root(root)
                 except Exception:  # noqa: BLE001 - lease remains held for a later cleanup acknowledgement
-                    self.state.set_meta("cleanup_pending", sorted(self.failed_roots))
+                    (
+                        await self.state.set_meta(
+                            "cleanup_pending", sorted(self.failed_roots)
+                        )
+                    )
                     continue
                 runtime = self.runtimes.get(root.owner)
                 if (
@@ -2041,7 +2210,11 @@ class Host:
                             "runtime": "failed",
                             "error": "Worker or required dependency exited",
                         }
-                        self.record(runtime, "failed" if name in failed else "blocked")
+                        (
+                            await self.record(
+                                runtime, "failed" if name in failed else "blocked"
+                            )
+                        )
                 await self.publish()
 
     async def _watch_loop(self):
@@ -2063,9 +2236,9 @@ class Host:
                 except OSError, PluginError:
                     continue
                 if name not in seen:
-                    candidate_id = self.state.plugin(name)["last_candidate"]
+                    candidate_id = (await self.state.plugin(name))["last_candidate"]
                     seen[name] = (
-                        self.state.candidate(candidate_id)["source"].get(
+                        (await self.state.candidate(candidate_id))["source"].get(
                             "source_hash", current
                         )
                         if candidate_id
@@ -2087,10 +2260,11 @@ class Host:
                 pending.pop(name, None)
                 action = (
                     "reload"
-                    if request.enabled and not self.state.plugin(name)["stopped"]
+                    if request.enabled
+                    and not (await self.state.plugin(name))["stopped"]
                     else "validate"
                 )
-                self.submit(action, {"id": name, "watch": True})
+                (await self.submit(action, {"id": name, "watch": True}))
 
     def redact(self, value):
         secrets = {self.token}
@@ -2101,24 +2275,15 @@ class Host:
                     request.config, definition.config_schema if definition else {}
                 )
             )
-        for row in self.state.plugins():
-            for key in ("last_candidate", "current_candidate", "previous_candidate"):
-                if row[key]:
-                    candidate = self.state.candidate(row[key])
-                    secrets.update(
-                        secret_values(
-                            candidate.get("config", {}),
-                            candidate.get("definition", {}).get("config_schema", {}),
-                        )
-                    )
-        for operation in self.state.operations():
-            secrets.update(secret_values(operation["request"]))
+        secrets.update(self.state.secrets)
         return redact(value, secrets)
 
     def available_dependencies(self):
         return {name for name in self.graph.definitions if self.healthy_runtime(name)}
 
     def healthy_runtime(self, name):
+        if self.state.failed:
+            return False
         runtime = self.runtimes.get(name)
         return bool(
             runtime
@@ -2130,7 +2295,7 @@ class Host:
             and runtime.worker.process.returncode is None
         )
 
-    def status(self):
+    async def status(self):
         try:
             self.config.read()
             self.configuration_error = None
@@ -2139,13 +2304,14 @@ class Host:
         plugins = []
         candidates = {}
         for name in sorted(
-            set(self.composition.plugins) | {row["id"] for row in self.state.plugins()}
+            set(self.composition.plugins)
+            | {row["id"] for row in (await self.state.plugins())}
         ):
-            row = self.state.plugin(name)
+            row = await self.state.plugin(name)
             request = self.composition.plugins.get(name)
             runtime = self.runtimes.get(name)
             candidate = (
-                self.state.candidate(row["last_candidate"])
+                (await self.state.candidate(row["last_candidate"]))
                 if row["last_candidate"]
                 else None
             )
@@ -2232,24 +2398,24 @@ class Host:
             missing
             or self.configuration_error
             or self.orphans
-            or self.state.meta("forward_repair")
+            or (await self.state.meta("forward_repair"))
         )
         cordis = self.manager.snapshot()
         return self.redact(
             {
                 "report_schema": 1,
                 "core": "ready",
-                "access": self.access.mode(),
+                "access": await self.access.mode(),
                 "mcp_access": self.mcp_access.status(),
                 "ready": ready,
                 "degraded": degraded,
                 "configuration_error": self.configuration_error,
                 "orphaned_workers": self.orphans,
-                "forward_repair": self.state.meta("forward_repair"),
+                "forward_repair": (await self.state.meta("forward_repair")),
                 "host_run": self.host_run,
                 "pid": os.getpid(),
                 "desired_revision": self.config.revision,
-                "observed_revision": self.state.meta("desired_revision"),
+                "observed_revision": (await self.state.meta("desired_revision")),
                 "catalog_epoch": self.epoch,
                 "application": "not_ready"
                 if not ready
@@ -2259,7 +2425,7 @@ class Host:
                 "missing_required": missing,
                 "plugins": plugins,
                 "presentations": self.publication,
-                "operations": self.state.operations(),
+                "operations": (await self.state.operations()),
                 "cordis": cordis,
                 "dependency_graph": dependency_snapshot(
                     self.graph,

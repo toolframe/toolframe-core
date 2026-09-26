@@ -12,6 +12,16 @@ from toolframe_sdk import MAX_FRAME_BYTES, PluginError
 from toolframe_sdk.rpc import RpcPeer
 
 
+def child_environment():
+    """Core database credentials are not part of a plugin/build environment."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("PYTHONPATH", "PYTHONHOME")
+        and not key.startswith("TOOLFRAME_CORE_")
+    }
+
+
 class WorkerProcess:
     def __init__(self, process, handler, *, log_callback=None):
         self.process = process
@@ -26,11 +36,7 @@ class WorkerProcess:
     async def start(
         cls, python, entrypoint, handler, *, cwd, log_callback=None, host_token=None
     ):
-        environment = {
-            key: value
-            for key, value in os.environ.items()
-            if key not in ("PYTHONPATH", "PYTHONHOME")
-        }
+        environment = child_environment()
         process = await asyncio.create_subprocess_exec(
             str(python),
             "-I",

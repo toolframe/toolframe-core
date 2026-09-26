@@ -56,7 +56,7 @@ class Example(Plugin):
 
 
 async def operate(host, action, **params):
-    operation = host.submit(action, params)
+    operation = await host.submit(action, params)
     return await host.wait_operation(operation["id"])
 
 
@@ -69,7 +69,7 @@ async def host(tmp_path):
     composition.packages.find_links = [str(workspace / "toolframe-sdk/dist")]
     composition.runtime.health_interval = 0.2
     atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
-    host = Host(home)
+    host = await Host.create(home)
     await host.start()
     try:
         yield host
@@ -78,9 +78,9 @@ async def host(tmp_path):
 
 
 async def test_empty_core_and_disabled_add(host, tmp_path):
-    assert host.status()["core"] == "ready"
-    assert host.status()["plugins"] == []
-    assert host.status()["dependency_graph"]["nodes"] == []
+    assert (await host.status())["core"] == "ready"
+    assert (await host.status())["plugins"] == []
+    assert (await host.status())["dependency_graph"]["nodes"] == []
     source = fixture_source(tmp_path, "alpha")
     added = await operate(host, "add", id="alpha", source=str(source))
     assert added["status"] == "succeeded", added
@@ -90,15 +90,15 @@ async def test_empty_core_and_disabled_add(host, tmp_path):
     assert await host.call_service("alpha", "alpha.service", "echo", {}) == {
         "version": "old"
     }
-    before = host.state.operations()
-    report = host.status()["dependency_graph"]
+    before = await host.state.operations()
+    report = (await host.status())["dependency_graph"]
     assert report["nodes"][0]["healthy"]
     assert report["impacts"]["alpha"]["reload"]["affected"] == ["alpha"]
-    assert host.state.operations() == before
+    assert (await host.state.operations()) == before
     removed = await operate(host, "remove", id="alpha")
     assert removed["status"] == "succeeded", removed
     assert not host.runtimes
-    report = host.status()["dependency_graph"]
+    report = (await host.status())["dependency_graph"]
     assert report["nodes"][0]["state"] == "removed"
     assert not report["impacts"]
 
@@ -145,10 +145,9 @@ async def test_activation_failure_recovers_old_snapshot_once(host, tmp_path):
     assert await host.call_service("alpha", "alpha.service", "echo", {}) == {
         "version": "old"
     }
-    assert (
-        host.state.plugin("alpha")["last_candidate"]
-        != host.runtimes["alpha"].candidate["id"]
-    )
+    assert (await host.state.plugin("alpha"))["last_candidate"] != host.runtimes[
+        "alpha"
+    ].candidate["id"]
 
 
 async def test_drain_timeout_preserves_generation_and_reopens_admission(host, tmp_path):
@@ -180,8 +179,8 @@ async def test_missing_dependency_is_visible_and_recovers_when_provider_added(
     source = fixture_source(tmp_path, "consumer", dependency="alpha")
     result = await operate(host, "add", id="consumer", source=str(source), enable=True)
     assert result["status"] == "succeeded", result
-    assert host.status()["plugins"][0]["blocked_by"] == ["alpha.service"]
-    report = host.status()["dependency_graph"]
+    assert (await host.status())["plugins"][0]["blocked_by"] == ["alpha.service"]
+    report = (await host.status())["dependency_graph"]
     assert report["edges"][0]["state"] == "missing"
     source = fixture_source(tmp_path, "alpha")
     result = await operate(host, "add", id="alpha", source=str(source), enable=True)
@@ -189,7 +188,7 @@ async def test_missing_dependency_is_visible_and_recovers_when_provider_added(
     assert await host.call_service("consumer", "consumer.service", "echo", {}) == {
         "version": "old"
     }
-    report = host.status()["dependency_graph"]
+    report = (await host.status())["dependency_graph"]
     assert report["edges"][0]["target"] == "alpha"
     assert report["edges"][0]["state"] == "resolved"
 
@@ -202,7 +201,7 @@ async def test_forced_stop_is_fenced_until_explicit_enable(host, tmp_path):
     assert (await operate(host, "stop", id="alpha", force=True))[
         "status"
     ] == "succeeded"
-    assert host.state.plugin("alpha")["stopped"]
+    assert (await host.state.plugin("alpha"))["stopped"]
     with pytest.raises(PluginError):
         await host.call_service("alpha", "alpha.service", "echo", {})
     result = await operate(host, "enable", id="alpha")

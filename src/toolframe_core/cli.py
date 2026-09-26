@@ -189,6 +189,25 @@ def parser():
         _add_json_option(command)
         command.add_argument("id")
 
+    state = commands.add_parser(
+        "state", help="Provision or recover a Core PostgreSQL journal"
+    )
+    _add_json_option(state)
+    states = state.add_subparsers(dest="action", required=True)
+    setup = states.add_parser("setup")
+    for name in ("database", "application-id", "node-id", "output"):
+        setup.add_argument("--" + name, required=True)
+    inspect = states.add_parser("inspect")
+    recover = states.add_parser("recover")
+    recover.add_argument("--expected-run", required=True)
+    recover.add_argument("--confirm-workers-stopped", action="store_true")
+    launch = states.add_parser(
+        "run", help="Load a private runtime environment document and exec a command"
+    )
+    launch.add_argument("--env-file", required=True, type=Path)
+    launch.add_argument("argv", nargs=argparse.REMAINDER)
+    for command in (setup, inspect, recover, launch):
+        _add_json_option(command)
     return result
 
 
@@ -390,12 +409,16 @@ def _status_check(result, *, plugin=False):
 
 
 def _serve(config, *, listen_host=None):
+    return asyncio.run(_serve_async(config, listen_host=listen_host))
+
+
+async def _serve_async(config, *, listen_host=None):
     # Host owns the invalid-config fallback and is the only host constructed by
     # the CLI. Its application is therefore the source of the listen address.
     from .api import create_app
     from .host import Host
 
-    control = Host(config.home, listen_host=listen_host)
+    control = await Host.create(config.home, listen_host=listen_host)
     application = control.composition.application
     host = control.listen_host
     authority = f"[{host}]" if ":" in host else host
@@ -405,14 +428,20 @@ def _serve(config, *, listen_host=None):
         f"{config.home / '.toolframe/management.token'}",
         flush=True,
     )
-    uvicorn.run(
-        create_app(control),
-        host=host,
-        port=application.port,
-        log_level="info",
-        access_log=False,
-        proxy_headers=False,
+    server = uvicorn.Server(
+        uvicorn.Config(
+            create_app(control),
+            host=host,
+            port=application.port,
+            log_level="info",
+            access_log=False,
+            proxy_headers=False,
+        )
     )
+    try:
+        await server.serve()
+    finally:
+        await control.close()
     return 0
 
 
@@ -461,6 +490,11 @@ def _install_skill(arguments, home, *, upgrade_only=False):
 
 
 def run(arguments):
+    if arguments.command == "state":
+        from .state_admin import run as state_run
+
+        _emit_json(state_run(arguments))
+        return 0
     config = ConfigFile(arguments.home)
     if arguments.command == "plugin" and arguments.action == "new":
         from .scaffold import new_plugin

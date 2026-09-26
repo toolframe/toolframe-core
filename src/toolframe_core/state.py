@@ -1,339 +1,226 @@
-"""Small durable management journal, physically independent of business stores."""
+"""Asynchronous management journal interface, independent of plugin storage."""
 
 from __future__ import annotations
 
-import json
-import sqlite3
-import time
-import uuid
+import asyncio
+import os
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from toolframe_sdk import PluginError
 
+from ._state_sqlite import OperationQuery, SQLiteCoreState  # noqa: F401
+from .redaction import SENSITIVE_KEY, secret_values
 
-def encode(value):
-    return json.dumps(value, separators=(",", ":"), allow_nan=False)
 
+@dataclass(frozen=True, repr=False)
+class StateSettings:
+    backend: str = "sqlite"
+    database_url: str = ""
+    application_id: str = ""
+    node_id: str = ""
 
-class OperationQuery(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    page: int = Field(default=1, ge=1)
-    page_size: int = Field(default=10, ge=1, le=100)
-    through: int | None = Field(default=None, ge=0)
-    target: str | None = Field(default=None, max_length=256)
-    kind: str | None = Field(default=None, max_length=64)
-    status: str | None = Field(default=None, max_length=64)
+    @classmethod
+    def from_env(cls):
+        backend = os.environ.get("TOOLFRAME_CORE_STATE_BACKEND", "sqlite")
+        if backend not in {"sqlite", "postgresql"}:
+            raise PluginError("core_state_config_invalid", "Unknown Core state backend")
+        if backend == "sqlite":
+            return cls()
+        values = {
+            name: os.environ.get(variable, "")
+            for name, variable in (
+                ("database_url", "TOOLFRAME_CORE_DATABASE_URL"),
+                ("application_id", "TOOLFRAME_CORE_APPLICATION_ID"),
+                ("node_id", "TOOLFRAME_CORE_NODE_ID"),
+            )
+        }
+        if any(not value or len(value) > 4096 for value in values.values()):
+            raise PluginError(
+                "core_state_config_invalid",
+                "Set Core database URL, application ID and stable node ID in the runtime environment",
+            )
+        return cls(backend=backend, **values)
 
 
 class CoreState:
-    def __init__(self, home: Path):
-        path = home / "data" / "core.sqlite"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(path)
-        path.chmod(0o600)
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA journal_mode=WAL")
-        self.connection.execute("PRAGMA busy_timeout=5000")
-        version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2):
-            self.connection.close()
-            raise PluginError(
-                "core_schema_incompatible", f"Unsupported core schema {version}"
-            )
-        self.connection.executescript("""
-            CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS candidates(
-                id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, created REAL NOT NULL, data TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS plugins(
-                id TEXT PRIMARY KEY, current_candidate TEXT, previous_candidate TEXT,
-                last_candidate TEXT, runtime TEXT NOT NULL DEFAULT '{}', stopped INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS operations(
-                id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT, status TEXT NOT NULL,
-                phase TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL,
-                request TEXT NOT NULL, result TEXT, error TEXT, idempotency TEXT UNIQUE
-            );
-        """)
-        # Serialize the migration and recheck after acquiring the write lock.
-        # UUIDs, payloads and idempotency keys survive; old records get stable
-        # numbers in creation order, with insertion order breaking timestamp ties.
-        with self.connection:
-            self.connection.execute("BEGIN IMMEDIATE")
-            if self.connection.execute("PRAGMA user_version").fetchone()[0] < 2:
-                self.connection.execute(
-                    "ALTER TABLE operations RENAME TO operations_v1"
-                )
-                self.connection.execute("""
-                    CREATE TABLE operations(
-                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                        id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, target TEXT,
-                        status TEXT NOT NULL, phase TEXT NOT NULL,
-                        created REAL NOT NULL, updated REAL NOT NULL,
-                        request TEXT NOT NULL, result TEXT, error TEXT,
-                        idempotency TEXT UNIQUE
-                    )
-                """)
-                self.connection.execute("""
-                    INSERT INTO operations(id,kind,target,status,phase,created,updated,request,result,error,idempotency)
-                    SELECT id,kind,target,status,phase,created,updated,request,result,error,idempotency
-                    FROM operations_v1 ORDER BY created, rowid
-                """)
-                self.connection.execute("DROP TABLE operations_v1")
-                self.connection.execute("PRAGMA user_version=2")
-            for field in ("target", "kind", "status"):
-                self.connection.execute(
-                    f"CREATE INDEX IF NOT EXISTS operations_{field}_sequence ON operations({field}, sequence)"
-                )
-        self.connection.commit()
+    """One serialized, durable call per await; cached secrets allow offline redaction.
 
-    def close(self):
-        self.connection.close()
+    SQLite's connection belongs to one dedicated executor thread. PostgreSQL uses
+    an async connection. Cancellation drains a submitted SQLite call before its
+    caller exits; a cancelled PostgreSQL call poisons that host's journal session.
+    """
 
-    def meta(self, key, default=None):
-        row = self.connection.execute(
-            "SELECT value FROM metadata WHERE key=?", (key,)
-        ).fetchone()
-        return json.loads(row[0]) if row else default
+    def __init__(self, settings):
+        self.settings = settings
+        self.backend = None
+        self.executor = None
+        self.lock = asyncio.Lock()
+        self.secrets = set()
+        self.failed = False
+        self.closed = False
 
-    def set_meta(self, key, value):
-        with self.connection:
-            self.connection.execute(
-                "INSERT OR REPLACE INTO metadata VALUES(?,?)", (key, encode(value))
-            )
-
-    def save_candidate(self, candidate):
-        with self.connection:
-            self.connection.execute(
-                "INSERT OR REPLACE INTO candidates VALUES(?,?,?,?)",
-                (
-                    candidate["id"],
-                    candidate["plugin_id"],
-                    time.time(),
-                    encode(candidate),
-                ),
-            )
-            self.connection.execute(
-                "INSERT OR IGNORE INTO plugins(id) VALUES(?)", (candidate["plugin_id"],)
-            )
-            self.connection.execute(
-                "UPDATE plugins SET last_candidate=? WHERE id=?",
-                (candidate["id"], candidate["plugin_id"]),
-            )
-
-    def candidate(self, identifier):
-        row = self.connection.execute(
-            "SELECT data FROM candidates WHERE id=?", (identifier,)
-        ).fetchone()
-        if not row:
-            raise PluginError("candidate_missing", f"Unknown candidate {identifier}")
-        return json.loads(row[0])
-
-    def plugin(self, identifier):
-        row = self.connection.execute(
-            "SELECT * FROM plugins WHERE id=?", (identifier,)
-        ).fetchone()
-        if not row:
-            return {
-                "id": identifier,
-                "current_candidate": None,
-                "previous_candidate": None,
-                "last_candidate": None,
-                "runtime": {},
-                "stopped": False,
-            }
-        result = dict(row)
-        result["runtime"] = json.loads(result["runtime"])
-        result["stopped"] = bool(result["stopped"])
-        return result
-
-    def plugins(self):
-        return [
-            self.plugin(row[0])
-            for row in self.connection.execute("SELECT id FROM plugins ORDER BY id")
-        ]
-
-    def runtime(self, identifier, value):
-        with self.connection:
-            self.connection.execute(
-                "INSERT OR IGNORE INTO plugins(id) VALUES(?)", (identifier,)
-            )
-            self.connection.execute(
-                "UPDATE plugins SET runtime=? WHERE id=?", (encode(value), identifier)
-            )
-
-    def select(self, identifier, candidate_id):
-        with self.connection:
-            self.connection.execute(
-                "INSERT OR IGNORE INTO plugins(id) VALUES(?)", (identifier,)
-            )
-            self.connection.execute(
-                "UPDATE plugins SET previous_candidate=current_candidate, current_candidate=? WHERE id=?",
-                (candidate_id, identifier),
-            )
-
-    def stopped(self, identifier, stopped):
-        with self.connection:
-            self.connection.execute(
-                "INSERT OR IGNORE INTO plugins(id) VALUES(?)", (identifier,)
-            )
-            self.connection.execute(
-                "UPDATE plugins SET stopped=? WHERE id=?", (bool(stopped), identifier)
-            )
-
-    def operation(self, identifier):
-        row = self.connection.execute(
-            "SELECT * FROM operations WHERE id=?", (identifier,)
-        ).fetchone()
-        if not row:
-            raise PluginError("operation_missing", f"Unknown operation {identifier}")
-        result = dict(row)
-        for field in ("request", "result", "error"):
-            result[field] = (
-                json.loads(result[field]) if result[field] is not None else None
-            )
-        return result
-
-    def idempotent_operation(self, kind, target, request, idempotency=None):
-        if idempotency:
-            row = self.connection.execute(
-                "SELECT id FROM operations WHERE idempotency=?", (idempotency,)
-            ).fetchone()
-            if row:
-                existing = self.operation(row[0])
-                if (
-                    existing["kind"] != kind
-                    or existing["target"] != target
-                    or existing["request"] != request
-                ):
-                    raise PluginError(
-                        "idempotency_conflict", "Key already belongs to another request"
-                    )
-                return existing
-        return None
-
-    def new_operation(self, kind, target, request, idempotency=None):
-        existing = self.idempotent_operation(kind, target, request, idempotency)
-        if existing is not None:
-            return existing, False
-        identifier = uuid.uuid4().hex
-        now = time.time()
-        with self.connection:
-            self.connection.execute(
-                "INSERT INTO operations(id,kind,target,status,phase,created,updated,request,result,error,idempotency) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    identifier,
-                    kind,
-                    target,
-                    "queued",
-                    "queued",
-                    now,
-                    now,
-                    encode(request),
-                    None,
-                    None,
-                    idempotency,
-                ),
-            )
-        return self.operation(identifier), True
-
-    def update_operation(
-        self, identifier, *, status=None, phase=None, result=None, error=None
-    ):
-        values = {"updated": time.time()}
-        for key, value in (
-            ("status", status),
-            ("phase", phase),
-            ("result", result),
-            ("error", error),
-        ):
-            if value is not None:
-                values[key] = encode(value) if key in ("result", "error") else value
-        assignments = ",".join(f"{key}=?" for key in values)
-        with self.connection:
-            self.connection.execute(
-                f"UPDATE operations SET {assignments} WHERE id=?",
-                (*values.values(), identifier),
-            )
-
-    def operations(self, limit=50):
-        return [
-            self.operation(row[0])
-            for row in self.connection.execute(
-                "SELECT id FROM operations ORDER BY sequence DESC LIMIT ?", (limit,)
-            )
-        ]
-
-    def operation_page(self, params=None):
+    @classmethod
+    async def open(cls, home, *, settings=None):
+        state = cls(settings or StateSettings.from_env())
         try:
-            query = OperationQuery.model_validate(params or {})
-        except ValidationError as error:
-            raise PluginError(
-                "invalid_request", "Invalid operation history query"
-            ) from error
-        latest = self.connection.execute(
-            "SELECT COALESCE(MAX(sequence), 0) FROM operations"
-        ).fetchone()[0]
-        through = min(query.through, latest) if query.through is not None else latest
-        clauses, values = ["sequence <= ?"], [through]
-        for field in ("target", "kind", "status"):
-            value = getattr(query, field)
-            if value is not None:
-                if field == "target" and value == "":
-                    clauses.append("target IS NULL")
-                else:
-                    clauses.append(f"{field}=?")
-                    values.append(value)
-        where = " AND ".join(clauses)
-        total = self.connection.execute(
-            f"SELECT COUNT(*) FROM operations WHERE {where}", values
-        ).fetchone()[0]
-        pages = max(1, (total + query.page_size - 1) // query.page_size)
-        page = min(query.page, pages)
-        items = [
-            self.operation(row[0])
-            for row in self.connection.execute(
-                f"SELECT id FROM operations WHERE {where} ORDER BY sequence DESC LIMIT ? OFFSET ?",
-                (*values, query.page_size, (page - 1) * query.page_size),
-            )
-        ]
-        filters = {
-            field: [
-                row[0]
-                for row in self.connection.execute(
-                    f"SELECT DISTINCT {field} FROM operations WHERE {field} IS NOT NULL ORDER BY {field}"
+            if state.settings.backend == "sqlite":
+                state.executor = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="core-state"
                 )
-            ]
-            for field in ("target", "kind", "status")
-        }
-        return {
-            "items": items,
-            "page": page,
-            "page_size": query.page_size,
-            "pages": pages,
-            "total": total,
-            "through": through,
-            "newer_count": self.connection.execute(
-                "SELECT COUNT(*) FROM operations WHERE sequence > ?", (through,)
-            ).fetchone()[0],
-            "filters": filters,
-        }
 
-    def reconcile_startup(self, host_run):
-        with self.connection:
-            self.connection.execute(
-                "UPDATE operations SET status='interrupted', updated=? WHERE status IN ('queued','running','cancelling')",
-                (time.time(),),
-            )
-            for plugin in self.plugins():
-                historical = plugin["runtime"]
-                self.runtime(
-                    plugin["id"],
-                    {
-                        "state": "unknown",
-                        "host_run": host_run,
-                        "previous_observation": historical,
-                    },
+                def initialize():
+                    state.backend = SQLiteCoreState(Path(home))
+
+                await state._thread(initialize)
+            else:
+                if (Path(home) / "data/core.sqlite").exists():
+                    raise PluginError(
+                        "core_state_migration_required",
+                        "Use a fresh application home or explicitly migrate the existing SQLite journal",
+                    )
+                from ._state_postgres import PostgresCoreState
+
+                state.backend = await PostgresCoreState.open(state.settings)
+                state.secrets.add(state.settings.database_url)
+            for plugin in await state.plugins():
+                for name in (
+                    "last_candidate",
+                    "current_candidate",
+                    "previous_candidate",
+                ):
+                    if plugin[name]:
+                        await state.candidate(plugin[name])
+            await state.operations()
+            return state
+        except BaseException:
+            await state.close()
+            raise
+
+    async def _thread(self, function, *args, **kwargs):
+        future = asyncio.get_running_loop().run_in_executor(
+            self.executor, partial(function, *args, **kwargs)
+        )
+        try:
+            return await asyncio.shield(future)
+        except asyncio.CancelledError:
+            await asyncio.shield(future)
+            raise
+
+    def _remember(self, value):
+        if isinstance(value, dict):
+            if isinstance(value.get("definition"), dict):
+                self.secrets.update(
+                    secret_values(
+                        value.get("config", {}),
+                        value["definition"].get("config_schema", {}),
+                    )
                 )
-            self.connection.execute("UPDATE plugins SET stopped=0")
+                # Schema descriptions and constraints are metadata, not secret
+                # values. For example password.minLength=1 must not hide page 1.
+                value = {
+                    key: item for key, item in value.items() if key != "definition"
+                }
+            for key, item in value.items():
+                if SENSITIVE_KEY.search(key):
+                    self.secrets.update(secret_values(item, {"writeOnly": True}))
+                else:
+                    self._remember(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                self._remember(item)
+
+    async def _call(self, method, *args, **kwargs):
+        async with self.lock:
+            if self.closed or self.failed:
+                raise PluginError(
+                    "core_state_unavailable",
+                    "Core journal is unavailable; restart after recovery",
+                )
+            self._remember(args)
+            self._remember(kwargs)
+            try:
+                if self.executor:
+                    result = await self._thread(
+                        getattr(self.backend, method), *args, **kwargs
+                    )
+                else:
+                    result = await self.backend.call(method, *args, **kwargs)
+            except BaseException:
+                if not self.executor and self.backend.failed:
+                    self.failed = True
+                raise
+            self._remember(result)
+            return result
+
+    async def close(self, *, clean=True):
+        async with self.lock:
+            if self.closed:
+                return
+            self.closed = True
+            try:
+                if self.backend:
+                    if self.executor:
+                        await self._thread(self.backend.close)
+                    else:
+                        await self.backend.close(clean=clean and not self.failed)
+            finally:
+                if self.executor:
+                    self.executor.shutdown(wait=False)
+
+    async def ping(self):
+        if self.executor:
+            return not self.closed
+        return await self._call("ping")
+
+    async def meta(self, key, default=None):
+        return await self._call("meta", key, default)
+
+    async def set_meta(self, key, value):
+        return await self._call("set_meta", key, value)
+
+    async def save_candidate(self, candidate):
+        return await self._call("save_candidate", candidate)
+
+    async def candidate(self, identifier):
+        return await self._call("candidate", identifier)
+
+    async def plugin(self, identifier):
+        return await self._call("plugin", identifier)
+
+    async def plugins(self):
+        return await self._call("plugins")
+
+    async def runtime(self, identifier, value):
+        return await self._call("runtime", identifier, value)
+
+    async def select(self, identifier, candidate_id):
+        return await self._call("select", identifier, candidate_id)
+
+    async def stopped(self, identifier, stopped):
+        return await self._call("stopped", identifier, stopped)
+
+    async def operation(self, identifier):
+        return await self._call("operation", identifier)
+
+    async def idempotent_operation(self, kind, target, request, idempotency=None):
+        return await self._call(
+            "idempotent_operation", kind, target, request, idempotency
+        )
+
+    async def new_operation(self, kind, target, request, idempotency=None):
+        return await self._call("new_operation", kind, target, request, idempotency)
+
+    async def update_operation(self, identifier, **values):
+        return await self._call("update_operation", identifier, **values)
+
+    async def operations(self, limit=50):
+        return await self._call("operations", limit)
+
+    async def operation_page(self, params=None):
+        return await self._call("operation_page", params)
+
+    async def reconcile_startup(self, host_run):
+        return await self._call("reconcile_startup", host_run)
