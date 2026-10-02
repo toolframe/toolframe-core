@@ -16,6 +16,10 @@ For PostgreSQL provisioning, startup and recovery, see
 [PostgreSQL Core state](docs/postgresql-state.md). Both backends run one Core per
 application and retain configuration, private keys and artifacts in its home.
 
+Optional [OpenTelemetry tracing](docs/tracing.md) follows HTTP and nested plugin
+calls. It is disabled by default and adds SDK/exporter dependencies only when
+enabled.
+
 ## Run the local workspace
 
 The Toolframe repositories and `fastapi-cordis` must be siblings.

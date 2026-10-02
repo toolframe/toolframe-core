@@ -58,6 +58,12 @@ concurrent edit. Invalid composition remains visible through diagnostics.
 
 ## Workers, reload and recovery
 
+Optional tracing belongs to Core and the SDK transport boundaries. Request
+context crosses HTTP and JSON-RPC as metadata, independently of the admitted
+business principal. Dependency environments distinguish tracing profiles;
+export queues belong to individual processes. See [tracing](tracing.md) for the
+runtime contract and [ADR 0010](adr/0010-optional-runtime-tracing.md) for the choice.
+
 Backend workers have separately resolved environments. Page contributors share
 one aggregate Dashboard environment, which must resolve before switching. A page
 package or shared UI dependency change can replace that entire Dashboard process

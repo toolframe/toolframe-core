@@ -22,12 +22,13 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.3,<4"]
+tracing = ["toolframe-sdk[tracing]==0.3.0"]
 
 [project.scripts]
 toolframe-core = "toolframe_core.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.12,<1", "hatchling>=1.27,<2", "fastmcp==4.0.0"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.12,<1", "hatchling>=1.27,<2", "fastmcp==4.0.0", "opentelemetry-sdk>=1.44,<2", "opentelemetry-exporter-otlp-proto-http>=1.44,<2"]
 
 [tool.uv.sources]
 toolframe-sdk = { path = "../toolframe-sdk", editable = true }

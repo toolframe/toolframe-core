@@ -17,6 +17,7 @@ import tomlkit
 from fastapi_cordis import Plugin as CordisPlugin
 from fastapi_cordis import PluginManager
 from toolframe_sdk import PluginError, Principal, digest
+from toolframe_sdk.tracing import configure_tracing
 
 from .access import Access, operation_scopes
 from .config import ConfigFile, HostLock, PluginRequest, atomic_write, management_token
@@ -70,6 +71,8 @@ class Host:
             )
             return host
         except BaseException:
+            if getattr(host, "tracing", None):
+                await asyncio.to_thread(host.tracing.shutdown)
             if getattr(host, "state", None):
                 await host.state.close()
             if getattr(host, "lock", None):
@@ -106,6 +109,18 @@ class Host:
             else self.composition.application.host
         )
         self.host_run = uuid.uuid4().hex
+        self.tracing = (
+            None
+            if scratch
+            else configure_tracing(
+                "toolframe.core",
+                {
+                    "service.namespace": self.composition.application.id,
+                    "service.instance.id": self.host_run,
+                    "toolframe.application.id": self.composition.application.id,
+                },
+            )
+        )
         if (
             self.state.settings.backend == "postgresql"
             and self.composition.application.id != self.state.settings.application_id
@@ -318,6 +333,8 @@ class Host:
             self.lock.close()
             await self.state.close(clean=clean)
             self._closed = True
+            if self.tracing:
+                await asyncio.to_thread(self.tracing.shutdown)
 
     async def submit(self, action, params, *, idempotency=None, identity=None):
         if self.state.failed:
@@ -1025,6 +1042,15 @@ class Host:
             lambda method, params: self.worker_call(runtime, method, params),
             cwd=self.home,
             host_token=f"{self.host_run}/{name}/{generation}",
+            tracing=self.tracing,
+            trace_attributes={
+                "service.name": f"toolframe.plugin.{name}",
+                "service.namespace": self.composition.application.id,
+                "service.instance.id": generation,
+                "toolframe.application.id": self.composition.application.id,
+                "toolframe.plugin.id": name,
+                "toolframe.plugin.generation": generation,
+            },
         )
         self.worker_owners[str(runtime.worker.pid)] = {
             "name": name,

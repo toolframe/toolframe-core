@@ -15,6 +15,16 @@ def test_core_database_credentials_are_not_inherited_by_workers(monkeypatch):
     assert environment["TOOLFRAME_POSTGRES_DSN"] == "plugin-dsn"
 
 
+def test_build_and_preflight_exclude_all_telemetry_configuration(monkeypatch):
+    monkeypatch.setenv("TOOLFRAME_TRACING_ENABLED", "true")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "authorization=secret")
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "private=value")
+    monkeypatch.setenv("OTEL_UNRECOGNIZED_FUTURE_OPTION", "private")
+    environment = child_environment()
+    assert "TOOLFRAME_TRACING_ENABLED" not in environment
+    assert not any(key.startswith("OTEL_") for key in environment)
+
+
 @pytest.mark.parametrize("disappears", [True, False])
 async def test_force_stop_requires_absence_after_permission_error(
     monkeypatch, disappears

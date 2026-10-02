@@ -193,6 +193,7 @@ def python_checks(root, core, output, env):
     version = tomllib.loads((core / "pyproject.toml").read_text())["project"]["version"]
     smoke = """
 import importlib.metadata as metadata
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -203,6 +204,7 @@ from toolframe_core.api import create_app
 from toolframe_core.host import Host
 assert metadata.version('toolframe-core') == sys.argv[1]
 assert Path(toolframe_core.__file__).is_relative_to(Path(sys.prefix))
+assert importlib.util.find_spec('opentelemetry') is None
 print(json.dumps({'version': metadata.version('toolframe-core'),
                   'installed_module': toolframe_core.__file__,
                   'python': sys.version, 'runtime_imports': 'passed'}))

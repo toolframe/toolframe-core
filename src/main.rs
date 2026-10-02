@@ -10,6 +10,39 @@ use tokio::process::Command;
 
 include!(concat!(env!("OUT_DIR"), "/bundle.rs"));
 
+fn tracing_requested(value: Option<&str>) -> Result<bool> {
+    match value
+        .unwrap_or("false")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "true" | "1" => Ok(true),
+        "false" | "0" | "" => Ok(false),
+        _ => bail!("TOOLFRAME_TRACING_ENABLED must be true or false"),
+    }
+}
+
+fn core_requirement(postgres: bool, tracing: bool) -> &'static str {
+    match (postgres, tracing) {
+        (true, true) => "toolframe-core[postgres,tracing]==0.6.0",
+        (true, false) => "toolframe-core[postgres]==0.6.0",
+        (false, true) => "toolframe-core[tracing]==0.6.0",
+        (false, false) => "toolframe-core==0.6.0",
+    }
+}
+
+fn bootstrap_command(path: &std::path::Path) -> Command {
+    let mut command = Command::new(path);
+    for (key, _) in env::vars_os() {
+        let name = key.to_string_lossy();
+        if name.starts_with("OTEL_") || name == "TOOLFRAME_TRACING_ENABLED" {
+            command.env_remove(key);
+        }
+    }
+    command
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let arguments: Vec<_> = env::args_os().skip(1).collect();
@@ -61,13 +94,10 @@ async fn main() -> Result<()> {
     );
     let postgres = env::var("TOOLFRAME_CORE_STATE_BACKEND").as_deref() == Ok("postgresql")
         || forwarded.iter().any(|argument| argument == "state");
-    let core_requirement = if postgres {
-        "toolframe-core[postgres]==0.6.0"
-    } else {
-        "toolframe-core==0.6.0"
-    };
+    let tracing = tracing_requested(env::var("TOOLFRAME_TRACING_ENABLED").ok().as_deref())?;
+    let core_requirement = core_requirement(postgres, tracing);
     fingerprint.update(core_requirement.as_bytes());
-    fingerprint.update(b"bootstrap4");
+    fingerprint.update(b"bootstrap5");
     fingerprint.update(python_request.as_bytes());
     let bundles = bundle::extract(&root.join("bundles"), WHEELS)?;
     for (name, content) in WHEELS {
@@ -108,7 +138,7 @@ async fn main() -> Result<()> {
         if environment.exists() {
             fs::remove_dir_all(&environment)?;
         }
-        let mut create = Command::new(&resolved.path);
+        let mut create = bootstrap_command(&resolved.path);
         create
             .args(["--no-config", "venv", "--python", &python_request])
             .arg(&environment);
@@ -130,15 +160,15 @@ async fn main() -> Result<()> {
         }
         if requirements.is_empty() {
             requirements.push(core_requirement.into());
-        } else if postgres {
-            // The bundled Core wheel provides the distribution; the extra adds
-            // the driver and remains optional for ordinary SQLite bootstraps.
+        } else if postgres || tracing {
+            // Optional drivers/exporters are resolved only for a selected runtime
+            // profile. The embedded wheels do not include these dependencies.
             requirements.push(core_requirement.into());
         }
         let input = environment.join("requirements.in");
         fs::write(&input, requirements.join("\n") + "\n")?;
         let lockfile = environment.join("pylock.toml");
-        let mut compile = Command::new(&resolved.path);
+        let mut compile = bootstrap_command(&resolved.path);
         compile
             .args([
                 "--no-config",
@@ -169,7 +199,7 @@ async fn main() -> Result<()> {
                 "Core dependency resolution failed; use a release bundle or --wheelhouse for local builds"
             );
         }
-        let mut sync = Command::new(&resolved.path);
+        let mut sync = bootstrap_command(&resolved.path);
         sync.args(["--no-config", "pip", "sync", "--python"])
             .arg(&python)
             .arg(&lockfile);
@@ -216,5 +246,38 @@ async fn main() -> Result<()> {
     {
         let status = command.status().await?;
         std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{core_requirement, tracing_requested};
+
+    #[test]
+    fn tracing_is_explicit_and_validated() {
+        for value in [None, Some("false"), Some("0"), Some("")] {
+            assert!(!tracing_requested(value).unwrap());
+        }
+        for value in [Some("true"), Some("1"), Some(" TRUE ")] {
+            assert!(tracing_requested(value).unwrap());
+        }
+        assert!(tracing_requested(Some("typo")).is_err());
+    }
+
+    #[test]
+    fn runtime_profiles_select_only_the_requested_extras() {
+        assert_eq!(core_requirement(false, false), "toolframe-core==0.6.0");
+        assert_eq!(
+            core_requirement(false, true),
+            "toolframe-core[tracing]==0.6.0"
+        );
+        assert_eq!(
+            core_requirement(true, false),
+            "toolframe-core[postgres]==0.6.0"
+        );
+        assert_eq!(
+            core_requirement(true, true),
+            "toolframe-core[postgres,tracing]==0.6.0"
+        );
     }
 }
