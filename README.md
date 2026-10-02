@@ -38,8 +38,10 @@ composition and keeps CLI/API diagnostics available during plugin preparation.
 The default standard release embeds all ten Toolframe/Cordis wheels, including
 the six providers and Entry Register. Copy the executable to another directory
 or computer of the same architecture; no source checkout or separate wheelhouse
-is needed. First use downloads the pinned uv/Python runtime and public Python
-dependencies. This is not a fully offline cold-start distribution.
+is needed. First use reuses a compatible installed uv or downloads the verified
+fallback, then prepares Python and public Python dependencies. See
+[runtime preparation](docs/runtime.md) for uv selection, supported versions and
+offline behavior. This is not a fully offline cold-start distribution.
 
 ```sh
 # From the directory containing a downloaded/copied executable:
@@ -429,6 +431,7 @@ artifact storage and full business audit providers are outside this version.
 
 ## Documentation
 
+- [Runtime preparation](docs/runtime.md): installed uv reuse, overrides and offline startup.
 - [Architecture](docs/architecture.md): ownership, packages, lifecycle and data contracts.
 - [Authentication](docs/authentication.md): access policy, scopes and recovery.
 - [Dependency diagnostics](docs/dependency-graph.md): status and operation impact.

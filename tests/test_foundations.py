@@ -8,6 +8,35 @@ from toolframe_core.packages import Packages, snapshot
 from toolframe_core.state import SQLiteCoreState as CoreState
 
 
+def test_packages_use_selected_uv_even_when_renamed(tmp_path, monkeypatch):
+    selected = tmp_path / "selected uv"
+    selected.write_text("#!/bin/sh\nexit 0\n")
+    selected.chmod(0o755)
+    monkeypatch.setenv("TOOLFRAME_UV", str(selected))
+    monkeypatch.setenv("PATH", "")
+    package = Packages(tmp_path / "home", PackageSettings())
+    assert package.uv == str(selected.resolve())
+
+
+def test_packages_do_not_replace_missing_selected_uv_with_path(tmp_path, monkeypatch):
+    fallback = tmp_path / "uv"
+    fallback.write_text("#!/bin/sh\nexit 0\n")
+    fallback.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("TOOLFRAME_UV", str(tmp_path / "missing-uv"))
+    with pytest.raises(PluginError, match="Configured uv executable is unavailable"):
+        Packages(tmp_path / "home", PackageSettings())
+
+
+def test_python_entry_point_still_discovers_uv_on_path(tmp_path, monkeypatch):
+    fallback = tmp_path / "uv"
+    fallback.write_text("#!/bin/sh\nexit 0\n")
+    fallback.chmod(0o755)
+    monkeypatch.delenv("TOOLFRAME_UV", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert Packages(tmp_path / "home", PackageSettings()).uv == str(fallback.resolve())
+
+
 def test_private_keys_are_not_regenerated_for_an_existing_remote_store(tmp_path):
     from types import SimpleNamespace
 

@@ -40,6 +40,11 @@ disposable application homes rather than an operator's existing application.
 | `scripts/verify-retained-plugins.py` | Retained artifacts across binary upgrades. |
 | `scripts/verify-skill.py` and `scripts/verify-scaffold.py` | Skill installation, packaging, upgrades and generated plugins. |
 
+Run the release probe with `--uv-path /path/to/uv` to qualify an installed version
+against the [runtime range](runtime.md). It also asserts that no private uv was
+downloaded. Cover the minimum supported version and a newer supported patch, and
+run without a compatible uv on PATH to exercise the pinned managed download.
+
 The FastMCP repository supplies gateway and Codex client probes. The Codex probe
 exercises its MCP client API, not a model turn or desktop GUI. Real browser checks
 must cover reconnects, navigation and retained business data separately from
@@ -85,6 +90,7 @@ identify which rows were actually exercised.
 | Worker protocol | Nested concurrent calls, cancellation, invalid/oversized frames, lost pipes and stale generations produce bounded errors and cleanup without deadlock. |
 | Plugin independence | Clean built wheels load resources without source checkouts, private imports or special demo behavior. |
 | Distribution | Empty/demo applications pass on each advertised architecture; warm offline startup uses exact cached inputs and missing-cache startup fails clearly. |
+| uv selection | Validate the runtime range's minimum, the managed pin and a newer supported patch; explicit selection precedes PATH, compatible PATH precedes managed/download, invalid explicit selection fails, and offline reuse avoids downloads. Test renamed executables through both bootstrap and plugin preparation. |
 | Access | Public/protected policies, expiry/revocation, explicit scopes, local control, auth failure and recovery match the documented access contract. |
 
 ## Entry Register behavior

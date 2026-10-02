@@ -216,9 +216,16 @@ class Packages:
         self.root = self.home / ".toolframe"
         for name in ("sources", "artifacts", "environments", "tmp"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
-        self.uv = shutil.which("uv")
+        configured_uv = os.environ.get("TOOLFRAME_UV")
+        self.uv = shutil.which(configured_uv if configured_uv is not None else "uv")
         if not self.uv:
-            raise PluginError("uv_missing", "The launcher or PATH must provide uv")
+            raise PluginError(
+                "uv_missing",
+                f"Configured uv executable is unavailable: {configured_uv}"
+                if configured_uv is not None
+                else "The launcher or PATH must provide uv",
+            )
+        self.uv = str(Path(self.uv).resolve())
 
     def flags(self):
         result = ["--index-url", self.settings.index_url]

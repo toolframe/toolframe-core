@@ -27,6 +27,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument(
+        "--uv-path", type=Path, help="Verify an explicitly selected uv installation"
+    )
+    parser.add_argument(
         "--wheelhouse",
         type=Path,
         help="Optional external wheels; omit to verify the standalone standard bundle",
@@ -47,9 +50,12 @@ def main():
         "TOOLFRAME_BUNDLED_WHEELHOUSE",
         "TOOLFRAME_SDK_WHEEL",
         "TOOLFRAME_OFFLINE",
+        "TOOLFRAME_UV",
         "PYTHONPATH",
     ):
         environment.pop(name, None)
+    if args.uv_path:
+        environment["TOOLFRAME_UV"] = str(args.uv_path.resolve())
     if wheels is None:
         # A previous package/Python cache must not hide a missing embedded wheel.
         environment["UV_CACHE_DIR"] = str(root / "uv-cache")
@@ -60,6 +66,7 @@ def main():
         "binary": str(original),
         "copied_binary": str(binary),
         "standalone_bundle": wheels is None,
+        "configured_uv": environment.get("TOOLFRAME_UV"),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "wheel_sha256": {
             path.name: hashlib.sha256(path.read_bytes()).hexdigest()
@@ -319,6 +326,11 @@ def main():
         word in result.stderr.lower() for word in ("offline", "cache", "download")
     ), result.stderr
     reports["missing_cache_offline"] = "rejected_without_fallback"
+    if args.uv_path:
+        assert not (root / "runtime/uv").exists(), (
+            "Configured uv must avoid a managed download"
+        )
+        reports["configured_uv_reused"] = True
     reports["embedded_wheels"] = {
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted((root / "runtime/bundles").glob("*/*/*.whl"))

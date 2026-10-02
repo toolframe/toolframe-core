@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
         .init();
     let mut forwarded = Vec::new();
     let mut offline = false;
-    let mut uv_path = None;
+    let mut uv_path = env::var_os("TOOLFRAME_UV").map(PathBuf::from);
     let mut wheelhouse = env::var_os("TOOLFRAME_WHEELHOUSE").map(PathBuf::from);
     let mut args = arguments.into_iter();
     while let Some(argument) = args.next() {
@@ -194,6 +194,9 @@ async fn main() -> Result<()> {
         paths.extend(env::split_paths(&existing));
     }
     command.env("PATH", env::join_paths(paths)?);
+    // Keep package operations on the selected executable, including renamed
+    // binaries and symlinks whose canonical directory has another `uv` on PATH.
+    command.env("TOOLFRAME_UV", &resolved.path);
     if let Some(path) = wheelhouse {
         command.env("TOOLFRAME_WHEELHOUSE", path.canonicalize()?);
     }

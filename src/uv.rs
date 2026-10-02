@@ -1,5 +1,7 @@
 use std::{
-    env, fs,
+    env,
+    ffi::OsStr,
+    fs,
     io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
@@ -19,7 +21,8 @@ use std::fs::OpenOptions;
 
 const RELEASE_MANIFEST: &str = include_str!("../uv-release-manifest.txt");
 const UV_RELEASE_BASE_URL: &str = "https://github.com/astral-sh/uv/releases/download";
-const MINIMUM_UV_VERSION: (u64, u64, u64) = (0, 12, 8);
+const MINIMUM_UV_VERSION: (u64, u64, u64) = (0, 12, 2);
+const MAXIMUM_UV_VERSION_EXCLUSIVE: (u64, u64, u64) = (0, 13, 0);
 const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
@@ -101,23 +104,45 @@ struct UvBuild {
     semantic_version: (u64, u64, u64),
 }
 
-/// Resolve the target-matched UV release. An explicit path is honored only
-/// when it matches the pin; otherwise the managed copy is verified or fetched.
+/// Prefer a compatible configured/PATH executable, then the verified managed
+/// release. Only Toolframe's managed copy must match the exact download pin.
 pub async fn resolve(
     explicit: Option<&Path>,
     runtime_root: &Path,
     offline: bool,
 ) -> Result<ResolvedUv> {
     let release = release_for_current_target()?;
+    let search_path = env::var_os("PATH");
+    resolve_with_path(
+        explicit,
+        runtime_root,
+        offline,
+        search_path.as_deref(),
+        release.as_ref(),
+    )
+    .await
+}
 
+async fn resolve_with_path(
+    explicit: Option<&Path>,
+    runtime_root: &Path,
+    offline: bool,
+    search_path: Option<&OsStr>,
+    release: Option<&UvRelease>,
+) -> Result<ResolvedUv> {
     if let Some(path) = explicit {
-        return inspect_candidate(path, release.as_ref(), UvSource::Configured)
+        return inspect_candidate(path, None, UvSource::Configured)
             .await
             .context("the configured UV executable is invalid");
     }
 
     let executable_name = if cfg!(windows) { "uv.exe" } else { "uv" };
     let managed_uv = runtime_root.join(executable_name);
+    if let Some(candidate) =
+        matching_path_candidate(executable_name, search_path, &managed_uv).await
+    {
+        return Ok(candidate);
+    }
     let managed_problem = match fs::symlink_metadata(&managed_uv) {
         Ok(metadata) if metadata.is_dir() => {
             bail!(
@@ -125,7 +150,7 @@ pub async fn resolve(
                 managed_uv.display()
             );
         }
-        Ok(_) => match inspect_candidate(&managed_uv, release.as_ref(), UvSource::Managed).await {
+        Ok(_) => match inspect_candidate(&managed_uv, release, UvSource::Managed).await {
             Ok(candidate) => return Ok(candidate),
             Err(error) => Some(error),
         },
@@ -137,14 +162,14 @@ pub async fn resolve(
         }
     };
 
-    if let Some(release) = release.as_ref() {
+    if let Some(release) = release {
         if offline {
             let reason = managed_problem
                 .as_ref()
                 .map(|error| format!(" ({error:#})"))
                 .unwrap_or_default();
             bail!(
-                "pinned UV {} for {} is not available at {}{reason}; --offline prevents downloading it, so run once online or pass an exact --uv-path",
+                "no compatible UV was found on PATH and pinned UV {} for {} is not available at {}{reason}; --offline prevents downloading it, so run once online or pass a compatible --uv-path",
                 release.version,
                 release.target,
                 managed_uv.display()
@@ -178,9 +203,6 @@ pub async fn resolve(
             .context("the newly downloaded UV executable failed verification");
     }
 
-    if let Some(candidate) = matching_path_candidate(executable_name, None).await {
-        return Ok(candidate);
-    }
     if let Some(error) = managed_problem {
         return Err(error).context("the managed UV executable is invalid");
     }
@@ -189,11 +211,19 @@ pub async fn resolve(
     )
 }
 
-async fn matching_path_candidate(name: &str, release: Option<&UvRelease>) -> Option<ResolvedUv> {
-    let path = env::var_os("PATH")?;
-    for directory in env::split_paths(&path) {
+async fn matching_path_candidate(
+    name: &str,
+    search_path: Option<&OsStr>,
+    managed_uv: &Path,
+) -> Option<ResolvedUv> {
+    let managed_uv = managed_uv.canonicalize().ok();
+    for directory in env::split_paths(search_path?) {
         let candidate = directory.join(name);
-        if let Ok(candidate) = inspect_candidate(&candidate, release, UvSource::Path).await {
+        // A PATH alias of the private copy must still pass managed integrity checks.
+        if managed_uv.is_some() && candidate.canonicalize().ok() == managed_uv {
+            continue;
+        }
+        if let Ok(candidate) = inspect_candidate(&candidate, None, UvSource::Path).await {
             return Some(candidate);
         }
     }
@@ -255,13 +285,17 @@ async fn inspect_candidate(
                 release.target
             );
         }
-    } else if build.semantic_version < MINIMUM_UV_VERSION {
+    } else if !(MINIMUM_UV_VERSION..MAXIMUM_UV_VERSION_EXCLUSIVE).contains(&build.semantic_version)
+    {
         bail!(
-            "UV {} is too old; toolframe requires UV {}.{}.{} or newer",
+            "UV {} is unsupported; toolframe requires a stable UV >={}.{}.{},<{}.{}.{}",
             build.version,
             MINIMUM_UV_VERSION.0,
             MINIMUM_UV_VERSION.1,
-            MINIMUM_UV_VERSION.2
+            MINIMUM_UV_VERSION.2,
+            MAXIMUM_UV_VERSION_EXCLUSIVE.0,
+            MAXIMUM_UV_VERSION_EXCLUSIVE.1,
+            MAXIMUM_UV_VERSION_EXCLUSIVE.2,
         );
     }
 
@@ -727,22 +761,19 @@ fn parse_uv_version(output: &str) -> Result<UvBuild> {
 fn parse_semantic_version(version: &str) -> Result<(u64, u64, u64)> {
     let components = version
         .split('.')
-        .take(3)
         .map(|component| {
-            let digits = component
-                .chars()
-                .take_while(|character| character.is_ascii_digit())
-                .collect::<String>();
-            if digits.is_empty() {
-                bail!("invalid UV version component {component:?}");
+            if component.is_empty() || !component.bytes().all(|byte| byte.is_ascii_digit()) {
+                bail!(
+                    "invalid UV version {version:?}; expected a stable major.minor.patch version"
+                );
             }
-            digits
+            component
                 .parse::<u64>()
                 .with_context(|| format!("invalid UV version component {component:?}"))
         })
         .collect::<Result<Vec<_>>>()?;
     if components.len() != 3 {
-        bail!("UV version must contain major, minor, and patch components");
+        bail!("UV version must contain exactly major, minor, and patch components");
     }
     Ok((components[0], components[1], components[2]))
 }
@@ -924,6 +955,184 @@ mod tests {
     }
 
     #[test]
+    fn accepts_version_output_without_a_target_but_rejects_unstable_versions() {
+        let build = parse_uv_version("uv 0.12.2 (Homebrew)\n").unwrap();
+        assert_eq!(build.semantic_version, (0, 12, 2));
+        assert_eq!(build.target, None);
+        for version in [
+            "0.12.2rc1",
+            "0.12.2-dev",
+            "0.12.2+local",
+            "0.12.2.1",
+            "0.12",
+            "0..2",
+            "nightly",
+        ] {
+            assert!(
+                parse_uv_version(&format!("uv {version}")).is_err(),
+                "{version}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn fake_uv(path: &Path, output: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, format!("#!/bin/sh\nprintf '%s\\n' '{output}'\n")).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn external_uv_accepts_supported_patches_without_official_hash_or_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("custom-uv");
+        for version in ["0.12.2", "0.12.8", "0.12.22"] {
+            fake_uv(&path, &format!("uv {version} (custom build)"));
+            let resolved = inspect_candidate(&path, None, UvSource::Configured)
+                .await
+                .unwrap();
+            assert_eq!(resolved.version, version);
+        }
+        for version in ["0.8.24", "0.12.1", "0.13.0", "1.0.0"] {
+            fake_uv(&path, &format!("uv {version}"));
+            let error = inspect_candidate(&path, None, UvSource::Configured)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains(">=0.12.2,<0.13.0"), "{error}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn configured_uv_overrides_path_and_invalid_configuration_fails_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let explicit = directory.path().join("renamed uv");
+        let path_directory = directory.path().join("bin");
+        fake_uv(&explicit, "uv 0.12.2");
+        fake_uv(&path_directory.join("uv"), "uv 0.12.22");
+        let managed_root = directory.path().join("managed");
+        let release = release_for_target("aarch64-apple-darwin").unwrap();
+        let resolved = resolve_with_path(
+            Some(&explicit),
+            &managed_root,
+            true,
+            Some(path_directory.as_os_str()),
+            Some(&release),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resolved.source, UvSource::Configured);
+        assert_eq!(resolved.path, explicit.canonicalize().unwrap());
+        assert!(!managed_root.exists());
+
+        fake_uv(&explicit, "uv 0.12.1");
+        let error = resolve_with_path(
+            Some(&explicit),
+            &managed_root,
+            true,
+            Some(path_directory.as_os_str()),
+            Some(&release),
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("configured UV executable is invalid"));
+        assert!(format!("{error:#}").contains("UV 0.12.1 is unsupported"));
+        assert!(!managed_root.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn path_search_skips_invalid_candidates_and_reuses_the_first_compatible_one_offline() {
+        let directory = tempfile::tempdir().unwrap();
+        let bins: Vec<_> = ["missing", "broken", "old", "future", "first", "second"]
+            .into_iter()
+            .map(|name| directory.path().join(name))
+            .collect();
+        fake_uv(&bins[1].join("uv"), "not uv");
+        fake_uv(&bins[2].join("uv"), "uv 0.12.1");
+        fake_uv(&bins[3].join("uv"), "uv 0.13.0");
+        fake_uv(&bins[4].join("uv"), "uv 0.12.2");
+        fake_uv(&bins[5].join("uv"), "uv 0.12.22");
+        let search_path = env::join_paths(&bins).unwrap();
+        let managed_root = directory.path().join("managed");
+        let release = release_for_target("aarch64-apple-darwin").unwrap();
+        let resolved = resolve_with_path(
+            None,
+            &managed_root,
+            true,
+            Some(&search_path),
+            Some(&release),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resolved.source, UvSource::Path);
+        assert_eq!(resolved.path, bins[4].join("uv").canonicalize().unwrap());
+        assert!(!managed_root.exists());
+
+        // An unusable private runtime must not block a valid external executable.
+        fs::create_dir_all(managed_root.join("uv")).unwrap();
+        assert_eq!(
+            resolve_with_path(
+                None,
+                &managed_root,
+                true,
+                Some(&search_path),
+                Some(&release),
+            )
+            .await
+            .unwrap(),
+            resolved
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn managed_fallback_remains_pinned_even_when_aliased_on_path() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let managed_root = directory.path().join("managed");
+        let managed = managed_root.join("uv");
+        fake_uv(&managed, "uv 0.12.8 (aarch64-apple-darwin)");
+        let mut release = release_for_target("aarch64-apple-darwin").unwrap();
+        release.executable_sha256 = sha256_file(&managed).unwrap();
+        let old_bin = directory.path().join("old");
+        fake_uv(&old_bin.join("uv"), "uv 0.12.1");
+        let alias_bin = directory.path().join("alias");
+        fs::create_dir_all(&alias_bin).unwrap();
+        symlink(&managed, alias_bin.join("uv")).unwrap();
+        let search_path = env::join_paths([&old_bin, &alias_bin, &managed_root]).unwrap();
+        let resolved = resolve_with_path(
+            None,
+            &managed_root,
+            true,
+            Some(&search_path),
+            Some(&release),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resolved.source, UvSource::Managed);
+        assert_eq!(resolved.path, managed.canonicalize().unwrap());
+
+        fake_uv(&managed, "uv 0.12.8 (different build)");
+        let error = resolve_with_path(
+            None,
+            &managed_root,
+            true,
+            Some(&search_path),
+            Some(&release),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("checksum mismatch"), "{error}");
+        assert!(error.contains("--offline prevents downloading"), "{error}");
+    }
+
+    #[test]
     fn extracts_only_the_uv_executable_from_tar_gz() {
         use flate2::{Compression, write::GzEncoder};
 
@@ -1049,11 +1258,12 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[tokio::test]
     async fn offline_mode_does_not_download_a_missing_managed_uv() {
         let directory = tempfile::tempdir().expect("create temp directory");
-        let error = resolve(None, directory.path(), true)
+        let release = release_for_target("aarch64-apple-darwin").unwrap();
+        let error = resolve_with_path(None, directory.path(), true, None, Some(&release))
             .await
             .expect_err("offline resolution should fail")
             .to_string();
