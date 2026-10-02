@@ -36,7 +36,10 @@ fn bootstrap_command(path: &std::path::Path) -> Command {
     let mut command = Command::new(path);
     for (key, _) in env::vars_os() {
         let name = key.to_string_lossy();
-        if name.starts_with("OTEL_") || name == "TOOLFRAME_TRACING_ENABLED" {
+        if name.starts_with("OTEL_")
+            || name == "TOOLFRAME_TRACING_ENABLED"
+            || name == "TOOLFRAME_LOGS_LEVEL"
+        {
             command.env_remove(key);
         }
     }

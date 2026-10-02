@@ -20,7 +20,7 @@ def child_environment():
         if key not in ("PYTHONPATH", "PYTHONHOME")
         and not key.startswith("TOOLFRAME_CORE_")
         and not key.startswith("OTEL_")
-        and key != "TOOLFRAME_TRACING_ENABLED"
+        and key not in {"TOOLFRAME_TRACING_ENABLED", "TOOLFRAME_LOGS_LEVEL"}
     }
 
 
@@ -118,8 +118,10 @@ class WorkerProcess:
                     self.log_callback(text)
 
     async def request(self, method, params=None, *, timeout=30):
-        if method == "runtime.describe" and self.peer.tracing:
-            params = {**(params or {}), "tracing": self.trace_attributes}
+        if method == "runtime.describe":
+            params = {**(params or {}), "logging": self.trace_attributes}
+            if self.peer.tracing:
+                params["tracing"] = self.trace_attributes
         return await self.peer.request(method, params, timeout=timeout)
 
     async def close(self, timeout=10, *, activated=True, allow_exited=False):

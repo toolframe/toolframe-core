@@ -20,8 +20,11 @@ def test_build_and_preflight_exclude_all_telemetry_configuration(monkeypatch):
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "authorization=secret")
     monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "private=value")
     monkeypatch.setenv("OTEL_UNRECOGNIZED_FUTURE_OPTION", "private")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "authorization=log-secret")
+    monkeypatch.setenv("TOOLFRAME_LOGS_LEVEL", "DEBUG")
     environment = child_environment()
     assert "TOOLFRAME_TRACING_ENABLED" not in environment
+    assert "TOOLFRAME_LOGS_LEVEL" not in environment
     assert not any(key.startswith("OTEL_") for key in environment)
 
 

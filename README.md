@@ -16,9 +16,10 @@ For PostgreSQL provisioning, startup and recovery, see
 [PostgreSQL Core state](docs/postgresql-state.md). Both backends run one Core per
 application and retain configuration, private keys and artifacts in its home.
 
-Optional [OpenTelemetry tracing](docs/tracing.md) follows HTTP and nested plugin
-calls. It is disabled by default and adds SDK/exporter dependencies only when
-enabled.
+Optional [OpenTelemetry tracing and logs](docs/tracing.md) follow HTTP and nested
+plugin calls with application, plugin and function context. Telemetry is disabled
+by default and adds SDK/exporter dependencies only when enabled; structured local
+logging works independently, and log export requires its own opt-in.
 
 ## Run the local workspace
 

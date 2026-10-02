@@ -63,6 +63,10 @@ context crosses HTTP and JSON-RPC as metadata, independently of the admitted
 business principal. Dependency environments distinguish tracing profiles;
 export queues belong to individual processes. See [tracing](tracing.md) for the
 runtime contract and [ADR 0010](adr/0010-optional-runtime-tracing.md) for the choice.
+The SDK supplies standard context loggers to plugins and pages. Process identity
+is owned by the runtime; service and task labels are scoped to their async call.
+Local handlers work independently of telemetry, while OTLP logs require an
+explicit exporter choice. See [ADR 0011](adr/0011-context-logging.md).
 
 Backend workers have separately resolved environments. Page contributors share
 one aggregate Dashboard environment, which must resolve before switching. A page
