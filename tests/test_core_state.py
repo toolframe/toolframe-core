@@ -512,7 +512,7 @@ def test_provisioning_failure_cleans_only_new_resources(postgres_database, monke
 
 
 def test_environment_persistence_failure_precedes_provisioning(monkeypatch):
-    import psycopg
+    psycopg = pytest.importorskip("psycopg")
 
     def must_not_connect(*args, **kwargs):
         pytest.fail("Provisioning ran before credentials could be persisted")
