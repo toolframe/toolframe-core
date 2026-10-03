@@ -39,6 +39,32 @@ The plan's `stores` field shows proposed and retained providers. Status shows th
 active resolution and retained ownership. Dependency diagnostics show each
 consumer's resolved storage edge and the affected cohort for reload or disable.
 
+## Add PostgreSQL to an existing SQLite application
+
+Keep the SQLite service default and override only new PostgreSQL store owners:
+
+```toml
+[bindings]
+"toolframe.storage.sql" = "storage-sqlite"
+"orders/storage" = "storage-postgres"
+```
+
+Here `orders` is an example new plugin ID and `storage` is its SQL requirement
+alias. Use the names declared by the plugin you are installing.
+
+1. Back up the application home and its existing stores. Add the bindings while
+   the original SQLite provider remains enabled.
+2. Provision the new PostgreSQL owner, supply its runtime environment, and install
+   and enable the PostgreSQL provider before enabling that owner.
+3. Review `plan` and confirm that existing owners retain `storage-sqlite`. Apply
+   the reviewed composition, then verify the new plugin through its public service.
+
+The existing SQLite data stays in its original stores. If PostgreSQL should later
+become the service default, first add a `plugin-id/alias` override to SQLite for
+every SQL alias of each retained SQLite owner. Review those overrides together
+with the default change. Changing the default alone would request reassignment
+of existing stores and is rejected.
+
 ## Retained stores and migrations
 
 Core records a store's provider before initialization or migration. Disable,
