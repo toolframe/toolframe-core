@@ -3,6 +3,13 @@
 These versions describe local development releases. A version entry does not
 imply that its distributions have been published or every target is qualified.
 
+## Unreleased
+
+- Run multiple SQL storage providers using service defaults and per-plugin bindings.
+- Retain store provider ownership across removal and restart; reject silent rebinding.
+- Bind migration plans and forward repair to their provider, and preserve admitted
+  bindings and cleanup across storage cohorts.
+
 ## 0.5.2
 
 - Exclude development evaluation fixtures from installed plugin skills and bundles.

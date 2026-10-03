@@ -17,8 +17,12 @@ class Graph:
         self.bindings = {}
         self.missing = {}
         self.providers = {}
+        self.storage_providers = set()
+        self.stores = {}
         for name, definition in self.definitions.items():
-            if definition.provider_kind:
+            if definition.provider_kind == "storage":
+                self.storage_providers.add(name)
+            elif definition.provider_kind:
                 if definition.provider_kind in self.providers:
                     raise PluginError(
                         "provider_conflict",
@@ -53,6 +57,37 @@ class Graph:
                 resolved[alias] = (matches[0], requirement.service)
                 if not requirement.optional:
                     self.dependencies[name].add(matches[0])
+            sql_requirements = {
+                alias: requirement
+                for alias, requirement in definition.requires.items()
+                if requirement.service == "toolframe.storage.sql"
+            }
+            if definition.store and not any(
+                not requirement.optional for requirement in sql_requirements.values()
+            ):
+                raise PluginError(
+                    "invalid_store_dependency",
+                    "A managed store requires a non-optional SQL storage dependency",
+                    {"owner": name},
+                )
+            storage = {
+                resolved[alias][0] for alias in sql_requirements if alias in resolved
+            }
+            if len(storage) > 1:
+                raise PluginError(
+                    "multiple_store_providers",
+                    "Each plugin may bind its SQL store to only one provider",
+                    {"owner": name, "providers": sorted(storage)},
+                )
+            if storage:
+                provider = next(iter(storage))
+                if provider not in self.storage_providers:
+                    raise PluginError(
+                        "invalid_storage_provider",
+                        "The SQL service must be supplied by a storage provider",
+                        {"owner": name, "provider": provider},
+                    )
+                self.stores[name] = provider
             for resource in definition.resources:
                 if resource.kind == "mcp.tool":
                     service = resource.data["service"]

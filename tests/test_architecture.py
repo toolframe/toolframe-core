@@ -11,6 +11,7 @@ REPOSITORIES = (
     "toolframe-core",
     "toolframe-sdk",
     "toolframe-storage-sqlite",
+    "toolframe-storage-postgres",
     "toolframe-streamlit-dashboard",
     "toolframe-fastmcp",
     "toolframe-llms-txt",

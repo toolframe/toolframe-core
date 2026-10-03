@@ -9,7 +9,7 @@ permissions:
 # Concurrency belongs to the caller: a reusable workflow must not cancel it.
 jobs:
   postgres:
-    name: PostgreSQL Core journal
+    name: PostgreSQL journal and mixed SQL storage
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -25,6 +25,8 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TOOLFRAME_CORE_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      TOOLFRAME_POSTGRES_PG_DUMP: /usr/lib/postgresql/16/bin/pg_dump
+      TOOLFRAME_POSTGRES_PG_RESTORE: /usr/lib/postgresql/16/bin/pg_restore
       TOOLFRAME_REPOSITORY_OWNER: ${{ vars.TOOLFRAME_REPOSITORY_OWNER || github.repository_owner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,7 +39,9 @@ jobs:
         with:
           version: '0.12.8'
           enable-cache: false
-      - name: Verify both journals and PostgreSQL failure recovery
+      - name: Install matching PostgreSQL backup tools
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client-16
+      - name: Verify journals, mixed storage and failure recovery
         run: >-
           python scripts/ci/validate.py --checks postgres --output build/ci-postgres
           --repository-owner "$TOOLFRAME_REPOSITORY_OWNER"

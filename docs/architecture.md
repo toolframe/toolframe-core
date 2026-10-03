@@ -102,6 +102,15 @@ in an application-specific database. Identity follows the stable owner, not its
 package version or worker generation. Disable and uninstall retain data. Other
 plugins access it through the owner's public service.
 
+Storage providers can coexist. Service defaults and per-consumer bindings resolve
+each owner's SQL provider; multiple distinct SQL targets within one plugin are
+invalid. Core retains store-to-provider assignments across disable, removal and
+restart. A changed assignment requires explicit data migration, which is not
+supported by configuration reconciliation. Admitted roots snapshot bindings and
+cleanup settles every leased storage provider before releasing their leases.
+See [SQL storage configuration](sql-storage.md) and
+[ADR 0010](adr/0010-multiple-sql-providers.md).
+
 Scoped SQL clients provide parameterized operations and provider-owned
 transactions. Transaction identity is bound to owner, generation and admitted
 call. Lost workers or failed transactions roll back uncommitted work. Mutation
@@ -114,6 +123,8 @@ explicit migration plan bound to the candidate and immutable SQL checksums, a
 consistent backup, and reviewed application. Schema/history updates commit in the
 owning store. Core's operation journal and the business database are separate
 transactions, so recovery checks the authoritative schema and receipts.
+Migration plans also identify the provider and generation. Forward-repair records
+retain the owning provider; unrelated replacements cannot clear those records.
 
 ## Resource publication and gateway
 

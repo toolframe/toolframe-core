@@ -53,7 +53,7 @@ Streamlit AppTest.
 Native arm64 and Intel under Rosetta are distinct environments. Physical Intel,
 the macOS 12 minimum, independent desktop MCP clients, signing/notarization and
 remote CI/publication require their own evidence. Linux/Windows application
-support, PostgreSQL, multi-instance deployment, artifact storage and full business
+support, multi-instance deployment, artifact storage and full business
 audit providers are outside this version. Warm-cache offline startup does not
 establish a fully offline first installation.
 
@@ -115,10 +115,21 @@ trusted-plugin ownership guards, not an operating-system sandbox.
 
 The default suite exercises SQLite and skips database-backed Core cases without
 an isolated `TOOLFRAME_CORE_TEST_ADMIN_DSN`. To require real PostgreSQL validation,
-install the `postgres` extra and run `python scripts/ci/check-postgres.py`. The
+install the `postgres` extra and the pinned PostgreSQL storage provider, then run
+`python scripts/ci/check-postgres.py`. Use `pg_dump` and `pg_restore` matching the
+server's major version. The
 reusable workflow runs a separate PostgreSQL 16 service job. This check fails when
-its DSN or driver is absent; it covers both journal adapters, lost acknowledgements,
+its DSN, driver or provider is absent; it covers both journal adapters, lost acknowledgements,
 cancellation, connection failure, ownership recovery and worker shutdown.
+
+`tests/test_mixed_storage.py` installs SQLite and PostgreSQL provider wheels into
+real workers. It covers explicit/default routing, owner isolation, standalone and
+transactional writes, provider reload/drain, disable without fallback, retained
+reinstall/restart, rejected reassignment, stale migration tokens and recovery after
+lost migration acknowledgements on both backends. `tests/test_storage_bindings.py`
+covers graph constraints, journal adoption, admitted binding snapshots and cleanup
+when one provider fails. Installed Dashboard and MCP client flows still require
+separate application verification.
 
 Internal host tests construct hosts with `await Host.create(...)` and await journal
 and management methods. SQLite-only migration tests may inspect `SQLiteCoreState`

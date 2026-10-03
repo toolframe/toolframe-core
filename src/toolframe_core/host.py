@@ -28,6 +28,7 @@ from .packages import Packages, pinned_index_source, source_files
 from .process import WorkerProcess, group_exists, process_inventory, stop_group
 from .redaction import redact, secret_values
 from .state import CoreState, StateSettings
+from .stores import RetainedStores
 
 
 @dataclass
@@ -53,6 +54,7 @@ class Root:
     read_only: bool = False
     principal: Principal | None = None
     scope_catalog: dict = field(default_factory=dict)
+    bindings: dict = field(default_factory=dict)
 
 
 class Host:
@@ -100,6 +102,7 @@ class Host:
             )
             self.revision = self.config.revision
         self.initial_application = self.composition.application.model_dump()
+        self.stores = await RetainedStores.load(self.state)
         self.listen_host = bind_host(
             listen_host
             if listen_host is not None
@@ -641,8 +644,10 @@ class Host:
                 raise PluginError(
                     "store_not_declared", "Plugin does not declare a store schema"
                 )
-            storage = self._storage_runtime(name)
-            plan = await self.admin(storage, "plan", {"owner": name, "schema": schema})
+            proposed = {**(await self.selected()), name: candidate}
+            graph = Graph(proposed, self.composition.bindings)
+            storage = self._storage_runtime(name, graph=graph)
+            plan = await self._migration_plan(storage, name, schema)
             if action == "migrate-plan":
                 (
                     await self.state.set_meta(
@@ -665,6 +670,7 @@ class Host:
                 or params.get("plan_id") != plan["plan_id"]
                 or saved["candidate"] != candidate["id"]
                 or saved["revision"] != self.revision
+                or saved["plan"]["plan_id"] != plan["plan_id"]
             ):
                 raise PluginError(
                     "stale_plan", "Review a current migration plan before applying"
@@ -675,7 +681,12 @@ class Host:
                 proposed,
                 {name},
                 operation,
-                migration={"owner": name, "schema": schema, "plan_id": plan["plan_id"]},
+                migration={
+                    "owner": name,
+                    "schema": schema,
+                    "provider": storage.name,
+                    "plan_id": plan["provider_plan_id"],
+                },
             )
             return {"migration": plan["plan_id"], "candidate": candidate["id"]}
         if action in ("reload", "enable", "disable", "remove", "stop"):
@@ -769,19 +780,14 @@ class Host:
             stages[stage] = {"status": "skipped", "reason": "No managed store declared"}
             requires_migration = False
             if definition.store:
-                storage_owner = next(
-                    (
-                        owner
-                        for owner, service in graph.bindings[name].values()
-                        if service == "toolframe.storage.sql"
-                    ),
-                    None,
-                )
+                storage_owner = graph.stores.get(name)
+                if storage_owner:
+                    self.stores.check(name, storage_owner)
                 if storage_owner and self.healthy_runtime(storage_owner):
-                    plan = await self.admin(
+                    plan = await self._migration_plan(
                         self.runtimes[storage_owner],
-                        "plan",
-                        {"owner": name, "schema": definition.store.model_dump()},
+                        name,
+                        definition.store.model_dump(),
                     )
                     requires_migration = plan["requires_apply"]
                     stages[stage] = {
@@ -866,6 +872,7 @@ class Host:
             },
             "epoch": self.epoch,
             "schemas": schemas,
+            "store_bindings": dict(self.stores.bindings),
             "stopped": sorted(
                 [row["id"] for row in (await self.state.plugins()) if row["stopped"]]
             ),
@@ -920,38 +927,42 @@ class Host:
                 if missing
             },
             "migrations": {},
+            "stores": self.stores.describe(replacement),
         }
         if action in {"reload", "enable"}:
             result["target_candidate"] = candidate["id"]
         for member in changed & proposed.keys():
             definition = replacement.definitions[member]
             if definition.store and member in self.runtimes:
-                result["migrations"][member] = await self.admin(
-                    self._storage_runtime(member),
-                    "plan",
-                    {"owner": member, "schema": definition.store.model_dump()},
-                )
+                provider = replacement.stores.get(member)
+                if provider and self.healthy_runtime(provider):
+                    result["migrations"][member] = await self._migration_plan(
+                        self.runtimes[provider], member, definition.store.model_dump()
+                    )
         if basis != await self.plan_basis():
             raise PluginError("stale_plan", "Runtime changed while planning")
         result["plan_id"] = digest(result)
         (await self.state.set_meta(f"plan/{result['plan_id']}", result))
         return result
 
-    def _storage_runtime(self, owner):
-        binding = next(
-            (
-                item
-                for item in self.graph.bindings.get(owner, {}).values()
-                if item[1] == "toolframe.storage.sql"
-            ),
-            None,
-        )
-        if not binding or binding[0] not in self.runtimes:
+    def _storage_runtime(self, owner, *, graph=None):
+        provider = (graph or self.graph).stores.get(owner)
+        if not provider or provider not in self.runtimes:
             raise PluginError(
                 "storage_unavailable",
                 "The owner's declared storage provider must be active",
             )
-        return self.runtimes[binding[0]]
+        self.stores.check(owner, provider)
+        return self.runtimes[provider]
+
+    async def _migration_plan(self, storage, owner, schema):
+        plan = await self.admin(storage, "plan", {"owner": owner, "schema": schema})
+        identity = {
+            "provider": storage.name,
+            "provider_generation": storage.generation,
+            "provider_plan_id": plan["plan_id"],
+        }
+        return {**plan, **identity, "plan_id": digest({**plan, **identity})}
 
     async def admin(self, storage, method, params):
         return await storage.worker.request(
@@ -972,13 +983,17 @@ class Host:
 
     async def change_schema(self, storage, method, params):
         owner = params["owner"]
+        self.stores.check(owner, storage.name)
         before = await self.admin(storage, "inspect", {"owner": owner})
+        remembered = owner in self.stores.bindings
+        await self.stores.remember(owner, storage.name)
         previous_repair = await self.state.meta("forward_repair")
         (
             await self.state.set_meta(
                 "forward_repair",
                 {
                     "owner": owner,
+                    "provider": storage.name,
                     "before": before,
                     "target": params["schema"],
                     "state": "in_progress",
@@ -998,14 +1013,27 @@ class Host:
             if changed:
                 self.schema_changed = True
                 self.schema_events.append(
-                    {"owner": owner, "state": "committed_or_unknown"}
+                    {
+                        "owner": owner,
+                        "provider": storage.name,
+                        "state": "committed_or_unknown",
+                    }
                 )
             else:
                 (await self.state.set_meta("forward_repair", previous_repair))
+                if not remembered and not before["exists"] and not after["exists"]:
+                    await self.stores.forget_empty(owner)
             raise
         if result.get("committed"):
             self.schema_changed = True
-            self.schema_events.append({"owner": owner, "state": "committed", **result})
+            self.schema_events.append(
+                {
+                    **result,
+                    "owner": owner,
+                    "provider": storage.name,
+                    "state": "committed",
+                }
+            )
         else:
             (await self.state.set_meta("forward_repair", previous_repair))
         return result
@@ -1088,6 +1116,7 @@ class Host:
                 {name: self.runtimes[name] for name in members},
                 leases,
                 read_only=True,
+                bindings={name: dict(self.graph.bindings[name]) for name in members},
             )
             root.paths[(runtime.name,)] = 1
             self.roots[root.id] = root
@@ -1278,8 +1307,13 @@ class Host:
             self.transitioning.clear()
 
     async def _replace(self, proposed, changed, operation, *, migration=None):
-        self.schema_changed = bool(await self.state.meta("forward_repair"))
-        self.schema_events = []
+        repair = await self.state.meta("forward_repair")
+        self.schema_changed = bool(repair)
+        self.schema_events = (
+            [repair]
+            if repair and repair.get("owner")
+            else (repair or {}).get("schemas", [])
+        ).copy()
         if self.orphans:
             raise PluginError(
                 "cleanup_failed",
@@ -1288,6 +1322,13 @@ class Host:
             )
         replacement = Graph(proposed, self.composition.bindings)
         old_graph = self.graph
+        changed = set(changed) | {
+            name
+            for name in replacement.bindings
+            if replacement.bindings[name] != old_graph.bindings.get(name)
+        }
+        for owner, provider in replacement.stores.items():
+            self.stores.check(owner, provider)
         self.optional_new = {
             name
             for name, definition in replacement.definitions.items()
@@ -1305,6 +1346,25 @@ class Host:
         }
         self.optional_failures = {}
         affected = old_graph.affected(replacement, changed)
+        for pending in self.schema_events:
+            owner = pending["owner"]
+            provider = pending.get("provider")
+            if (
+                owner not in affected
+                or owner not in replacement.stores
+                or (provider and replacement.stores[owner] != provider)
+            ):
+                raise PluginError(
+                    "forward_repair_required",
+                    "Recover the recorded store and its original provider before "
+                    "performing an unrelated replacement",
+                    {"owner": owner, "provider": provider},
+                )
+        if (
+            migration
+            and replacement.stores.get(migration["owner"]) != migration["provider"]
+        ):
+            raise PluginError("stale_plan", "Migration storage binding changed")
         for name, definition in replacement.definitions.items():
             if definition.provider_kind == "dashboard" and (
                 name in affected or name not in self.runtimes
@@ -1389,9 +1449,13 @@ class Host:
         # Existing stores are inspected before quiescence. A schema change is never hidden in reload.
         for name in changed & replacement.candidates.keys():
             definition = replacement.definitions[name]
-            if definition.store and name in self.runtimes:
+            if (
+                definition.store
+                and name in self.runtimes
+                and replacement.stores.get(name) in self.runtimes
+            ):
                 plan = await self.admin(
-                    self._storage_runtime(name),
+                    self._storage_runtime(name, graph=replacement),
                     "plan",
                     {"owner": name, "schema": definition.store.model_dump()},
                 )
@@ -1458,7 +1522,7 @@ class Host:
         try:
             if migration:
                 (await self.phase(operation, "migrating"))
-                storage = self._storage_runtime(migration["owner"])
+                storage = self._storage_runtime(migration["owner"], graph=replacement)
                 result = await self.change_schema(storage, "apply", migration)
                 (await self.phase(operation, "migration_committed", result))
             self.graph = replacement
@@ -1732,6 +1796,7 @@ class Host:
                 leases,
                 principal=principal,
                 scope_catalog=self.access.catalog(),
+                bindings={name: dict(self.graph.bindings[name]) for name in members},
             )
             self.roots[root.id] = root
             return root
@@ -1743,12 +1808,21 @@ class Host:
         if root.id not in self.roots:
             return
         try:
+            failure = None
             for runtime in root.runtimes.values():
                 if (
                     runtime.candidate["definition"].get("provider_kind") == "storage"
                     and runtime.worker.process.returncode is None
                 ):
-                    await self.admin(runtime, "cleanup_root", {"root_id": root.id})
+                    try:
+                        await self.admin(runtime, "cleanup_root", {"root_id": root.id})
+                    except BaseException as error:  # noqa: BLE001 - settle every leased store before propagating failure
+                        # A failed provider must not leave another provider's
+                        # transaction alive merely because it appeared first.
+                        if failure is None:
+                            failure = error
+            if failure is not None:
+                raise failure
         except BaseException:
             self.failed_roots.add(root.id)
             self.cleanup_blocked.add(root.owner)
@@ -2032,7 +2106,7 @@ class Host:
                     "stale_generation",
                     "Nested call is outside its admitted root/generation",
                 )
-            binding = self.graph.bindings.get(runtime.name, {}).get(params["alias"])
+            binding = root.bindings.get(runtime.name, {}).get(params["alias"])
             if not binding:
                 raise PluginError(
                     "undeclared_dependency", "Dependency alias was not bound"
@@ -2412,6 +2486,7 @@ class Host:
                 "configuration_error": self.configuration_error,
                 "orphaned_workers": self.orphans,
                 "forward_repair": (await self.state.meta("forward_repair")),
+                "stores": self.stores.describe(self.graph),
                 "host_run": self.host_run,
                 "pid": os.getpid(),
                 "desired_revision": self.config.revision,

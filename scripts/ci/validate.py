@@ -323,9 +323,27 @@ def postgres_checks(root, core, output, env):
         cwd=core,
         env=env,
     )
+    run(
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        core / ".venv/bin/python",
+        "--no-sources",
+        "--find-links",
+        root / "workspace/toolframe-sdk/dist",
+        root / "workspace/toolframe-storage-postgres",
+        cwd=core,
+        env=env,
+    )
     env = {
         **env,
         "TOOLFRAME_CORE_TEST_ADMIN_DSN": os.environ["TOOLFRAME_CORE_TEST_ADMIN_DSN"],
+        **{
+            key: os.environ[key]
+            for key in ("TOOLFRAME_POSTGRES_PG_DUMP", "TOOLFRAME_POSTGRES_PG_RESTORE")
+            if key in os.environ
+        },
     }
     run(
         "uv",

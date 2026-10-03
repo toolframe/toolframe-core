@@ -13,6 +13,10 @@ def main():
         )
     if importlib.util.find_spec("psycopg") is None:
         raise SystemExit("Install the Core postgres extra before running this check")
+    if importlib.util.find_spec("toolframe_storage_postgres") is None:
+        raise SystemExit(
+            "Install the pinned PostgreSQL storage provider before running this check"
+        )
     return subprocess.call(
         [
             sys.executable,
@@ -22,6 +26,8 @@ def main():
             "--tb=short",
             "tests/test_core_state.py",
             "tests/test_process.py",
+            "tests/test_storage_bindings.py",
+            "tests/test_mixed_storage.py",
         ]
     )
 

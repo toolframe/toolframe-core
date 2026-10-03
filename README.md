@@ -273,6 +273,11 @@ in the application database. Plugins access another owner's data through its
 public business service. No raw connection is supplied through the SDK client.
 Plugins remain trusted Python code, with access to their inherited environment.
 
+SQLite and PostgreSQL providers can run together, with one retained store per
+plugin. Use service defaults and per-plugin bindings to select each backend; see
+[SQL storage configuration](docs/sql-storage.md). Binding changes do not migrate
+existing data and cannot reassign a retained store.
+
 ```sh
 toolframe --home ./example migrate plan plugin-id
 toolframe --home ./example migrate apply plugin-id --plan-id PLAN_ID
@@ -426,7 +431,7 @@ First preparation may download Python/dependencies. `--offline` uses exact cache
 content and fails when required assets are missing. Native arm64 and x86_64 under
 Rosetta were exercised on macOS 14.8.5. Physical Intel, the macOS 12 minimum,
 independent desktop MCP clients and remote CI/publication remain explicit release
-gates in the [testing guide](docs/testing.md). Linux/Windows, PostgreSQL, multiple instances,
+gates in the [testing guide](docs/testing.md). Linux/Windows launchers, multiple instances,
 artifact storage and full business audit providers are outside this version.
 
 ## Documentation
@@ -435,6 +440,7 @@ artifact storage and full business audit providers are outside this version.
 - [Architecture](docs/architecture.md): ownership, packages, lifecycle and data contracts.
 - [Authentication](docs/authentication.md): access policy, scopes and recovery.
 - [Dependency diagnostics](docs/dependency-graph.md): status and operation impact.
+- [SQL storage](docs/sql-storage.md): simultaneous providers, ownership and migrations.
 - [Glossary](docs/glossary.md): shared platform terminology.
 - [Testing](docs/testing.md) and [CI](docs/ci.md): reproducible validation and release gates.
 - [Changelog](CHANGELOG.md): development version changes.
