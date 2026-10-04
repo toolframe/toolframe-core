@@ -114,6 +114,10 @@ The context refuses:
 - External PostgreSQL Core state, PostgreSQL/S3 or unknown provider-managed state,
   `separate_application` definitions, and uncertain/unbound business stores. The
   reader does not infer a complete backup from the presence of a local directory.
+  Reserved `data/plugins/<owner>/data.sqlite` and its `-wal`, `-journal`, and
+  `-shm` paths require a retained store binding before file-type handling, including
+  when an unbound path is a directory or socket. Other attachment filenames and
+  nested attachment paths remain ordinary snapshot files.
 - Desired composition edits that have not been applied and cleanly stopped. A
   matching current composition, journal revision, and composition lock are
   required so new desired external state cannot bypass persisted-state checks.

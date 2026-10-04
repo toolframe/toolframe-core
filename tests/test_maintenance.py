@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -565,6 +566,54 @@ def test_empty_sqlite_sidecars_are_omitted(home):
     with stopped_application(home) as inventory:
         assert not any(
             item.path.endswith(("-wal", "-shm", "-journal")) for item in inventory.files
+        )
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["data.sqlite", "data.sqlite-wal", "data.sqlite-journal", "data.sqlite-shm"],
+)
+@pytest.mark.parametrize("shape", ["file", "directory", "fifo", "socket"])
+def test_unbound_reserved_store_paths_are_refused_before_file_type_dispatch(
+    home, monkeypatch, filename, shape
+):
+    path = home / "data/plugins/ghost" / filename
+    path.parent.mkdir(parents=True)
+    if shape == "file":
+        path.write_bytes(b"uncertain store state")
+    elif shape == "directory":
+        path.mkdir()
+        (path / "page").write_bytes(b"uncertain store state")
+    elif shape == "fifo":
+        os.mkfifo(path)
+    else:
+        # A relative UNIX socket address also works on platforms with short
+        # socket path limits, regardless of pytest's temporary home location.
+        monkeypatch.chdir(home)
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(path.relative_to(home).as_posix())
+            expect_failure(home, "maintenance_external_state")
+        return
+    expect_failure(home, "maintenance_external_state")
+
+
+def test_non_store_attachments_remain_snapshot_files(home):
+    attachments = {
+        "data/plugins/ghost/attachment.sqlite",
+        "data/plugins/ghost/data.sqlite.bak",
+        "data/plugins/ghost/attachments/data.sqlite",
+        "data/plugins/ghost/attachments/data.sqlite-wal",
+    }
+    for relative in attachments:
+        path = home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"attachment")
+    with stopped_application(home) as inventory:
+        assert attachments <= {item.path for item in inventory.files}
+        assert all(
+            item.role == "home_file"
+            for item in inventory.files
+            if item.path in attachments
         )
 
 

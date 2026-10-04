@@ -729,20 +729,28 @@ def _inventory(home):
             mode = path.lstat().st_mode
             if stat.S_ISLNK(mode):
                 _fail(message="Symlinks are not supported in snapshot state")
+            parts = PurePosixPath(relative).parts
+            if (
+                len(parts) == 4
+                and parts[:2] == ("data", "plugins")
+                and parts[3]
+                in {
+                    "data.sqlite",
+                    "data.sqlite-wal",
+                    "data.sqlite-journal",
+                    "data.sqlite-shm",
+                }
+                and "/".join((*parts[:3], "data.sqlite")) not in roles
+            ):
+                _fail(
+                    "maintenance_external_state",
+                    "A business store has no retained provider binding",
+                )
             if relative in omitted or stat.S_ISSOCK(mode):
                 continue
             if stat.S_ISDIR(mode):
                 walk(path)
             elif stat.S_ISREG(mode):
-                if (
-                    relative.startswith("data/plugins/")
-                    and relative.endswith("/data.sqlite")
-                    and relative not in roles
-                ):
-                    _fail(
-                        "maintenance_external_state",
-                        "A business store has no retained provider binding",
-                    )
                 role = roles.get(relative, "home_file")
                 if relative == ".toolframe/management.token" or relative.startswith(
                     ".toolframe/secrets/"
