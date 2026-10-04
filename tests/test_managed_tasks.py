@@ -274,3 +274,27 @@ async def test_withdrawn_generation_can_settle_only_its_admitted_root(task_host)
     await task_host.worker_call(replacement, "task.end", new)
     assert not task_host.roots
     assert task_host.manager.counts == {"jobs": 0, "backend": 0}
+
+
+async def test_waiting_task_budget_is_rechecked_against_current_operator_policy(
+    task_host,
+):
+    runtime = task_host.runtimes["jobs"]
+    task_host.gated.add("jobs")
+    admission = asyncio.create_task(
+        task_host.worker_call(runtime, "task.begin", {"timeout": 120})
+    )
+    await asyncio.sleep(0)
+    assert not admission.done()
+    task_host.composition.runtime.max_task_timeout = 60
+    task_host.gated.clear()
+    task_host.changed.set()
+    with pytest.raises(PluginError) as error:
+        await admission
+    assert error.value.code == "task_timeout_exceeded"
+    assert not task_host.roots
+    assert not task_host.manager.counts
+    admitted = await task_host.worker_call(runtime, "task.begin", {"timeout": 60})
+    await task_host.worker_call(runtime, "task.end", admitted)
+    assert not task_host.roots
+    assert task_host.manager.counts == {"jobs": 0, "backend": 0}

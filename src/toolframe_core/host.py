@@ -2099,12 +2099,16 @@ class Host:
                 raise PluginError(
                     "invalid_task_timeout", "Task timeout must be finite and positive"
                 )
-            if timeout > self.composition.runtime.max_task_timeout:
-                raise PluginError(
-                    "task_timeout_exceeded",
-                    "Task timeout exceeds the operator policy",
-                    {"max_task_timeout": self.composition.runtime.max_task_timeout},
-                )
+
+            def check_policy():
+                if timeout > self.composition.runtime.max_task_timeout:
+                    raise PluginError(
+                        "task_timeout_exceeded",
+                        "Task timeout exceeds the operator policy",
+                        {"max_task_timeout": self.composition.runtime.max_task_timeout},
+                    )
+
+            check_policy()
             async with asyncio.timeout(self.composition.runtime.activation_timeout):
                 while runtime.name in self.gated or not runtime.admitted:
                     if self.runtimes.get(runtime.name) is not runtime:
@@ -2117,6 +2121,8 @@ class Host:
                 raise PluginError(
                     "stale_generation", "Task belongs to a withdrawn generation"
                 )
+            # Waiting requests use the policy in force when they are admitted.
+            check_policy()
             root = self.begin_root(runtime.name, deadline=time.time() + timeout)
             root.paths[(runtime.name,)] = 1
             return {

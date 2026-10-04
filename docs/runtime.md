@@ -77,8 +77,9 @@ max_task_timeout = 3600
 The default is 3600 seconds; allowed policy values are 30 through 86400 seconds.
 An omitted task budget keeps the existing 30-second root deadline. Invalid task
 budgets fail with `invalid_task_timeout`; a budget above the policy fails with
-`task_timeout_exceeded` before acquiring dependency leases. A policy change does
-not shorten roots already admitted. SDK callers that request an explicit budget
+`task_timeout_exceeded` before acquiring dependency leases. A waiting request is checked again against the
+policy in force when admission reopens. A policy change does not shorten roots
+already admitted. SDK callers that request an explicit budget
 also enforce that deadline around their whole attempt.
 
 A background poller must stop scheduling during quiescence and submit each unit
