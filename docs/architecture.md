@@ -72,7 +72,10 @@ workers remain available.
 The lifecycle proceeds through preparation, quiescence, draining, disposal,
 activation, readiness and publication. Admitted roots retain their generation
 bindings through nested service calls and transactions. Quiescence closes new
-admission without abandoning admitted work. A session is not an unlimited lease;
+admission without abandoning admitted work. Explicit background attempt budgets
+are validated against the [operator task policy](runtime.md#background-task-policy);
+the SDK bounds each attempt using Core's admitted deadline and settles root cleanup.
+A session is not an unlimited lease;
 provider replacement can close HTTP streams, WebSockets and MCP sessions.
 
 Preparation failures preserve the active generation. Ordinary drain timeout

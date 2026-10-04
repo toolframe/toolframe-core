@@ -81,10 +81,18 @@ class PluginRequest(Model):
 class RuntimeSettings(Model):
     drain_timeout: float = Field(default=30, gt=0)
     activation_timeout: float = Field(default=30, gt=0)
+    max_task_timeout: float = Field(default=3600, ge=30, le=86400, allow_inf_nan=False)
     disposal_timeout: float = Field(default=10, gt=0)
     health_interval: float = Field(default=10, gt=0)
     health_ttl: float = Field(default=30, gt=0)
     watch_debounce_ms: int = Field(default=500, ge=50)
+
+    @field_validator("max_task_timeout", mode="before")
+    @classmethod
+    def task_timeout_policy(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("max_task_timeout must be a number of seconds")  # noqa: TRY004 - Pydantic validators report ValueError as validation failures
+        return value
 
 
 class PackageSettings(Model):

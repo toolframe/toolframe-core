@@ -61,3 +61,29 @@ private copy exists, the launcher reports an error with recovery instructions.
 
 Platform support and release qualification remain as described in the
 [testing guide](testing.md).
+
+## Background task policy
+
+Plugins can request a finite positive attempt budget through
+`RuntimeContext.task(..., timeout=seconds)`. Core validates every `task.begin`
+request and grants the authoritative root deadline only after admission. The
+operator controls the upper bound in `toolframe.toml`:
+
+```toml
+[runtime]
+max_task_timeout = 3600
+```
+
+The default is 3600 seconds; allowed policy values are 30 through 86400 seconds.
+An omitted task budget keeps the existing 30-second root deadline. Invalid task
+budgets fail with `invalid_task_timeout`; a budget above the policy fails with
+`task_timeout_exceeded` before acquiring dependency leases. A policy change does
+not shorten roots already admitted. SDK callers that request an explicit budget
+also enforce that deadline around their whole attempt.
+
+A background poller must stop scheduling during quiescence and submit each unit
+of work as a separate bounded attempt. Existing roots retain their generation
+bindings while they drain; an idle poller must not hold a root. Task completion,
+deadline expiry and cancellation settle the same root cleanup used by ordinary
+service calls. Read-only activation/health probes and stale-generation checks
+retain their existing admission rules.

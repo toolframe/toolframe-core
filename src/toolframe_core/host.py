@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import copy
 import json
+import math
 import os
 import time
 import uuid
@@ -1912,6 +1913,21 @@ class Host:
             await self.end_root(root)
 
     async def worker_call(self, runtime, method, params):
+        if method == "task.end":
+            root = self.roots.get(params["root_id"])
+            if root is not None:
+                if (
+                    root.owner != runtime.name
+                    or root.runtimes.get(runtime.name) is not runtime
+                ):
+                    raise PluginError(
+                        "stale_generation",
+                        "Task root belongs to another worker generation",
+                    )
+                # A withdrawn worker may settle only the root admitted to that
+                # exact runtime; it cannot start work or settle its replacement.
+                await self.end_root(root)
+            return {}
         if self.runtimes.get(runtime.name) is not runtime:
             raise PluginError(
                 "stale_generation", "Worker generation is no longer current"
@@ -2068,6 +2084,27 @@ class Host:
             )
             return await asyncio.shield(task)
         if method == "task.begin":
+            timeout = params.get("timeout", 30)
+            if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+                raise PluginError(
+                    "invalid_task_timeout", "Task timeout must be finite and positive"
+                )
+            try:
+                timeout = float(timeout)
+            except OverflowError as error:
+                raise PluginError(
+                    "invalid_task_timeout", "Task timeout must be finite and positive"
+                ) from error
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise PluginError(
+                    "invalid_task_timeout", "Task timeout must be finite and positive"
+                )
+            if timeout > self.composition.runtime.max_task_timeout:
+                raise PluginError(
+                    "task_timeout_exceeded",
+                    "Task timeout exceeds the operator policy",
+                    {"max_task_timeout": self.composition.runtime.max_task_timeout},
+                )
             async with asyncio.timeout(self.composition.runtime.activation_timeout):
                 while runtime.name in self.gated or not runtime.admitted:
                     if self.runtimes.get(runtime.name) is not runtime:
@@ -2076,18 +2113,17 @@ class Host:
                         )
                     self.changed.clear()
                     await self.changed.wait()
-            root = self.begin_root(runtime.name)
+            if self.runtimes.get(runtime.name) is not runtime:
+                raise PluginError(
+                    "stale_generation", "Task belongs to a withdrawn generation"
+                )
+            root = self.begin_root(runtime.name, deadline=time.time() + timeout)
             root.paths[(runtime.name,)] = 1
             return {
                 "root_id": root.id,
                 "deadline": root.deadline,
                 "chain": [runtime.name],
             }
-        if method == "task.end":
-            root = self.roots.get(params["root_id"])
-            if root and root.owner == runtime.name:
-                await self.end_root(root)
-            return {}
         if method == "service.call":
             root = self.roots.get(params.get("root_id"))
             if root is None:
