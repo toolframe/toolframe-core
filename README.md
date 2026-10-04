@@ -16,6 +16,9 @@ For PostgreSQL provisioning, startup and recovery, see
 [PostgreSQL Core state](docs/postgresql-state.md). Both backends run one Core per
 application and retain configuration, private keys and artifacts in its home.
 
+Operator backup tools can use the public [offline maintenance interface](docs/offline-maintenance.md)
+to hold the application lock and validate stopped local SQLite state.
+
 ## Run the local workspace
 
 The Toolframe repositories and `fastapi-cordis` must be siblings.
