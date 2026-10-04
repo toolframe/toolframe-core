@@ -64,6 +64,14 @@ from the current composition. Backend and UI environment locks are both checked.
 Captured plugin wheels and locally referenced dependency wheels must exist and
 match their recorded SHA256 digests.
 
+Direct references recorded as `packages.archive` are accepted only for compatible
+wheel files with matching package identity, version, and SHA256, captured in the
+home's immutable artifact layout. An archive `path` must be absolute or use
+`${TOOLFRAME_HOME}`; a `url` must resolve to a captured local wheel. Relative archive
+paths, sdists, directories, VCS sources, source subdirectories, and ambiguous
+mixed source records are refused. Index records may retain sdist metadata when
+their required wheels are available; maintenance never selects a source build.
+
 The serialized metadata contains no raw composition, candidate configuration, source URLs,
 dependency URLs, private keys, or token values. The snapshot files themselves can
 contain credentials and business records: the operator's archive implementation
@@ -157,6 +165,11 @@ references, verify dependency hashes, and rebuild the corresponding backend/UI
 environment paths before boot. Core's ordinary missing-environment preparation
 recompiles artifact requirements; it does not automatically replay every retained
 dependency lock. Copying an old virtual environment is not a relocation step.
+
+Protected locks can also contain absolute source-home `packages.archive.path`
+values. Restore consumers must validate those paths against the captured artifact
+inventory and relocate them to the new home by the lock format's path semantics.
+The maintenance reader preserves the exact recorded lock and never rewrites it.
 
 The restore consumer must choose an absent final destination, create its own new
 staging home, and keep the lock through destination finalization and environment

@@ -223,6 +223,79 @@ async def test_real_core_clean_shutdown_is_supported(tmp_path):
     assert after == before
 
 
+async def test_real_core_sqlite_business_shutdown_has_public_inventory(tmp_path):
+    from test_acceptance import install_storage, store_source
+    from test_host import operate
+
+    home = tmp_path / "real-store-core"
+    config = ConfigFile(home)
+    composition = config.initialize()
+    workspace = Path(__file__).resolve().parents[2]
+    sdk_wheel = os.environ.get("TOOLFRAME_SDK_WHEEL")
+    wheelhouse = (
+        Path(sdk_wheel).parent if sdk_wheel else workspace / "toolframe-sdk/dist"
+    )
+    composition.packages.find_links = [str(wheelhouse)]
+    composition.runtime.health_interval = 3600
+    atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
+    host = await Host.create(home)
+    try:
+        await host.start()
+        await install_storage(host)
+        source = store_source(tmp_path, "maintenance-store")
+        result = await operate(host, "add", source=str(source), enable=True)
+        assert result["status"] == "succeeded", result
+        await host.call_service(
+            "maintenance-store",
+            "maintenance-store.service",
+            "write",
+            {"label": "saved"},
+        )
+        assert await host.call_service(
+            "maintenance-store", "maintenance-store.service", "read", {}
+        ) == [{"id": 1, "label": "saved"}]
+    finally:
+        await host.close()
+    databases = {
+        path.relative_to(home).as_posix(): path.read_bytes()
+        for path in (home / "data").rglob("*.sqlite")
+    }
+    with stopped_application(home) as inventory:
+        assert inventory.status == "STOPPED"
+        assert {(item.owner, item.provider) for item in inventory.stores} == {
+            (None, "core"),
+            ("maintenance-store", "storage-sqlite"),
+        }
+        assert len(inventory.environment_locks) == 2
+        direct = [
+            package
+            for environment in inventory.environment_locks
+            for package in tomlkit.parse(environment.lock)["packages"]
+            if "archive" in package
+        ]
+        assert {item["name"] for item in direct} >= {
+            "toolframe-sdk",
+            "toolframe-storage-sqlite",
+            "fixture-maintenance-store",
+        }
+        assert all(
+            item["archive"]["path"].startswith(
+                "${TOOLFRAME_HOME}/.toolframe/artifacts/"
+            )
+            for item in direct
+        )
+        assert all(
+            item.path is not None
+            for item in inventory.dependency_wheels
+            if item.distribution in {package["name"] for package in direct}
+        )
+        assert "lock" not in inventory.as_dict()["environment_locks"][0]
+    assert databases == {
+        path.relative_to(home).as_posix(): path.read_bytes()
+        for path in (home / "data").rglob("*.sqlite")
+    }
+
+
 def test_empty_inventory_is_json_safe_and_does_not_modify_databases(home):
     before = (home / "data/core.sqlite").read_bytes()
     with stopped_application(home) as inventory:
@@ -547,6 +620,100 @@ def test_malformed_dependency_metadata_is_refused_without_values(home, damage):
     candidate["environment"]["lock"] = tomlkit.dumps(lock)
     update_candidate(home, candidate)
     expect_failure(home, "maintenance_layout_invalid")
+
+
+@pytest.mark.parametrize("reference", ["placeholder", "absolute", "file_url", "https"])
+def test_captured_direct_wheel_archive_is_validated_and_kept_exact(home, reference):
+    candidate = install(home)
+    lock = tomlkit.parse(candidate["environment"]["lock"]).unwrap()
+    package = lock["packages"][0]
+    wheel = package.pop("wheels")[0]
+    archive = {"hashes": wheel["hashes"]}
+    if reference == "placeholder":
+        archive["path"] = "${TOOLFRAME_HOME}/" + candidate["artifact"]
+    elif reference == "absolute":
+        archive["path"] = str(home / candidate["artifact"])
+    elif reference == "file_url":
+        archive["url"] = (home / candidate["artifact"]).as_uri()
+    else:
+        archive["url"] = "https://packages.invalid/" + Path(candidate["artifact"]).name
+    package["archive"] = archive
+    candidate["environment"]["lock"] = tomlkit.dumps(lock)
+    update_candidate(home, candidate)
+    with stopped_application(home) as inventory:
+        assert inventory.environment_locks[0].lock == candidate["environment"]["lock"]
+        assert inventory.dependency_wheels[0].path == candidate["artifact"]
+        assert inventory.dependency_wheels[0].sha256 == candidate["artifact_hash"]
+
+
+@pytest.mark.parametrize(
+    "damage,code",
+    [
+        ("sdist", "maintenance_artifact_missing"),
+        ("directory", "maintenance_artifact_missing"),
+        ("vcs", "maintenance_artifact_missing"),
+        ("missing", "maintenance_artifact_missing"),
+        ("uncaptured_remote", "maintenance_artifact_missing"),
+        ("hash", "maintenance_layout_invalid"),
+        ("modified", "maintenance_layout_invalid"),
+        ("identity", "maintenance_layout_invalid"),
+        ("version", "maintenance_layout_invalid"),
+        ("platform", "maintenance_layout_invalid"),
+        ("escape", "maintenance_layout_invalid"),
+        ("relative", "maintenance_layout_invalid"),
+        ("both_locations", "maintenance_layout_invalid"),
+        ("mixed_sources", "maintenance_layout_invalid"),
+        ("subdirectory", "maintenance_layout_invalid"),
+    ],
+)
+def test_direct_archive_cannot_bypass_captured_wheel_safety(home, damage, code):
+    candidate = install(home)
+    lock = tomlkit.parse(candidate["environment"]["lock"]).unwrap()
+    package = lock["packages"][0]
+    wheel = package.pop("wheels")[0]
+    archive = {
+        "path": "${TOOLFRAME_HOME}/" + candidate["artifact"],
+        "hashes": wheel["hashes"],
+    }
+    package["archive"] = archive
+    if damage == "sdist":
+        archive["path"] = "${TOOLFRAME_HOME}/notes-1.0.tar.gz"
+    elif damage in {"directory", "vcs"}:
+        package.pop("archive")
+        package[damage] = {"path": str(home)}
+    elif damage == "missing":
+        (home / candidate["artifact"]).unlink()
+    elif damage == "uncaptured_remote":
+        archive.pop("path")
+        archive["url"] = "https://packages.invalid/other-1.0-py3-none-any.whl"
+        package["name"] = "other"
+    elif damage == "hash":
+        archive["hashes"] = {"sha256": SECRET}
+    elif damage == "modified":
+        (home / candidate["artifact"]).write_bytes(b"modified")
+    elif damage == "identity":
+        package["name"] = "other"
+    elif damage == "version":
+        package["version"] = "2.0"
+    elif damage == "platform":
+        relative, checksum = artifact(
+            home, "notes-1.0-cp29-cp29-unavailable.whl", b"unsupported binary wheel"
+        )
+        archive["path"] = "${TOOLFRAME_HOME}/" + relative
+        archive["hashes"] = {"sha256": checksum}
+    elif damage == "escape":
+        archive["path"] = str(home.parent / "notes-1.0-py3-none-any.whl")
+    elif damage == "relative":
+        archive["path"] = candidate["artifact"]
+    elif damage == "both_locations":
+        archive["url"] = wheel["url"]
+    elif damage == "mixed_sources":
+        package["wheels"] = [wheel]
+    else:
+        archive["subdirectory"] = "source"
+    candidate["environment"]["lock"] = tomlkit.dumps(lock)
+    update_candidate(home, candidate)
+    expect_failure(home, code)
 
 
 def test_unknown_external_provider_kind_and_separate_application_are_refused(home):

@@ -324,11 +324,41 @@ def _environment(home, value, artifacts, wheels):
     if not isinstance(packages, list) or not packages:
         _fail(message="A retained environment has no locked wheels")
     for package in packages:
-        if not isinstance(package, dict) or not package.get("wheels"):
+        if not isinstance(package, dict) or any(
+            field in package for field in ("directory", "vcs")
+        ):
             _fail(
                 "maintenance_artifact_missing",
                 "Only fully captured wheel environments are supported",
             )
+        direct = "archive" in package
+        if direct:
+            archive = package["archive"]
+            if (
+                not isinstance(archive, dict)
+                or any(field in package for field in ("wheels", "sdist"))
+                or "subdirectory" in archive
+                or ("path" in archive) == ("url" in archive)
+            ):
+                _fail(message="A direct dependency wheel record is invalid")
+            wheel = dict(archive)
+            if "path" in archive:
+                if not isinstance(archive["path"], str) or not archive["path"]:
+                    _fail(message="A direct dependency wheel path is invalid")
+                path = Path(archive["path"].replace("${TOOLFRAME_HOME}", str(home)))
+                # Restrict direct paths to captured source-home artifacts. The
+                # public lock stays exact, so restore consumers relocate paths.
+                if not path.is_absolute():
+                    _fail(message="A direct dependency wheel path must be absolute")
+                wheel["url"] = path.as_uri()
+            package_wheels = [wheel]
+        else:
+            package_wheels = package.get("wheels")
+            if not isinstance(package_wheels, list) or not package_wheels:
+                _fail(
+                    "maintenance_artifact_missing",
+                    "Only fully captured wheel environments are supported",
+                )
         marker = package.get("marker")
         if marker is not None:
             if not isinstance(marker, str):
@@ -342,10 +372,8 @@ def _environment(home, value, artifacts, wheels):
         if not _DISTRIBUTION.fullmatch(package["name"]):
             _fail(message="A dependency identity is invalid")
         version = Version(package["version"])
-        if not isinstance(package["wheels"], list):
-            _fail(message="A dependency wheel list is invalid")
         compatible_wheel = False
-        for wheel in package["wheels"]:
+        for wheel in package_wheels:
             if (
                 not isinstance(wheel, dict)
                 or not isinstance(wheel.get("url"), str)
@@ -358,6 +386,11 @@ def _environment(home, value, artifacts, wheels):
             _relative(filename)
             if "/" in filename:
                 _fail(message="A dependency wheel filename must be a basename")
+            if direct and not filename.endswith(".whl"):
+                _fail(
+                    "maintenance_artifact_missing",
+                    "Direct dependencies must be captured wheel archives",
+                )
             wheel_name, wheel_version, _, tags = parse_wheel_filename(filename)
             compatible_wheel |= bool(tags & supported_tags)
             if (
@@ -387,6 +420,11 @@ def _environment(home, value, artifacts, wheels):
                 )
             if relative is not None:
                 _artifact(home, relative, checksum, artifacts)
+            elif direct:
+                _fail(
+                    "maintenance_artifact_missing",
+                    "A direct dependency wheel is not captured locally",
+                )
             item = DependencyWheel(
                 identity,
                 package["name"],
