@@ -24,6 +24,21 @@ skill's `evals/cases.json` remains a development input and is excluded from inst
 skill payloads. Structural delivery checks do not measure model routing or
 independent agent implementation quality.
 
+The real SQLite maintenance inventory regression accepts explicit SDK and SQLite
+provider wheels, so it can run from a worktree without sibling source checkouts.
+Use a prepared Core development environment and matching wheels:
+
+```sh
+TOOLFRAME_SDK_WHEEL=/path/to/toolframe_sdk-0.3.0-py3-none-any.whl \
+TOOLFRAME_STORAGE_SQLITE_WHEEL=/path/to/toolframe_storage_sqlite-0.3.0-py3-none-any.whl \
+.venv/bin/python -m pytest -q \
+  tests/test_maintenance.py::test_real_core_sqlite_business_shutdown_has_public_inventory
+```
+
+Omitting the SQLite wheel override retains the existing sibling source-checkout
+fallback used by developer acceptance tests. Other fixtures keep their existing
+package-source selection.
+
 ## Executable and integration probes
 
 Build with `bash scripts/build-release.sh`. Probe scripts accept `--help` for their

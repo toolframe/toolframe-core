@@ -242,7 +242,18 @@ async def test_real_core_sqlite_business_shutdown_has_public_inventory(tmp_path)
     host = await Host.create(home)
     try:
         await host.start()
-        await install_storage(host)
+        sqlite_wheel = os.environ.get("TOOLFRAME_STORAGE_SQLITE_WHEEL")
+        if sqlite_wheel:
+            result = await operate(
+                host,
+                "add",
+                source=str(Path(sqlite_wheel).expanduser().resolve()),
+                id="storage-sqlite",
+                enable=True,
+            )
+            assert result["status"] == "succeeded", result
+        else:
+            await install_storage(host)
         source = store_source(tmp_path, "maintenance-store")
         result = await operate(host, "add", source=str(source), enable=True)
         assert result["status"] == "succeeded", result
