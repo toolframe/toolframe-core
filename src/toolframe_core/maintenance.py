@@ -414,13 +414,26 @@ def _compatibility(home, environment, lock):
         if not separator or key in settings:
             _fail(message="Source interpreter metadata is invalid")
         settings[key] = value.strip()
-    version = settings.get("version_info", settings.get("version"))
     implementation = settings.get("implementation")
-    if (
-        version != platform.python_version()
-        or implementation != platform.python_implementation()
-    ):
+    inspector_version = Version(platform.python_version())
+    versions = []
+    for name in ("version_info", "version"):
+        if name not in settings:
+            continue
+        if not re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", settings[name]):
+            _fail(message="Source interpreter version metadata is invalid")
+        recorded = Version(settings[name])
+        precision = len(recorded.release)
+        if (precision == 2 and recorded.release != inspector_version.release[:2]) or (
+            precision == 3 and recorded != inspector_version
+        ):
+            _fail(message="Use a compatible source interpreter for offline maintenance")
+        versions.append(recorded)
+    if not versions or implementation != platform.python_implementation():
         _fail(message="Use a compatible source interpreter for offline maintenance")
+    # uv can record only major/minor. Preserve that uncertainty in the public
+    # metadata; use a full recorded version when either field supplies one.
+    version = str(max(versions, key=lambda item: len(item.release)))
     requires_python = lock.get("requires-python", "")
     environments = lock.get("environments", [])
     if (
@@ -429,7 +442,7 @@ def _compatibility(home, environment, lock):
         or any(not isinstance(marker, str) for marker in environments)
     ):
         _fail(message="Environment compatibility markers are invalid")
-    if not SpecifierSet(requires_python).contains(version) or (
+    if not SpecifierSet(requires_python).contains(inspector_version) or (
         environments and not any(Marker(marker).evaluate() for marker in environments)
     ):
         _fail(

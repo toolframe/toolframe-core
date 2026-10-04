@@ -6,6 +6,7 @@ import os
 import platform
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -645,6 +646,109 @@ def test_source_environment_compatibility_is_required(home, damage, tmp_path):
             lock["requires-python"] = "<1"
         candidate["environment"]["lock"] = tomlkit.dumps(lock)
         update_candidate(home, candidate)
+    expect_failure(home, "maintenance_layout_invalid")
+
+
+def test_uv_created_interpreter_metadata_preserves_recorded_precision(home, tmp_path):
+    candidate = install(home)
+    environment = tmp_path / "uv-environment"
+    subprocess.run(
+        ["uv", "venv", "--python", sys.executable, str(environment)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    produced = (environment / "pyvenv.cfg").read_text()
+    assert "uv = " in produced
+    recorded = {
+        key.strip(): value.strip()
+        for key, value in (line.split("=", 1) for line in produced.splitlines())
+    }
+    config = (
+        home / f".toolframe/environments/{candidate['environment']['id']}/pyvenv.cfg"
+    )
+    atomic_write(config, produced)
+    with stopped_application(home) as inventory:
+        source = inventory.environment_locks[0]
+        assert source.python_version == recorded["version_info"]
+        assert source.python_implementation == recorded["implementation"]
+
+
+@pytest.mark.parametrize("fields", ["minor", "full", "both", "version_only"])
+def test_source_version_precision_and_full_inspector_constraints(home, fields):
+    candidate = install(home)
+    version = platform.python_version()
+    minor = ".".join(version.split(".")[:2])
+    versions = {
+        "minor": f"version_info = {minor}\n",
+        "full": f"version_info = {version}\n",
+        "both": f"version_info = {minor}\nversion = {version}\n",
+        "version_only": f"version = {version}\n",
+    }
+    config = (
+        home / f".toolframe/environments/{candidate['environment']['id']}/pyvenv.cfg"
+    )
+    atomic_write(
+        config,
+        f"implementation = {platform.python_implementation()}\n{versions[fields]}",
+    )
+    lock = tomlkit.parse(candidate["environment"]["lock"]).unwrap()
+    lock["requires-python"] = f">={version}"
+    lock["environments"] = [f"python_full_version >= '{version}'"]
+    candidate["environment"]["lock"] = tomlkit.dumps(lock)
+    update_candidate(home, candidate)
+    with stopped_application(home) as inventory:
+        assert inventory.environment_locks[0].python_version == (
+            minor if fields == "minor" else version
+        )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "minor",
+        "patch",
+        "conflicting_full",
+        "malformed",
+        "major_only",
+        "version_tag",
+        "requires_python",
+        "marker",
+    ],
+)
+def test_partial_source_metadata_does_not_bypass_compatibility(home, damage):
+    candidate = install(home)
+    version = platform.python_version()
+    major, minor, patch = map(int, version.split("."))
+    config = (
+        home / f".toolframe/environments/{candidate['environment']['id']}/pyvenv.cfg"
+    )
+    recorded = f"{major}.{minor}"
+    extra = ""
+    if damage == "minor":
+        recorded = f"{major}.{minor + 1}"
+    elif damage == "patch":
+        recorded = f"{major}.{minor}.{patch + 1}"
+    elif damage == "conflicting_full":
+        extra = f"version = {major}.{minor}.{patch + 1}\n"
+    elif damage == "malformed":
+        recorded = f"{major}.{minor}.0.0"
+    elif damage == "major_only":
+        recorded = str(major)
+    elif damage == "version_tag":
+        recorded = version + "+unsupported"
+    else:
+        lock = tomlkit.parse(candidate["environment"]["lock"]).unwrap()
+        if damage == "requires_python":
+            lock["requires-python"] = f">{version}"
+        else:
+            lock["environments"] = [f"python_full_version > '{version}'"]
+        candidate["environment"]["lock"] = tomlkit.dumps(lock)
+        update_candidate(home, candidate)
+    atomic_write(
+        config,
+        f"implementation = {platform.python_implementation()}\nversion_info = {recorded}\n{extra}",
+    )
     expect_failure(home, "maintenance_layout_invalid")
 
 

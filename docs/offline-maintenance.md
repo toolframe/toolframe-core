@@ -50,7 +50,7 @@ rather than rely on ordering of stores or environment locks.
 | `stores` | Array of `{path, owner, provider}`. Core uses `owner: null, provider: "core"`; supported business stores identify their plugin owner and `"storage-sqlite"` provider. |
 | `retained_keys` | Array of `{path, owner, name}` identifying credential files to retain. `owner` is `null` for the management token and undeclared retained key files. No key contents or key hashes are returned. |
 | `dependency_wheels` | Array of `{environment_id, distribution, version, filename, sha256, path}` for recorded dependency wheels. A local `path` is verified against its locked hash; `path: null` is an explicit dependency rehydration prerequisite. |
-| `environment_locks` | Array of `{candidate_id, purpose, environment_id, sha256, python_version, python_implementation, platform_system, platform_machine, requires_python}`. `purpose` is `"backend"` or `"ui"`; the digest identifies the recorded lock text. Interpreter metadata comes from the source environment's regular `pyvenv.cfg`; platform fields describe the local source inspection host. |
+| `environment_locks` | Array of `{candidate_id, purpose, environment_id, sha256, python_version, python_implementation, platform_system, platform_machine, requires_python}`. `purpose` is `"backend"` or `"ui"`; the digest identifies the recorded lock text. Interpreter metadata comes from the source environment's regular `pyvenv.cfg`. `python_version` preserves its known precision: `"3.14"` means the source patch version is unknown, while `"3.14.7"` records a full version. Platform fields describe the local source inspection host. |
 
 The corresponding public record classes are `InventoryFile`, `SQLiteStore`,
 `RetainedKey`, `DependencyWheel`, and `EnvironmentLock`. Inventory attributes use
@@ -117,11 +117,17 @@ The context refuses:
 - Symlinks in snapshot state, paths escaping the home, nonregular state files,
   missing captured wheels, and modified immutable artifacts. Known regenerable
   worker environments are excluded, including their normal Python symlinks.
-- Missing/malformed source `pyvenv.cfg`, an operator interpreter version or
-  implementation different from the recorded source environment, or lock markers
-  incompatible with the inspection host. This conservative source validation
-  supplies same-platform restoration metadata; cross-platform recovery is not
-  guaranteed.
+- Missing/malformed source `pyvenv.cfg`, an operator interpreter major/minor or
+  implementation different from the recorded source environment, a different
+  full version when the source records one, or lock markers incompatible with the
+  inspection host. Version metadata must be numeric `major.minor` or
+  `major.minor.patch`. Both `version_info` and `version` are checked when present;
+  a full recorded version takes precedence in the inventory. When uv records
+  only major/minor, no source patch version is inferred. Requires-Python and
+  environment markers are checked against the inspector's full version.
+  This validation supplies same-platform restoration metadata; cross-platform
+  recovery is not guaranteed. Consumers must match the recorded version at its
+  known precision and check the full recovery interpreter against the lock.
   Each required locked package must have a wheel compatible with the source
   interpreter/platform tags. Package markers may exclude a package only when
   they are valid and prove it is not required on that source platform.
