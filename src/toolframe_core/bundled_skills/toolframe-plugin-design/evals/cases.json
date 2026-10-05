@@ -68,8 +68,8 @@
       "Declares customer-notes.read and customer-notes.write in AuthorizationSpec",
       "Declares method audience and required scopes, page scopes and scope-aware write controls",
       "Keeps managed SQL internal to admitted business execution",
-      "Explains that published MCP/API entrances are public independently of Dashboard passwords",
-      "Builds and validates with SDK 0.2 and checks direct read-only write denial"
+      "Distinguishes explicitly public HTTP from the independent public/protected MCP policy and Dashboard scopes",
+      "Builds and validates with SDK 0.3 and checks direct read-only write denial"
     ]
   },
   {
@@ -127,6 +127,24 @@
     "success": [
       "Uses the skill installation/update surface without starting business-plugin design",
       "Leaves previously generated and customized business plugin sources untouched"
+    ]
+  },
+  {
+    "id": "confidential-entrances-and-outage",
+    "prompt": "Build an internal Toolframe customer-notes plugin with a Dashboard and an MCP tool. Notes must stay private when authentication fails or is disabled. Readers cannot edit; each person should see only their own notes.",
+    "activate": true,
+    "read": [
+      "references/design.md",
+      "references/plugin-api.md",
+      "references/operations.md"
+    ],
+    "success": [
+      "Explicitly chooses access.mode=protected and access.failure_mode=closed while preserving existing application choices until an authorized edit",
+      "Sets mcp_access.mode=protected with an installed MCP auth provider and business-scoped keys; does not reuse Dashboard credentials",
+      "Leaves sensitive methods public_api=False and keeps private data out of llms publications",
+      "Explains method scopes do not establish person/tenant identity or row isolation; designs trusted identity and row filtering explicitly",
+      "Verifies anonymous, reader, writer and local operator access at each entrance, plus auth outage, revocation and recovery",
+      "Uses Core 0.6.1 / SDK 0.3 and capability detection for failure-policy UI on older Core"
     ]
   }
 ]

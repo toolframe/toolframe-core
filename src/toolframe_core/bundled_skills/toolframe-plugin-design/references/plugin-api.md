@@ -1,6 +1,6 @@
 # Public plugin contract
 
-Target: `toolframe-sdk==0.3.0`, core 0.3, Python 3.14. Use this packaged reference
+Target: `toolframe-sdk==0.3.0`, Core 0.6.1, Python 3.14. Use this packaged reference
 and the starter when the source workspace is unavailable. If the installed SDK
 version differs, inspect its public definitions before adapting these examples.
 
@@ -68,11 +68,45 @@ service calls keep the admitted caller and check the callee's declared scopes.
 
 `read_only=True` describes mutation behavior; it does not make a method public.
 Use `public_api=True` only for deliberately public business methods, served at
-`POST /api/PLUGIN/SERVICE/METHOD`. An MCP tool resource also deliberately publishes
-its business method. These routes and llms documents remain anonymous-accessible
-on LAN, independent of Dashboard passwords/scopes. Keep sensitive operations out
-of those publications. System/internal methods cannot be published as public APIs
-or MCP tools. The starter publishes only a read-only query.
+`POST /api/PLUGIN/SERVICE/METHOD`. This HTTP route and llms documents are public
+independently of Dashboard passwords. Leave sensitive methods `public_api=False`
+and keep private content out of published documents.
+
+| Entrance | Required decision |
+| --- | --- |
+| Dashboard and `/_toolframe/v1/services/...` | Set `access.mode="protected"` and `access.failure_mode="closed"` for confidential data; enforce method scopes. |
+| `/api/...` | Only explicitly public business methods are reachable; Dashboard/MCP credentials do not protect them. |
+| `/mcp` | Independent `mcp_access` policy; public by default, or a healthy MCP auth provider and scoped MCP credentials in protected mode. |
+| llms documents | Public; publish only intentionally shareable content. |
+| Local control / management | Direct loopback control and the management token are operator recovery paths; remote system calls require system authority. |
+
+An MCP tool resource publishes a business method to the MCP catalog, whose policy
+is independent of Dashboard login. For confidential tools, install/enable a
+compatible `toolframe-mcp-auth` provider and set:
+
+```toml
+[access]
+mode = "protected"
+failure_mode = "closed"
+
+[mcp_access]
+mode = "protected"
+auth_provider = "mcp-auth"
+```
+
+Use business-scoped MCP keys or configured delegated user grants; Dashboard
+passwords and management tokens are not MCP keys. Protected MCP stays unavailable
+if its verifier is absent or fails, independently of Dashboard fallback. New Core
+applications write `failure_mode="closed"`; older files omitting it retain legacy
+public fallback. Review existing choices before changing them. The access-password
+page shows entrance states; its failure-policy editor requires Core 0.6.1.
+
+Scopes authorize methods, not individual rows. Password labels identify grants,
+not people. Per-person or tenant data needs a trusted identity and explicit
+business-layer row filtering. Never use a caller-supplied label as identity.
+System/internal methods cannot be published as public APIs or MCP tools. The
+starter deliberately publishes a public read-only query; remove that flag when
+adapting it for private data.
 
 Page `service.call(..., activity=False)` is for background polling, so it does not
 extend a session's idle deadline or last-use timestamp. Interactive calls default

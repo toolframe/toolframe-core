@@ -1,13 +1,13 @@
 ---
 name: toolframe-plugin-design
-version: "0.3.1"
+version: "0.3.2"
 description: Load when designing, creating, or extending a Toolframe business plugin, including its domain model, persistence, or dashboard and MCP interfaces. Excludes routine application operation, calling existing tools, standalone Streamlit apps, Codex plugins, and Toolframe runtime/provider internals.
 ---
 
 # Toolframe plugin design
 
 Turn the user's business outcome into an independently packaged Toolframe plugin.
-This skill targets Toolframe core 0.3 and SDK 0.2. The attached references and
+This skill targets Toolframe Core 0.6.1 and SDK 0.3. The attached references and
 starter travel with the application; a Toolframe source checkout is optional.
 
 ## Establish the design
@@ -31,9 +31,11 @@ services, storage or resources. Use public `toolframe_sdk` contracts. Business
 state belongs in provider-managed storage; business services own its meaning.
 Dashboard pages and MCP tools call those services.
 Declare owned read/write scopes and each method's audience. Use page permissions
-for navigation and controls; core enforces service permissions. Choose public
-MCP/API publication explicitly: those entrances remain public even when Dashboard
-requires a password. [plugin-api.md](references/plugin-api.md) defines this boundary.
+for navigation and controls; core enforces service permissions. Choose each entrance explicitly. Confidential applications need protected Dashboard
+access with `failure_mode="closed"`, a separate protected MCP policy, and no sensitive
+`public_api` methods or llms documents. Preserve an existing application's explicit
+policy until an authorized change. Method scopes do not provide person/tenant or
+row isolation. [plugin-api.md](references/plugin-api.md) defines these boundaries.
 
 For a **new** plugin, read [operations.md](references/operations.md), then run
 `toolframe --home APP plugin new PLUGIN-ID --json`. Customize the generated source

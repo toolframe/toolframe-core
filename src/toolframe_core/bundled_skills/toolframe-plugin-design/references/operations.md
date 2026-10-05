@@ -51,7 +51,7 @@ Run `serve` in a separate terminal. Add required providers to the composition
 before enabling a plugin that consumes their services. For a local SQLite wheel:
 
 ```sh
-toolframe --home APP plugin add /path/to/toolframe_storage_sqlite-0.2.0-py3-none-any.whl --enable
+toolframe --home APP plugin add /path/to/toolframe_storage_sqlite-0.3.1-py3-none-any.whl --enable
 toolframe --home APP plugin add APP/plugins/customer-notes
 toolframe --home APP plugin validate customer-notes
 toolframe --home APP plugin validate customer-notes --runtime
@@ -118,7 +118,13 @@ the database and perform forward repair or an explicitly chosen restore.
 
 Verify business invariants through public services and requested interfaces.
 For a Dashboard plugin, also verify a read-only password cannot write, including a
-direct protected service call. Verify any deliberately public API/tool separately.
+direct protected service call. Check anonymous, reader, writer and local operator
+access separately through Dashboard/service calls, explicit public HTTP methods,
+and an actual MCP client. In a disposable application, disable the Dashboard auth
+provider and verify closed policy denies protected calls, public HTTP remains
+intentional, and protected MCP keeps its independent gate. Restore auth, revoke a
+grant, and verify denial and recovery. Back up configuration/data before testing
+failure or reload in an existing application. Scope tests do not prove row isolation.
 Record preflight, scratch runtime and active health separately. For persistent
 plugins, create synthetic data in a disposable application, reload after a real
 local edit, and show that the behavior updates while old records remain. Check

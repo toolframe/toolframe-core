@@ -100,6 +100,14 @@ async def test_public_default_protected_scopes_public_api_and_recovery(app_host)
             ).status_code == 401
         record = await credential(host)
         assert record["access"]["mode"] == "protected"
+        assert host.config.read()[0].access.failure_mode == "closed"
+        catalog = await host.access.manage(Identity(local=True), "catalog", {})
+        assert catalog["policy_options"]["failure_modes"] == ["closed", "public"]
+        assert catalog["entrances"]["dashboard"]["mode"] == "protected"
+        assert catalog["entrances"]["mcp"]["mode"] == "public"
+        assert catalog["entrances"]["declared_public_api"] == [
+            "/api/entry-register/entry-register.entries/list_entries"
+        ]
         assert (await remote.get("/_toolframe/auth/login")).status_code == 200
         invalid = await remote.post(
             "/_toolframe/auth/login",
@@ -160,6 +168,21 @@ async def test_public_default_protected_scopes_public_api_and_recovery(app_host)
 
         before = host.config.read()[0].access.mode
         await operate(host, "disable", id="auth")
+        report = (await remote.get("/_toolframe/auth/context")).json()
+        assert report["mode"] == "waiting" and report["reason"] == "auth_unavailable"
+        assert (await remote.post(base + "list_entries", json={})).status_code == 503
+        assert (await remote.post(public + "list_entries", json={})).status_code == 200
+        assert (await local.get("/_toolframe/v1/status")).status_code == 200
+        await host.access.manage(
+            Identity(local=True),
+            "policy",
+            {
+                "mode": "protected",
+                "local_control": True,
+                "failure_mode": "public",
+                "expected_revision": host.config.revision,
+            },
+        )
         report = (await remote.get("/_toolframe/auth/context")).json()
         assert report["mode"] == "public" and report["reason"] == "auth_unavailable"
         assert (
@@ -357,11 +380,23 @@ async def test_queued_management_rechecks_revocation_and_delegation_uses_own_gra
     assert host.healthy_runtime("entry-register")
 
 
-async def test_verifier_fault_falls_back_but_expected_denials_do_not(
-    app_host, monkeypatch
+@pytest.mark.parametrize(
+    "failure_mode,effective", [("public", "public"), ("closed", "waiting")]
+)
+async def test_verifier_fault_obeys_policy_but_expected_denials_do_not(
+    app_host, monkeypatch, failure_mode, effective
 ):
     host = app_host
     await credential(host)
+    await host.access.manage(
+        Identity(local=True),
+        "policy",
+        {
+            "mode": "protected",
+            "failure_mode": failure_mode,
+            "expected_revision": host.config.revision,
+        },
+    )
     for password in (None, [], "wrong", "\ud800" * 12):
         with pytest.raises(PluginError):
             await host.access.login(password, "peer")
@@ -384,7 +419,7 @@ async def test_verifier_fault_falls_back_but_expected_denials_do_not(
     assert fault.value.code == "auth_unavailable"
     assert (await host.access.mode())["reason"] == "auth_unavailable"
     assert not host.healthy_runtime("auth")
-    assert (await host.access.presentation(Identity()))["mode"] == "public"
+    assert (await host.access.presentation(Identity()))["mode"] == effective
     with pytest.raises(PluginError):
         await host.access.admit(Identity(), ["system.plugins.manage"])
 

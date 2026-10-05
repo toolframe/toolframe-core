@@ -1,5 +1,9 @@
 # Open Dashboard access when auth errors or is disabled
 
+Partially superseded by [ADR 0011](0011-safe-new-application-access.md): new
+applications select closed failure policy, while legacy and explicit public
+fallback retain the behavior below.
+
 Dashboard access becomes public when the auth plugin errors or is disabled,
 with a persistent header notice that the application
 is publicly accessible. This deliberately favors continued application access

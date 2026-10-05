@@ -107,6 +107,8 @@ class AccessPolicy(Model):
     auth_provider: str = "auth"
     dashboard_auth: str = "dashboard-auth"
     oidc_provider: str = ""
+    # Retain the historical interpretation of existing files without this field.
+    # New applications write an explicit closed policy during initialization.
     failure_mode: Literal["public", "closed"] = "public"
 
     @field_validator("oidc_provider")
@@ -200,7 +202,8 @@ class ConfigFile:
         value = Composition(
             application=Application(
                 id=str(uuid.uuid4()), name=name, host=host, port=port
-            )
+            ),
+            access=AccessPolicy(failure_mode="closed"),
         )
         atomic_write(self.path, tomlkit.dumps(value.model_dump()))
         return value

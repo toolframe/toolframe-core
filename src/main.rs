@@ -62,9 +62,9 @@ async fn main() -> Result<()> {
     let postgres = env::var("TOOLFRAME_CORE_STATE_BACKEND").as_deref() == Ok("postgresql")
         || forwarded.iter().any(|argument| argument == "state");
     let core_requirement = if postgres {
-        "toolframe-core[postgres]==0.6.0"
+        "toolframe-core[postgres]==0.6.1"
     } else {
-        "toolframe-core==0.6.0"
+        "toolframe-core==0.6.1"
     };
     fingerprint.update(core_requirement.as_bytes());
     fingerprint.update(b"bootstrap4");

@@ -51,5 +51,6 @@ async def initialize_template(config, template, *, name=None, host=None, port=98
         document["application"]["name"] = name
     if links:
         document.setdefault("packages", tomlkit.table())["find_links"] = links
+    document.setdefault("access", tomlkit.table()).setdefault("failure_mode", "closed")
     Composition.model_validate(document.unwrap())
     atomic_write(config.path, tomlkit.dumps(document))

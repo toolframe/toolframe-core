@@ -30,7 +30,8 @@ local Auth/OIDC chain to be available for OAuth requests. Optional-dependency
 isolation keeps independently issued MCP keys usable during an OIDC outage.
 
 Protected federated deployments can select `access.failure_mode="closed"`.
-The default public fallback remains compatible with earlier deployments. This
+Public fallback remains compatible with earlier deployments;
+[ADR 0011](0011-safe-new-application-access.md) selects closed policy for new applications. This
 extends [ADR 0003](0003-public-fallback-on-auth-error-or-disablement.md); it does not
 change explicitly public APIs or llms documents. Exact user admission is initially
 IaC-driven; email matching and unreviewed auto-provisioning are excluded.

@@ -1,6 +1,6 @@
 # Dashboard access and authorization
 
-Core 0.3 / SDK 0.2 use explicit scopes. Standard bundles include `toolframe-auth`
+Core 0.6.1 / SDK 0.3 use explicit scopes. Standard bundles include `toolframe-auth`
 and `toolframe-dashboard-auth`; Entry Register's template enables both. An empty
 `init` remains empty. Updating a binary alone never adds these plugins to an
 existing application's composition.
@@ -32,23 +32,30 @@ mode = "protected"        # public is the default
 local_control = true
 auth_provider = "auth"
 dashboard_auth = "dashboard-auth"
-failure_mode = "public"   # choose "closed" to preserve protection during outages
+failure_mode = "closed"   # new applications keep protected access closed during outages
 
 [plugins.auth]
-source = "pypi:toolframe-auth==0.1.1"
+source = "pypi:toolframe-auth==0.2.0"
 enabled = true
 [plugins.auth.config]
 session_max_seconds = 604800
 session_idle_seconds = 86400
 
 [plugins.dashboard-auth]
-source = "pypi:toolframe-dashboard-auth==0.1.1"
+source = "pypi:toolframe-dashboard-auth==0.1.3"
 enabled = true
 ```
 
 Auth requires the SQLite provider. TOML is desired state; use `toolframe apply`
 after reviewed configuration edits. The Dashboard's access-policy form uses a
-revision-checked edit. If a first-password operation commits its record but the
+revision-checked edit and exposes **When Dashboard authentication is unavailable**.
+Choose **Deny protected business access** for confidential applications. The
+**Access by entrance** panel shows effective/configured Dashboard and MCP policies,
+local-control authority and declared public HTTP methods. A declaration may be
+unavailable when its plugin is stopped; it is not a credential-protected endpoint.
+The failure-policy editor requires Core 0.6.1 and Dashboard Auth 0.1.3.
+
+If a first-password operation commits its record but the
 composition changed concurrently, its response includes the one-time secret,
 record ID and `policy_error`; refresh and explicitly select protected mode. Do
 not blindly retry credential creation.
@@ -93,11 +100,22 @@ admission. Healthy reload/restart retains eligible sessions, not Streamlit memor
 
 ## Failure and recovery
 
-An active auth provider or Dashboard Auth integration failure/disablement selects
-**public business access** by default, with its reason in the common header.
-With `access.failure_mode = "closed"`, it instead makes protected access unavailable.
-System operations
-remain controlled. Recovery resumes saved policy without changing TOML. Normal
+New applications created with Core 0.6.1 write `access.failure_mode="closed"`.
+Templates receive this value only when they omit it; an explicit template choice
+is preserved. When a protected auth provider or Dashboard Auth integration fails
+or is disabled, closed policy makes protected business access unavailable (HTTP
+503). Public mode itself remains intentionally public.
+
+Existing compositions that omit `failure_mode` retain their historical `public`
+fallback when loaded. Explicit `public` choices remain unchanged, including on
+first-password creation. Selecting protected mode from public, or creating the
+first password, fills a missing failure policy with `closed`; simply saving an
+already-protected legacy policy without a failure-policy edit preserves its
+behavior. Operators can explicitly choose either policy in the Dashboard or
+revision-checked auth API. Under public fallback, anonymous visitors receive all
+business scopes and the common header explains why. System operations remain
+controlled. These defaults and compatibility tradeoffs are recorded in
+[ADR 0011](adr/0011-safe-new-application-access.md). Recovery resumes saved policy without changing TOML. Normal
 startup/reload of a protected chain returns retryable unavailability; it does not
 briefly open access. Invalid passwords, expiry, denied scopes, malformed requests
 and rate limits are denials, not failures. A rejected candidate leaves a healthy
@@ -125,9 +143,9 @@ secrets never enter management operation history or exported composition.
 All plugins now require `AuthorizationSpec`, explicit method `audience`, method
 scopes for business/system APIs and page scopes. Legacy packages fail validation;
 there is no synthetic whole-plugin permission. Update custom definitions using
-the bundled skill's `references/plugin-api.md` and SDK 0.2. Update shipped provider
-packages to 0.2.0 and the demo to 0.2.1, then apply the reviewed composition together.
-The auth plugins are at 0.1.1. Keep the old executable/composition for rollback
+the bundled skill's `references/plugin-api.md` and SDK 0.3. Validate the matching
+provider wheels before applying the reviewed composition together. Auth 0.2.0
+and Dashboard Auth 0.1.3 support the flows described here. Keep the old executable/composition for rollback
 until the new packages validate; ordinary business databases keep their schemas.
 
 An upgraded composition without `[access]` adopts public business access once its
@@ -136,11 +154,11 @@ Add them explicitly to enable password management. The bundled skill is versione
 in SKILL.md frontmatter; normal clean-skill upgrades and customized-skill prompts
 still apply. Generated `plugins/` business source is never overwritten.
 
-After the existing providers have been upgraded to 0.2.0 and core is running:
+After compatible storage and presentation providers are installed and Core is running:
 
 ```sh
-toolframe --home APP plugin add pypi:toolframe-auth==0.1.1 --enable
-toolframe --home APP plugin add pypi:toolframe-dashboard-auth==0.1.1 --enable
+toolframe --home APP plugin add pypi:toolframe-auth==0.2.0 --enable
+toolframe --home APP plugin add pypi:toolframe-dashboard-auth==0.1.3 --enable
 ```
 
 The standard binary supplies these wheels. Open **Access passwords** through the
@@ -155,8 +173,11 @@ separate from replacing an application's executable.
 /_toolframe/auth/context` gives safe mode/permission presentation data.
 
 `POST /_toolframe/v1/auth/ACTION` accepts object JSON for `catalog`, `list`,
-`create`, `update`, `revoke` and `policy`. Catalog supplies revision and scopes.
+`create`, `update`, `revoke` and `policy`. Catalog supplies revision, scopes, policy,
+`policy_options.failure_modes` and `entrances` (Dashboard and independent MCP
+status, caller kind, and declared public HTTP paths). Clients must check the
+capability field before offering failure-policy editing against older Core.
 Create takes `label`, optional `password` (omit/null to generate), `scopes`,
 `all_business`, optional Unix `expires_at` and `expected_revision`. Update takes
 `id` plus all grant fields; revoke takes `id`. Policy takes `mode`, `local_control`
-and `expected_revision`. These calls enforce the same rules as Dashboard.
+and `expected_revision`, plus optional `failure_mode` (`closed` or `public`). These calls enforce the same rules as Dashboard.

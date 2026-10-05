@@ -180,6 +180,7 @@ def main():
 
         read = create("Reader", "release-reader-secret", ["entry-register.read"])
         assert read["access"]["mode"] == "protected"
+        assert auth("catalog", {})["policy"]["failure_mode"] == "closed"
         assert remote.get("/").status_code == 303
         assert (
             remote.post(
@@ -291,8 +292,23 @@ def main():
         )
         try:
             assert (
-                anonymous.post(protected + "list_entries", json={}).status_code == 200
+                anonymous.post(protected + "list_entries", json={}).status_code == 503
             )
+            assert anonymous.post(public + "list_entries", json={}).status_code == 200
+            for failure_mode, expected in (("public", 200), ("closed", 503)):
+                auth(
+                    "policy",
+                    {
+                        "mode": "protected",
+                        "local_control": True,
+                        "failure_mode": failure_mode,
+                        "expected_revision": auth("catalog", {})["revision"],
+                    },
+                )
+                assert (
+                    anonymous.post(protected + "list_entries", json={}).status_code
+                    == expected
+                )
             assert anonymous.get("/_toolframe/v1/status").status_code == 401
         finally:
             anonymous.close()
@@ -308,10 +324,12 @@ def main():
         while mode()["reason"] != "auth_unavailable" and time.monotonic() < deadline:
             time.sleep(0.1)
         assert mode()["reason"] == "auth_unavailable"
+        assert mode()["mode"] == "waiting"
         cli("plugin", "reload", "auth", "--json")
         assert mode()["mode"] == "protected"
         cli("plugin", "disable", "dashboard-auth", "--json")
         assert mode()["reason"] == "auth_unavailable"
+        assert mode()["mode"] == "waiting"
         cli("plugin", "enable", "dashboard-auth", "--json")
         assert mode()["mode"] == "protected"
         assert post(protected + "list_entries", {}, remote)["count"] == 1
@@ -322,7 +340,7 @@ def main():
             == token_hash
         )
         record(
-            "Auth/integration disablement and actual worker death select public fallback; recovery restores saved policy and data"
+            "Auth/integration disablement and actual worker death preserve closed protection; explicit public fallback and recovery respect saved policy"
         )
 
         status = get("/_toolframe/v1/status")

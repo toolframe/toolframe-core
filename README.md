@@ -56,7 +56,7 @@ offline behavior. This is not a fully offline cold-start distribution.
 
 Plain `init` still creates an empty application. Bundling makes plugins available;
 the chosen composition controls installation and activation. The default build
-also writes `dist/toolframe-0.6.0-standard-aarch64-apple-darwin` (or the selected
+also writes `dist/toolframe-0.6.1-standard-aarch64-apple-darwin` (or the selected
 target's equivalent). `--bundle core` builds the smaller three-wheel variant.
 
 The commands below use `toolframe` for the built executable. Pass `--home PATH`
@@ -108,7 +108,7 @@ address (it creates and stops a separate temporary application):
 
 ```sh
 uv run python scripts/verify-network.py \
-  --binary dist/toolframe-0.6.0-standard-aarch64-apple-darwin \
+  --binary dist/toolframe-0.6.1-standard-aarch64-apple-darwin \
   --address SERVER_LAN_IP --output build/lan-access.json
 ```
 

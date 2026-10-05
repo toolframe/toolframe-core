@@ -233,7 +233,7 @@ class Access:
             raise PluginError(
                 "auth_unavailable", "Authentication provider failed"
             ) from None
-        except Exception:  # noqa: BLE001 - verifier faults must select the explicit public fallback
+        except Exception:  # noqa: BLE001 - verifier faults must obey the configured failure policy
             (await self.mark_failed(name))
             raise PluginError(
                 "auth_unavailable", "Authentication provider failed"
@@ -368,10 +368,25 @@ class Access:
             )
             return await self.auth(action, params, principal=actor)
         if action == "catalog":
-            await self.admit(identity, ["system.auth.passwords"], effective=False)
+            actor = await self.admit(
+                identity, ["system.auth.passwords"], effective=False
+            )
             return {
                 "scopes": self.catalog(),
                 "policy": self.host.composition.access.model_dump(),
+                "policy_options": {"failure_modes": ["closed", "public"]},
+                "entrances": {
+                    "dashboard": await self.mode(),
+                    "mcp": self.host.mcp_access.status(),
+                    "actor": actor.kind,
+                    "declared_public_api": sorted(
+                        f"/api/{owner}/{service_name}/{method_name}"
+                        for owner, definition in self.host.graph.definitions.items()
+                        for service_name, service in definition.services.items()
+                        for method_name, method in service.methods.items()
+                        if method.audience == "business" and method.public_api
+                    ),
+                },
                 "revision": self.host.config.revision,
             }
         if action == "policy":
@@ -382,19 +397,32 @@ class Access:
                 not isinstance(params.get("mode"), str)
                 or params["mode"] not in {"public", "protected"}
                 or not isinstance(params.get("local_control", True), bool)
+                or (
+                    "failure_mode" in params
+                    and (
+                        not isinstance(params["failure_mode"], str)
+                        or params["failure_mode"] not in {"closed", "public"}
+                    )
+                )
             ):
                 raise PluginError(
                     "invalid_request",
-                    "Supply public/protected mode and boolean local_control",
+                    "Supply public/protected mode, boolean local_control and optional closed/public failure_mode",
                 )
             async with self.host.mutation:
                 await self.admit(identity, ["system.settings.manage"], effective=False)
 
                 def edit(document):
-                    document.setdefault("access", {})["mode"] = params["mode"]
-                    document["access"]["local_control"] = params.get(
-                        "local_control", True
-                    )
+                    access = document.setdefault("access", {})
+                    if "failure_mode" in params:
+                        access["failure_mode"] = params["failure_mode"]
+                    elif (
+                        params["mode"] == "protected"
+                        and access.get("mode") != "protected"
+                    ):
+                        access.setdefault("failure_mode", "closed")
+                    access["mode"] = params["mode"]
+                    access["local_control"] = params.get("local_control", True)
 
                 self.host.composition, self.host.revision = self.host.config.edit(
                     params.get("expected_revision"), edit
@@ -427,7 +455,9 @@ class Access:
                 try:
 
                     def protect(document):
-                        document.setdefault("access", {})["mode"] = "protected"
+                        access = document.setdefault("access", {})
+                        access.setdefault("failure_mode", "closed")
+                        access["mode"] = "protected"
 
                     self.host.composition, self.host.revision = self.host.config.edit(
                         revision, protect
