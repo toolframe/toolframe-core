@@ -1,13 +1,13 @@
 {
-  "toolframe-sdk": "63150417e7fd2d5c612dcb15360ffea192444951",
-  "fastapi-cordis": "2a11f8e0371d4ed0f7de03be876307fca4c74b55",
-  "toolframe-storage-sqlite": "f9c1bc081b38ec35a82a47fb02e31d65a5ca3cc3",
-  "toolframe-streamlit-dashboard": "cbd8ec5f697b407c6b50778c1fc4c3c305632b5b",
-  "toolframe-fastmcp": "4902f125ebdf036f2f12f705a5775b0372c66c42",
-  "toolframe-llms-txt": "a08498ccd57cecf73a91aedb8eadc18a22fb7535",
-  "toolframe-demo-entry-register": "cb7489ad102faa8723144e0d98ca996db1cf6e57",
-  "toolframe-auth": "78a60fcbb5745910a3fe226866a6b9772b5e00c2",
-  "toolframe-dashboard-auth": "33142015b08daf8dad74ea096cc063fa8263f039",
-  "toolframe-mcp-auth": "1278bbdeb4b994f00b5f48ccae38b97f1cbd9b63",
-  "toolframe-oidc-auth": "8f76377dbf25b82ec718a0a0fbb1aecbad43b5da"
+  "toolframe-sdk": "0e54c70586070eeca8499f8b773c9bedf89d87b1",
+  "fastapi-cordis": "464aa399b15854ae32bb14a317820bf02675f4e4",
+  "toolframe-storage-sqlite": "bcb6b578471f09e912285335232da64f667f6c27",
+  "toolframe-streamlit-dashboard": "81dd36ccbc881d6318ecee06c5d10e55afad8c4b",
+  "toolframe-fastmcp": "91488ed72dc52b67613b66006ccb159a3c59df99",
+  "toolframe-llms-txt": "6c67c8b1be9858fe3b6146c9eb8f1062d6d105d4",
+  "toolframe-demo-entry-register": "e3e84d3829beaf6c203dc5cd8ef6d5e3254ec078",
+  "toolframe-auth": "38281c11a52b964db5127e01f96f05614f1e99c4",
+  "toolframe-dashboard-auth": "04ca0a8a45d7c51c4985e83ad07e2012bb0b06dd",
+  "toolframe-mcp-auth": "7088824cd38ae55bc72c297102f5fb099dad71fd",
+  "toolframe-oidc-auth": "5459fea8a44fb99440dcee2a9e4e11acb87189b2"
 }
