@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 from starlette.requests import ClientDisconnect
 from toolframe_sdk import PluginError, Principal
+from toolframe_sdk.tracing import TracingMiddleware
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
@@ -147,7 +148,6 @@ def create_app(host, *, manage_lifespan=True):
         redoc_url=None,
         openapi_url=None,
     )
-
     @app.middleware("http")
     async def application_operator(request, call_next):
         path = request.url.path
@@ -542,6 +542,8 @@ def create_app(host, *, manage_lifespan=True):
             headers["authorization"] = "Bearer " + mcp_reference
         if cookies := provider_cookies(request):
             headers["cookie"] = cookies
+        if host.tracing:
+            host.tracing.inject(headers)
         url = f"{address}/{path}"
         if request.url.query:
             url += "?" + request.url.query
@@ -693,4 +695,6 @@ def create_app(host, *, manage_lifespan=True):
             with suppress(RuntimeError):
                 await downstream.close(code=1012)
 
+    if getattr(host, "tracing", None):
+        app.add_middleware(TracingMiddleware, tracing=host.tracing)
     return app

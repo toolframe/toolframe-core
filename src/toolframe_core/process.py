@@ -13,30 +13,69 @@ from toolframe_sdk.rpc import RpcPeer
 
 
 def child_environment():
-    """Core database credentials are not part of a plugin/build environment."""
+    """Build/preflight environments exclude Core and telemetry credentials."""
     return {
         key: value
         for key, value in os.environ.items()
         if key not in ("PYTHONPATH", "PYTHONHOME")
         and not key.startswith("TOOLFRAME_CORE_")
+        and not key.startswith("OTEL_")
+        and key not in {"TOOLFRAME_TRACING_ENABLED", "TOOLFRAME_LOGS_LEVEL"}
     }
 
 
 class WorkerProcess:
-    def __init__(self, process, handler, *, log_callback=None):
+    def __init__(
+        self,
+        process,
+        handler,
+        *,
+        log_callback=None,
+        tracing=None,
+        trace_attributes=None,
+    ):
         self.process = process
         self.expected_exit = False
         self.logs = deque(maxlen=200)
         self.log_callback = log_callback
-        self.peer = RpcPeer(process.stdout, process.stdin, handler)
+        self.trace_attributes = trace_attributes or {}
+        self.peer = RpcPeer(
+            process.stdout,
+            process.stdin,
+            handler,
+            tracing=tracing,
+            trace_attributes={
+                "toolframe.target.plugin.id": self.trace_attributes.get(
+                    "toolframe.plugin.id", ""
+                ),
+                "toolframe.target.generation": self.trace_attributes.get(
+                    "toolframe.plugin.generation", ""
+                ),
+            },
+        )
         self.reader_task = asyncio.create_task(self.peer.run())
         self.log_task = asyncio.create_task(self._logs())
 
     @classmethod
     async def start(
-        cls, python, entrypoint, handler, *, cwd, log_callback=None, host_token=None
+        cls,
+        python,
+        entrypoint,
+        handler,
+        *,
+        cwd,
+        log_callback=None,
+        host_token=None,
+        tracing=None,
+        trace_attributes=None,
     ):
         environment = child_environment()
+        if tracing:
+            environment.update(
+                tracing.child_environment(
+                    (trace_attributes or {}).get("service.name", "toolframe.worker")
+                )
+            )
         process = await asyncio.create_subprocess_exec(
             str(python),
             "-I",
@@ -54,7 +93,13 @@ class WorkerProcess:
             limit=MAX_FRAME_BYTES,
             start_new_session=True,
         )
-        return cls(process, handler, log_callback=log_callback)
+        return cls(
+            process,
+            handler,
+            log_callback=log_callback,
+            tracing=tracing,
+            trace_attributes=trace_attributes,
+        )
 
     @property
     def pid(self):
@@ -73,6 +118,10 @@ class WorkerProcess:
                     self.log_callback(text)
 
     async def request(self, method, params=None, *, timeout=30):
+        if method == "runtime.describe":
+            params = {**(params or {}), "logging": self.trace_attributes}
+            if self.peer.tracing:
+                params["tracing"] = self.trace_attributes
         return await self.peer.request(method, params, timeout=timeout)
 
     async def close(self, timeout=10, *, activated=True, allow_exited=False):

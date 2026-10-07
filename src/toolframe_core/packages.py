@@ -32,6 +32,7 @@ from toolframe_sdk import (
     validate,
 )
 from toolframe_sdk import __version__ as SDK_VERSION
+from toolframe_sdk.tracing import tracing_requested
 
 from .config import atomic_write
 from .process import WorkerProcess, child_environment
@@ -213,6 +214,7 @@ def pinned_index_source(source):
 class Packages:
     def __init__(self, home, settings):
         self.home, self.settings = Path(home).resolve(), settings
+        self.tracing = tracing_requested()
         self.root = self.home / ".toolframe"
         for name in ("sources", "artifacts", "environments", "tmp"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
@@ -505,6 +507,30 @@ class Packages:
             atomic_write(cached, json.dumps(result))
             return result
 
+    def sdk_wheel(self):
+        wheel = os.environ.get("TOOLFRAME_SDK_WHEEL")
+        if wheel and Path(wheel).is_file():
+            return Path(wheel).resolve()
+        for link in self.settings.find_links:
+            if "://" in link:
+                continue
+            matches = sorted(
+                (self.home / link).glob(f"toolframe_sdk-{SDK_VERSION}-*.whl")
+            )
+            if matches:
+                return matches[-1].resolve()
+        return None
+
+    def runtime_profile(self):
+        wheel = self.sdk_wheel()
+        return {
+            "tracing": self.tracing,
+            "sdk_version": SDK_VERSION,
+            "sdk_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()
+            if wheel
+            else None,
+        }
+
     async def environment(self, artifacts, *, ui=False):
         requirements = []
         names = set()
@@ -529,20 +555,13 @@ class Packages:
             requirements.append(f"{name}{suffix} @ {path.as_uri()}")
         # A release supplies its SDK wheel; development may provide it through a wheelhouse.
         if "toolframe-sdk" not in names:
-            sdk_wheel = os.environ.get("TOOLFRAME_SDK_WHEEL")
-            links = (
-                [str(Path(sdk_wheel).parent)] if sdk_wheel else []
-            ) + self.settings.find_links
-            for link in links:
-                if "://" in link:
-                    continue
-                matches = sorted(
-                    (self.home / link).glob(f"toolframe_sdk-{SDK_VERSION}-*.whl")
-                )
-                if matches:
-                    sdk, _ = self.artifact(matches[-1])
-                    requirements.append(f"toolframe-sdk @ {sdk.as_uri()}")
-                    break
+            wheel = self.sdk_wheel()
+            if wheel:
+                sdk, _ = self.artifact(wheel)
+                requirements.append(f"toolframe-sdk @ {sdk.as_uri()}")
+        if self.tracing:
+            requirements.append(f"toolframe-sdk[tracing]=={SDK_VERSION}")
+        profile = self.runtime_profile()
         with tempfile.TemporaryDirectory(dir=self.root / "tmp") as temporary:
             temporary = Path(temporary)
             input_file = temporary / "requirements.in"
@@ -582,6 +601,7 @@ class Packages:
                     "python": sys.version,
                     "platform": platform.platform(),
                     "ui": ui,
+                    "runtime_profile": profile,
                 }
             )
             target = self.root / "environments" / key
@@ -608,6 +628,7 @@ class Packages:
                 "id": key,
                 "python": str((target / "bin/python").relative_to(self.home)),
                 "lock": lock,
+                "runtime_profile": profile,
             }
 
     async def prepare(self, identifier, source, config, *, retained=None):
@@ -642,7 +663,11 @@ class Packages:
             }
             environment = retained["environment"]
             python = self.home / environment["python"]
-            if not python.is_file() or not (python.parent.parent / ".ready").is_file():
+            if (
+                not python.is_file()
+                or not (python.parent.parent / ".ready").is_file()
+                or environment.get("runtime_profile") != self.runtime_profile()
+            ):
                 environment = None
         if artifact["plugin_id"] != identifier:
             raise PluginError(

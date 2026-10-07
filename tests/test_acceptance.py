@@ -231,7 +231,7 @@ async def test_optional_provider_failure_keeps_business_running(host, tmp_path):
 
 
 async def test_business_health_and_expiry_are_separate_from_core_and_optional_readiness(
-    host, tmp_path
+    host, tmp_path, monkeypatch
 ):
     import time
 
@@ -252,14 +252,32 @@ async def test_business_health_and_expiry_are_separate_from_core_and_optional_re
         base_url="http://127.0.0.1:9876",
         headers={"Authorization": f"Bearer {host.token}"},
     ) as client:
-        async with host.mutation:
-            host.runtimes["alpha"].observed = 0
-            stale = await host.status()
-            assert stale["ready"] and stale["degraded"]
-            assert not stale["plugins"][0]["healthy"]
-            with pytest.raises(PluginError, match="unavailable"):
-                host.begin_root("alpha")
-            host.runtimes["alpha"].observed = time.time()
+        probe_started = asyncio.Event()
+        resume_probe = asyncio.Event()
+        original_probe = host.probe
+
+        async def paused_probe(runtime):
+            probe_started.set()
+            await resume_probe.wait()
+            return await original_probe(runtime)
+
+        # Health probes intentionally continue while the mutation lock is held.
+        # Pause an actual probe so it cannot refresh the expired observation
+        # while status() awaits the state store.
+        with monkeypatch.context() as patch:
+            patch.setattr(host, "probe", paused_probe)
+            try:
+                await asyncio.wait_for(probe_started.wait(), timeout=12)
+                async with host.mutation:
+                    host.runtimes["alpha"].observed = 0
+                    stale = await host.status()
+                    assert stale["ready"] and stale["degraded"]
+                    assert not stale["plugins"][0]["healthy"]
+                    with pytest.raises(PluginError, match="unavailable"):
+                        host.begin_root("alpha")
+                    host.runtimes["alpha"].observed = time.time()
+            finally:
+                resume_probe.set()
         before = host.runtimes["alpha"].observed
         host.composition.runtime.health_ttl = 0.4
         async with host.mutation:

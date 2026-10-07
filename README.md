@@ -19,6 +19,11 @@ application and retain configuration, private keys and artifacts in its home.
 Operator backup tools can use the public [offline maintenance interface](docs/offline-maintenance.md)
 to hold the application lock and validate stopped local SQLite state.
 
+Optional [OpenTelemetry tracing and logs](docs/tracing.md) follow HTTP and nested
+plugin calls with application, plugin and function context. Telemetry is disabled
+by default and adds SDK/exporter dependencies only when enabled; structured local
+logging works independently, and log export requires its own opt-in.
+
 ## Run the local workspace
 
 The Toolframe repositories and `fastapi-cordis` must be siblings.
