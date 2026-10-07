@@ -14,6 +14,7 @@ Python code; process separation provides lifecycle and dependency isolation.
 | fastapi-cordis | In-process dependency lifecycle, service leases, blocking and cleanup, connected to workers by Core's adapter. |
 | SDK | Public plugin definitions, worker protocol, service proxies, resource declarations, page bridge and scoped storage clients. |
 | Storage provider | Plugin-owned stores, SQL transactions, migration history and mutation receipts. |
+| Object-store provider | Owner-scoped binary objects, bounded transfers and atomic publication. |
 | Dashboard provider | Shared Streamlit environment, navigation, page sessions and management presentation. |
 | FastMCP provider | MCP tool adapters and Streamable HTTP sessions. |
 | llms.txt provider | Composed index and explicitly declared package documents. |
@@ -128,6 +129,15 @@ owning store. Core's operation journal and the business database are separate
 transactions, so recovery checks the authoritative schema and receipts.
 Migration plans also identify the provider and generation. Forward-repair records
 retain the owning provider; unrelated replacements cannot clear those records.
+
+Object storage is independent of SQL storage and uses the internal
+`toolframe.object_store` service. Core allocates `data/objects/<provider-id>/` to
+its selected `object-store` provider and supplies the caller's application, owner,
+generation and principal through the existing service admission contract.
+Business services enforce their own read/write scopes. Upload sessions may span
+roots but remain bound to that owner generation and actor; completed objects are
+retained. SQL and object writes do not share a transaction. See
+[object storage](object-storage.md) for supported providers and installation.
 
 ## Resource publication and gateway
 
