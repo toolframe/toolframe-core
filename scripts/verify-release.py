@@ -32,7 +32,7 @@ def main():
     parser.add_argument(
         "--wheelhouse",
         type=Path,
-        help="Optional external wheels; omit to verify the standalone standard bundle",
+        help="Optional external wheels; omit to verify the published PyPI installation",
     )
     parser.add_argument("--architecture", required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -57,7 +57,7 @@ def main():
     if args.uv_path:
         environment["TOOLFRAME_UV"] = str(args.uv_path.resolve())
     if wheels is None:
-        # A previous package/Python cache must not hide a missing embedded wheel.
+        # A previous cache must not hide a missing public dependency.
         environment["UV_CACHE_DIR"] = str(root / "uv-cache")
         environment["UV_PYTHON_INSTALL_DIR"] = str(root / "python")
     wheel_args = ["--wheelhouse", str(wheels)] if wheels else []
@@ -65,7 +65,7 @@ def main():
         "architecture": args.architecture,
         "binary": str(original),
         "copied_binary": str(binary),
-        "standalone_bundle": wheels is None,
+        "published_dependencies": wheels is None,
         "configured_uv": environment.get("TOOLFRAME_UV"),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "wheel_sha256": {
@@ -335,26 +335,9 @@ def main():
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted((root / "runtime/bundles").glob("*/*/*.whl"))
     }
-    if wheels is None:
-        for name in (
-            "toolframe_core",
-            "toolframe_sdk",
-            "fastapi_cordis",
-            "toolframe_streamlit_dashboard",
-            "toolframe_fastmcp",
-            "toolframe_llms_txt",
-            "toolframe_storage_sqlite",
-            "toolframe_demo_entry_register",
-        ):
-            assert any(
-                filename.startswith(name + "-")
-                for filename in reports["embedded_wheels"]
-            ), name
-        if args.architecture.startswith("x86_64"):
-            assert any(
-                filename.startswith("cryptography-")
-                for filename in reports["embedded_wheels"]
-            )
+    assert not reports["embedded_wheels"], (
+        "Thin launchers must not extract Python wheels"
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(reports, indent=2) + "\n")
     print(f"Evidence: {args.output}; diagnostic logs: {root}", flush=True)

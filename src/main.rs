@@ -1,14 +1,12 @@
 //! Thin bootstrap: package/runtime preparation only. Python owns all plugin policy.
 
-mod bundle;
+mod companions;
 mod uv;
 
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use std::{env, fs, path::PathBuf, process::Stdio};
 use tokio::process::Command;
-
-include!(concat!(env!("OUT_DIR"), "/bundle.rs"));
 
 fn tracing_requested(value: Option<&str>) -> Result<bool> {
     match value
@@ -30,6 +28,18 @@ fn core_requirement(postgres: bool, tracing: bool) -> &'static str {
         (false, true) => "toolframe-core[tracing]==0.6.1",
         (false, false) => "toolframe-core==0.6.1",
     }
+}
+
+fn python_request(os: &str, architecture: &str) -> Result<String> {
+    let libc = match os {
+        "linux" => "gnu",
+        "macos" => "none",
+        _ => bail!("Unsupported operating system: {os}"),
+    };
+    if !matches!(architecture, "aarch64" | "x86_64") {
+        bail!("Unsupported architecture: {architecture}");
+    }
+    Ok(format!("cpython-3.14.7-{os}-{architecture}-{libc}"))
 }
 
 fn bootstrap_command(path: &std::path::Path) -> Command {
@@ -90,23 +100,15 @@ async fn main() -> Result<()> {
     fs::create_dir_all(&root)?;
     let resolved = uv::resolve(uv_path.as_deref(), &root.join("uv"), offline).await?;
     let mut fingerprint = Sha256::new();
-    let python_request = format!(
-        "cpython-3.14.7-{}-{}-none",
-        env::consts::OS,
-        env::consts::ARCH
-    );
+    let python_request = python_request(env::consts::OS, env::consts::ARCH)?;
     let postgres = env::var("TOOLFRAME_CORE_STATE_BACKEND").as_deref() == Ok("postgresql")
         || forwarded.iter().any(|argument| argument == "state");
     let tracing = tracing_requested(env::var("TOOLFRAME_TRACING_ENABLED").ok().as_deref())?;
     let core_requirement = core_requirement(postgres, tracing);
     fingerprint.update(core_requirement.as_bytes());
-    fingerprint.update(b"bootstrap5");
+    fingerprint.update(b"bootstrap6-pypi");
+    fingerprint.update(include_bytes!("../companion-wheels.txt"));
     fingerprint.update(python_request.as_bytes());
-    let bundles = bundle::extract(&root.join("bundles"), WHEELS)?;
-    for (name, content) in WHEELS {
-        fingerprint.update(name.as_bytes());
-        fingerprint.update(content);
-    }
     if let Some(path) = &wheelhouse {
         fingerprint.update(path.canonicalize()?.as_os_str().as_encoded_bytes());
         // Local development rebuilds can retain versions, so include their wheel bytes.
@@ -137,6 +139,7 @@ async fn main() -> Result<()> {
             bail!("Cannot lock bootstrap");
         }
     }
+    let companion_wheelhouse = companions::prepare(&root, wheelhouse.as_deref(), offline).await?;
     if !environment.join(".ready").exists() {
         if environment.exists() {
             fs::remove_dir_all(&environment)?;
@@ -151,25 +154,8 @@ async fn main() -> Result<()> {
         if !create.status().await?.success() {
             bail!("Python environment preparation failed");
         }
-        let mut requirements = Vec::new();
-        for (name, _) in WHEELS {
-            if bundle::is_bootstrap(name) {
-                requirements.push(
-                    bundle::wheel_path(&bundles, name)
-                        .to_string_lossy()
-                        .to_string(),
-                );
-            }
-        }
-        if requirements.is_empty() {
-            requirements.push(core_requirement.into());
-        } else if postgres || tracing {
-            // Optional drivers/exporters are resolved only for a selected runtime
-            // profile. The embedded wheels do not include these dependencies.
-            requirements.push(core_requirement.into());
-        }
         let input = environment.join("requirements.in");
-        fs::write(&input, requirements.join("\n") + "\n")?;
+        fs::write(&input, format!("{core_requirement}\n"))?;
         let lockfile = environment.join("pylock.toml");
         let mut compile = bootstrap_command(&resolved.path);
         compile
@@ -189,17 +175,12 @@ async fn main() -> Result<()> {
         if let Some(path) = &wheelhouse {
             compile.arg("--find-links").arg(path);
         }
-        for (name, _) in WHEELS {
-            compile
-                .arg("--find-links")
-                .arg(bundle::wheel_path(&bundles, name).parent().unwrap());
-        }
         if offline {
             compile.arg("--offline");
         }
         if !compile.status().await?.success() {
             bail!(
-                "Core dependency resolution failed; use a release bundle or --wheelhouse for local builds"
+                "Core dependency resolution failed; check PyPI access or use --wheelhouse for local builds"
             );
         }
         let mut sync = bootstrap_command(&resolved.path);
@@ -233,11 +214,12 @@ async fn main() -> Result<()> {
     if let Some(path) = wheelhouse {
         command.env("TOOLFRAME_WHEELHOUSE", path.canonicalize()?);
     }
-    command.env("TOOLFRAME_BUNDLED_WHEELHOUSE", &bundles);
-    for (name, _) in WHEELS {
-        if name.starts_with("toolframe_sdk-") {
-            command.env("TOOLFRAME_SDK_WHEEL", bundle::wheel_path(&bundles, name));
-        }
+    // A new launcher must not inherit wheel paths from a previous bundled release.
+    command.env_remove("TOOLFRAME_BUNDLED_WHEELHOUSE");
+    command.env_remove("TOOLFRAME_SDK_WHEEL");
+    command.env_remove("TOOLFRAME_COMPANION_WHEELHOUSE");
+    if let Some(path) = companion_wheelhouse {
+        command.env("TOOLFRAME_COMPANION_WHEELHOUSE", path);
     }
     if offline {
         command.env("TOOLFRAME_OFFLINE", "1");
@@ -257,7 +239,23 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{core_requirement, tracing_requested};
+    use super::{core_requirement, python_request, tracing_requested};
+
+    #[test]
+    fn managed_python_requests_match_supported_platforms() {
+        for architecture in ["aarch64", "x86_64"] {
+            assert_eq!(
+                python_request("linux", architecture).unwrap(),
+                format!("cpython-3.14.7-linux-{architecture}-gnu")
+            );
+            assert_eq!(
+                python_request("macos", architecture).unwrap(),
+                format!("cpython-3.14.7-macos-{architecture}-none")
+            );
+        }
+        assert!(python_request("windows", "x86_64").is_err());
+        assert!(python_request("linux", "arm").is_err());
+    }
 
     #[test]
     fn tracing_is_explicit_and_validated() {

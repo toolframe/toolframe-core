@@ -4,7 +4,7 @@ version = "0.6.1"
 edition = "2024"
 rust-version = "1.88"
 description = "A local-first runtime for agent-built internal apps"
-license = "Apache-2.0 AND MIT"
+license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1.0"

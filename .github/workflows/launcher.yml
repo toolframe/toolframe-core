@@ -1,0 +1,96 @@
+name: Native launcher wheels
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  launcher:
+    name: Launcher (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            manylinux: 'off'
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            manylinux: 'off'
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            manylinux: '2_28'
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            manylinux: '2_28'
+    env:
+      TOOLFRAME_REPOSITORY_OWNER: ${{ vars.TOOLFRAME_REPOSITORY_OWNER || github.repository_owner }}
+      TOOLFRAME_REPOSITORY_TOKEN: ${{ secrets.TOOLFRAME_READ_TOKEN }}
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      CARGO_BUILD_JOBS: '2'
+      TOOLFRAME_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14.7'
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.8'
+          enable-cache: false
+      - name: Install the Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal --component rustfmt
+      - name: Verify the launcher source
+        run: |
+          cargo +1.94.1 fmt --check
+          cargo +1.94.1 test --locked
+      - name: Prepare native sources and acceptance dependencies
+        run: >-
+          python scripts/ci/prepare-launcher.py --target "$TOOLFRAME_TARGET"
+          --repository-owner "$TOOLFRAME_REPOSITORY_OWNER"
+      - name: Build the native wheel
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
+        with:
+          working-directory: build/launcher
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          maturin-version: 'v1.14.1'
+          rust-toolchain: '1.94.1'
+          args: --release --locked --out ../launcher-dist/wheels
+      - name: Export the identical GitHub Release executable
+        run: >-
+          python scripts/build-launcher.py finish --target "$TOOLFRAME_TARGET"
+          --output build/launcher-dist
+      - name: Check metadata and exercise the installed wheel
+        run: |
+          uv tool run --from twine==7.0.0 twine check --strict build/launcher-dist/wheels/*
+          python scripts/ci/check-launcher-wheel.py --output build/launcher-dist --wheelhouse build/launcher-inputs/validation-wheels
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: launcher-wheel-${{ matrix.target }}
+          path: build/launcher-dist/wheels/*.whl
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: launcher-release-${{ matrix.target }}
+          path: |
+            build/launcher-dist/release/*.tar.gz
+            build/launcher-dist/release/*.whl
+            build/launcher-dist/release/*.json
+            build/launcher-dist/release/SHA256SUMS-*.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: launcher-evidence-${{ matrix.target }}
+          path: build/launcher-dist/*.json
+          if-no-files-found: warn

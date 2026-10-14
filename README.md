@@ -24,50 +24,39 @@ plugin calls with application, plugin and function context. Telemetry is disable
 by default and adds SDK/exporter dependencies only when enabled; structured local
 logging works independently, and log export requires its own opt-in.
 
-## Run the local workspace
+## Quick start
 
-The Toolframe repositories and `fastapi-cordis` must be siblings.
-Python 3.14.7, uv 0.12.8 and Rust are the tested build tools.
-
-```sh
-# From toolframe-core:
-uv sync --locked --group dev
-bash scripts/build-release.sh
-
-# The template installs six providers (including auth) and the demo plugin.
-./target/release/toolframe --home ./example init --template entry-register
-./target/release/toolframe --home ./example serve
-```
-
-In another terminal, run
-`./target/release/toolframe --home ./example open` for the local sign-in link.
-`init` without `--template` creates an empty core. `serve` reconciles the selected
-composition and keeps CLI/API diagnostics available during plugin preparation.
-The default standard release embeds all ten Toolframe/Cordis wheels, including
-the six providers and Entry Register. Copy the executable to another directory
-or computer of the same architecture; no source checkout or separate wheelhouse
-is needed. First use reuses a compatible installed uv or downloads the verified
-fallback, then prepares Python and public Python dependencies. See
-[runtime preparation](docs/runtime.md) for uv selection, supported versions and
-offline behavior. This is not a fully offline cold-start distribution.
+Install the native CLI with [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```sh
-# From the directory containing a downloaded/copied executable:
-./toolframe --home ./my-app init --template entry-register
-./toolframe --home ./my-app serve
-# In another terminal:
-./toolframe --home ./my-app open
+uv tool install toolframe
+toolframe --home ./my-app init --template entry-register
+toolframe --home ./my-app serve
 ```
 
-Plain `init` still creates an empty application. Bundling makes plugins available;
-the chosen composition controls installation and activation. The default build
-also writes `dist/toolframe-0.6.1-standard-aarch64-apple-darwin` (or the selected
-target's equivalent). `--bundle core` builds the smaller three-wheel variant.
+In another terminal, run `toolframe --home ./my-app open` for the local sign-in
+link. `uvx toolframe ...` runs the same CLI without a persistent installation.
+The [GitHub Release archives](https://github.com/toolframe/toolframe-core/releases)
+contain the identical executable for installation directly on `PATH`.
 
-The commands below use `toolframe` for the built executable. Pass `--home PATH`
-before its subcommand. The Python development entry point is
-`uv run toolframe-core --home PATH ...`. `toolframe --version` (or `-V`) prints the
-launcher version without preparing Python or contacting the package index.
+The executable contains no Python wheels. First use reuses a compatible uv or
+prepares its verified fallback, installs Python 3.14.7 and `toolframe-core` from
+PyPI, and resolves each selected plugin independently. Core requires
+`fastapi-cordis==0.2.2`. `init` without `--template` creates an empty application;
+the Entry Register template selects storage, Dashboard, MCP, documentation and
+password providers. Plugin choices remain in the application configuration.
+
+Native CLI wheels target macOS 12+ on Apple Silicon and Intel, and Linux glibc
+2.28+ on ARM64 and x86-64. Windows and musl Linux are outside this release.
+Intel macOS automatically downloads a separately published cryptography wheel
+from the matching GitHub Release and verifies its pinned SHA-256. First use needs
+network access; `--offline` requires previously prepared assets. See
+[runtime preparation](docs/runtime.md) for caches, uv selection and local wheels.
+
+Pass `--home PATH` before the subcommand. `toolframe --version` and `-V` print the
+launcher version without preparing Python or contacting a package index. Python
+library users can install `toolframe-core` on Python 3.14+; plugin authors install
+`toolframe-sdk`. The Python CLI entry point is `toolframe-core`.
 
 ## LAN access
 
@@ -113,7 +102,7 @@ address (it creates and stops a separate temporary application):
 
 ```sh
 uv run python scripts/verify-network.py \
-  --binary dist/toolframe-0.6.1-standard-aarch64-apple-darwin \
+  --binary target/release/toolframe \
   --address SERVER_LAN_IP --output build/lan-access.json
 ```
 
@@ -126,7 +115,7 @@ requirements. Existing sessions may need to refresh skill discovery.
 
 The skill covers domain/data design, public SDK services, managed SQLite,
 optional Streamlit/MCP/llms resources and validation/reload. Its references and
-buildable Notes template ship inside the core wheel and Rust bundle; no Toolframe
+buildable Notes template ship inside the Core wheel; no Toolframe
 source checkout is required. Create source with the same CLI the agent uses:
 
 ```sh
@@ -266,10 +255,10 @@ redacted in exports and management views; restore required secrets from the
 operator's original configuration before applying an exported copy.
 
 Use `[packages] find_links=["/absolute/wheelhouse"]` for local distributions.
-`TOOLFRAME_WHEELHOUSE` provides the equivalent launcher/host override. Standard
-release wheels are an automatic fallback; local wheelhouse files with the same
-filename override the bundled copy. Bundle cache paths are not written into
-`toolframe.toml`. Set
+`TOOLFRAME_WHEELHOUSE` provides the equivalent launcher/host override. The native
+launcher supplies verified Intel companion wheels without persisting cache paths
+in `toolframe.toml`. Explicit local wheels with the same filename take precedence
+for plugin resolution. Set
 `watch=true` on a local plugin to opt into stable, debounced validation and safe
 reload. Watch does not enable disabled or manually stopped plugins, migrate
 existing data, force termination or restart core.
@@ -386,61 +375,36 @@ client reconnection; backend-only changes can preserve MCP sessions.
 
 ## Build and verify
 
-For isolated local validation, GitHub Actions, Python Trusted Publishing setup,
-and validated macOS launcher artifacts, see [CI and release preparation](docs/ci.md).
+For pinned source validation and platform wheel builds, see [CI checks](docs/ci.md).
+For PyPI, Trusted Publishers and GitHub Releases, see [releasing](docs/releasing.md).
 
-The standard Rust executable embeds core, SDK, the independent Cordis 0.2.0 wheel,
-SQLite, Streamlit Dashboard, FastMCP, llms.txt, auth, Dashboard auth and Entry Register. The Intel build
-also embeds the pinned native cryptography wheel. Only core/SDK/Cordis are installed
-into the core environment; providers remain independently resolved workers.
-It prepares the exact Python 3.14.7 architecture and invokes Python core. The
-source for the pinned local Cordis wheel is `../fastapi-cordis`, whose `main`
-contains the reactive lifecycle implementation. Bundled files are extracted
-as an immutable content-addressed set and checked before use. Provider updates
-can still come from a local wheelhouse or explicit plugin source without rebuilding
-the launcher. `scripts/dev-wheelhouse.sh` remains available for that development
-workflow and for the smaller `bash scripts/build-release.sh --bundle core` build.
+Local development uses sibling checkouts of the coordinated repositories. Build
+matching Python wheels into a development wheelhouse, then build the thin launcher:
 
 ```sh
+uv sync --locked --group dev
+bash scripts/dev-wheelhouse.sh
+bash scripts/build-release.sh
 uv run pytest -q
-uv run ruff check src tests scripts/verify-release.py
-cargo test
+uv run ruff check src tests scripts
+cargo test --locked
 cargo fmt --check
 uv run python scripts/verify-release.py \
-  --binary target/release/toolframe \
-  --architecture arm64 --output build/release-arm64.json
-uv run python scripts/verify-scaffold.py \
   --binary target/release/toolframe --wheelhouse wheelhouse \
-  --output build/scaffold-arm64.json
+  --architecture arm64 --output build/release-arm64.json
 ```
 
-The integration tests expect the sibling repositories and check private-import
-boundaries. Run each provider/SDK repository's `uv run pytest -q` as well. The MCP
-repository has an additional `scripts/verify-gateway.py` acceptance driver.
-Its `scripts/verify-codex.py` probes a running local demo through the installed
-Codex app-server MCP client; it verifies transport and invocation, not model
-execution or desktop UI behavior.
+`--wheelhouse` is an explicit local/offline input; no build step embeds its
+contents into the executable. Release wheels use `scripts/build-launcher.py` and
+Maturin. The same build exports the executable for GitHub Releases. Native Intel
+builds also pin the externally supplied companion described in
+[FastMCP's build guide](https://github.com/toolframe/toolframe-fastmcp#macos-intel-release-artifact).
 
-The standard release probe copies the executable to a disposable directory,
-clears inherited wheelhouse settings, and uses fresh uv/Python caches. It checks
-empty core and the complete template, online startup and warm-cache offline
-restart. Pass `--wheelhouse PATH` only when testing external-wheelhouse builds.
-
-For Intel, first build the companion native dependency wheel documented in
-`../toolframe-fastmcp/README.md` into `wheelhouse/`, then run
-`bash scripts/build-release.sh --target x86_64-apple-darwin`. The matching release
-probe uses `--binary target/x86_64-apple-darwin/release/toolframe` and
-`--architecture x86_64-rosetta` on Apple Silicon.
-Use `--native-wheelhouse PATH` during the build when the companion wheel is stored
-elsewhere. Missing native wheels fail the build with preparation instructions.
-Only the resulting standard executable is needed on the destination computer.
-
-First preparation may download Python/dependencies. `--offline` uses exact cached
-content and fails when required assets are missing. Native arm64 and x86_64 under
-Rosetta were exercised on macOS 14.8.5. Physical Intel, the macOS 12 minimum,
-independent desktop MCP clients and remote CI/publication remain explicit release
-gates in the [testing guide](docs/testing.md). Linux/Windows launchers, multiple instances,
-full business audit providers are outside this version.
+The copied-executable probe covers empty and Entry Register applications,
+Dashboard/MCP/llms services, online startup, retained data, reload and warm-cache
+offline restart. Omit `--wheelhouse` after publication to test public PyPI
+resolution. The SDK and providers have their own package checks; browser and
+independent client checks are recorded separately in the [testing guide](docs/testing.md).
 
 ## Documentation
 

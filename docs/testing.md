@@ -30,7 +30,7 @@ Use a prepared Core development environment and matching wheels:
 
 ```sh
 TOOLFRAME_SDK_WHEEL=/path/to/toolframe_sdk-0.3.0-py3-none-any.whl \
-TOOLFRAME_STORAGE_SQLITE_WHEEL=/path/to/toolframe_storage_sqlite-0.3.0-py3-none-any.whl \
+TOOLFRAME_STORAGE_SQLITE_WHEEL=/path/to/toolframe_storage_sqlite-0.3.1-py3-none-any.whl \
 .venv/bin/python -m pytest -q \
   tests/test_maintenance.py::test_real_core_sqlite_business_shutdown_has_public_inventory
 ```
@@ -67,10 +67,11 @@ Streamlit AppTest.
 
 Native arm64 and Intel under Rosetta are distinct environments. Physical Intel,
 the macOS 12 minimum, independent desktop MCP clients, signing/notarization and
-remote CI/publication require their own evidence. Linux/Windows application
-support, multi-instance deployment, artifact storage and full business
-audit providers are outside this version. Warm-cache offline startup does not
-establish a fully offline first installation.
+remote CI/publication require their own evidence. The release workflow checks
+Linux ARM64 and x86-64 wheels on separate native runners, including installed
+application checks. Windows, musl Linux and multi-instance deployment are outside
+this release. Warm-cache offline startup does not establish a fully offline
+first installation.
 
 ## Release scenarios
 

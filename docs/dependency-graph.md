@@ -67,7 +67,7 @@ uv run python scripts/verify-dependencies.py \
   --output build/dependency-arm64.json
 ```
 
-The probe uses a disposable application: seven bundled plugins, read-only
+The probe uses a disposable application: seven template plugins, read-only
 snapshots, exact comparison with reviewed reload/disable plans, then a real
 disable/enable cycle. `--runtime-root PATH` supports an independent launcher
 cache for Intel/Rosetta verification.

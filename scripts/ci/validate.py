@@ -1,6 +1,7 @@
 """Run CI in a new workspace; never build or sync the source sibling checkouts."""
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -59,6 +60,16 @@ def prepare_siblings(root, pins, source_root, owner, env):
             source = root / "sources" / repository
             source.mkdir(parents=True)
             run("git", "init", "--quiet", cwd=source, env=env)
+            git_env = dict(env)
+            if token := os.environ.get("TOOLFRAME_REPOSITORY_TOKEN"):
+                credentials = base64.b64encode(
+                    f"x-access-token:{token}".encode()
+                ).decode()
+                git_env.update(
+                    GIT_CONFIG_COUNT="1",
+                    GIT_CONFIG_KEY_0="http.https://github.com/.extraheader",
+                    GIT_CONFIG_VALUE_0=f"AUTHORIZATION: basic {credentials}",
+                )
             run(
                 "git",
                 "fetch",
@@ -67,7 +78,7 @@ def prepare_siblings(root, pins, source_root, owner, env):
                 f"https://github.com/{owner}/{repository}.git",
                 commit,
                 cwd=source,
-                env=env,
+                env=git_env,
             )
         actual = capture("git", "rev-parse", f"{commit}^{{commit}}", cwd=source)
         if actual != commit:
@@ -140,7 +151,9 @@ def python_checks(root, core, output, env):
         "check",
         "src",
         "tests",
+        "scripts/build-launcher.py",
         "scripts/verify-release.py",
+        "scripts/verify-skill.py",
         "scripts/ci",
         cwd=core,
         env=env,
@@ -214,85 +227,67 @@ print(json.dumps({'version': metadata.version('toolframe-core'),
 
 
 def launcher_checks(root, core, output, target, env):
-    if sys.platform != "darwin":
-        raise RuntimeError("Launcher validation requires macOS")
-    rust = capture("rustc", "--version", cwd=core)
-    if not rust.startswith("rustc 1.94.1 "):
-        raise RuntimeError(f"Use Rust 1.94.1 for CI parity; found {rust}")
     run("cargo", "fmt", "--check", cwd=core, env=env)
-    run("cargo", "check", "--locked", "--all-targets", cwd=core, env=env)
     run("cargo", "test", "--locked", cwd=core, env=env)
-    native = root / "native-wheels"
-    native.mkdir()
+    wheels = root / "validation-wheels"
+    wheels.mkdir()
+    for repository in sorted((root / "workspace").iterdir()):
+        run(
+            "uv",
+            "build",
+            "--no-sources",
+            "--wheel",
+            "--out-dir",
+            wheels,
+            repository,
+            cwd=core,
+            env=env,
+        )
     if target == "x86_64-apple-darwin":
         run("rustup", "target", "add", target, cwd=core, env=env)
-        # This existing script verifies pinned source hashes and statically builds OpenSSL.
         run(
             sys.executable,
             root / "workspace/toolframe-fastmcp/scripts/build-macos-intel.py",
             "--out-dir",
-            native,
+            wheels,
             cwd=core,
             env=env,
         )
-    run(
-        "bash",
-        "scripts/build-release.sh",
-        "--target",
-        target,
-        "--native-wheelhouse",
-        native,
-        "--locked",
-        cwd=core,
-        env=env,
-    )
-    version = tomllib.loads((core / "Cargo.toml").read_text())["package"]["version"]
-    binary = core / f"dist/toolframe-{version}-standard-{target}"
-    architecture = "arm64" if target.startswith("aarch64") else "x86_64"
-    if architecture == "x86_64" and platform.machine() == "arm64":
+    for action in ("prepare", "build", "finish"):
+        run(
+            sys.executable,
+            "scripts/build-launcher.py",
+            action,
+            "--target",
+            target,
+            "--output",
+            output / "launcher",
+            "--native-wheelhouse",
+            wheels,
+            cwd=core,
+            env=env,
+        )
+    architecture = target.split("-", 1)[0]
+    operating_system = "macos" if "apple-darwin" in target else "linux"
+    libc = "none" if operating_system == "macos" else "gnu"
+    python = f"cpython-{PYTHON}-{operating_system}-{architecture}-{libc}"
+    if operating_system == "macos" and architecture == "aarch64":
+        architecture = "arm64"
+    elif operating_system == "macos" and platform.machine() == "arm64":
         architecture += "-rosetta"
-    run("file", binary, cwd=core, env=env)
     run(
         sys.executable,
-        "scripts/verify-release.py",
-        "--binary",
-        binary,
+        "scripts/ci/check-launcher-wheel.py",
+        "--output",
+        output / "launcher",
+        "--wheelhouse",
+        wheels,
+        "--python",
+        python,
         "--architecture",
         architecture,
-        "--output",
-        output / "release.json",
         cwd=core,
         env=env,
-    )
-    run(
-        sys.executable,
-        "scripts/verify-skill.py",
-        "--binary",
-        binary,
-        "--output",
-        output / "skill.json",
-        cwd=core,
-        env=env,
-    )
-    artifacts = output / "launcher"
-    artifacts.mkdir()
-    archive = artifacts / f"{binary.name}.tar.gz"
-    with tarfile.open(archive, "w:gz") as bundle:
-        bundle.add(binary, arcname=binary.name)
-        for name in ("LICENSE", "NOTICE"):
-            bundle.add(core / name, arcname=name)
-        for name, destination in (
-            ("LICENSE", "licenses/plugin-design-MIT.txt"),
-            ("assets/sample-plugin/LICENSE", "licenses/sample-plugin-MIT.txt"),
-        ):
-            bundle.add(
-                core
-                / "src/toolframe_core/bundled_skills/toolframe-plugin-design"
-                / name,
-                arcname=destination,
-            )
-    (artifacts / "SHA256SUMS").write_text(
-        f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n"
     )
 
 
@@ -372,7 +367,13 @@ def main():
         "--repository-owner", help="Fetch public pinned siblings from GitHub"
     )
     parser.add_argument(
-        "--target", choices=("aarch64-apple-darwin", "x86_64-apple-darwin")
+        "--target",
+        choices=(
+            "aarch64-apple-darwin",
+            "x86_64-apple-darwin",
+            "aarch64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+        ),
     )
     args = parser.parse_args()
     if args.repository_owner and not re.fullmatch(
@@ -426,9 +427,8 @@ def main():
         postgres_checks(root, core, output, env)
     else:
         target = args.target or (
-            "aarch64-apple-darwin"
-            if platform.machine() == "arm64"
-            else "x86_64-apple-darwin"
+            ("aarch64" if platform.machine() in ("arm64", "aarch64") else "x86_64")
+            + ("-apple-darwin" if sys.platform == "darwin" else "-unknown-linux-gnu")
         )
         evidence["target"] = target
         launcher_checks(root, core, output, target, env)
@@ -436,7 +436,7 @@ def main():
     evidence["artifacts"] = {
         str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()
         for folder in ("python-dist", "launcher")
-        for path in (output / folder).glob("*")
+        for path in (output / folder).rglob("*")
         if path.is_file()
     }
     evidence_file.write_text(json.dumps(evidence, indent=2) + "\n")

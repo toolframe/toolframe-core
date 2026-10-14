@@ -1,7 +1,7 @@
 # Platform glossary
 
 Toolframe hosts provider plugins and business plugins as one application. This
-glossary defines their shared terminology. Entry Register is an ordinary bundled
+glossary defines their shared terminology. Entry Register is an ordinary template
 business example; its behavior belongs to its own package documentation.
 
 ## Language

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["maturin==1.14.1"]
+build-backend = "maturin"
+
+[project]
+name = "toolframe"
+dynamic = ["version"]
+description = "Native launcher for local Toolframe applications and isolated Python plugins"
+readme = "README.md"
+authors = [{ name = "byfb", email = "62798989+byfb@users.noreply.github.com" }]
+requires-python = ">=3.8"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+
+[project.urls]
+Homepage = "https://github.com/toolframe/toolframe-core"
+Repository = "https://github.com/toolframe/toolframe-core"
+Documentation = "https://github.com/toolframe/toolframe-core#readme"
+Issues = "https://github.com/toolframe/toolframe-core/issues"
+
+[tool.maturin]
+bindings = "bin"
+strip = true

@@ -10,8 +10,11 @@ from toolframe_core.packages import Packages
 
 
 @pytest.mark.parametrize("file_uri", [False, True])
+@pytest.mark.parametrize(
+    "variable", ["TOOLFRAME_BUNDLED_WHEELHOUSE", "TOOLFRAME_COMPANION_WHEELHOUSE"]
+)
 async def test_bundled_index_source_and_explicit_same_version_override(
-    tmp_path, monkeypatch, file_uri
+    tmp_path, monkeypatch, file_uri, variable
 ):
     source = fixture_source(tmp_path, "bundle-test")
     builder = Packages(tmp_path / "builder", PackageSettings())
@@ -21,7 +24,7 @@ async def test_bundled_index_source_and_explicit_same_version_override(
     packaged = bundled / original_wheel.stem
     packaged.mkdir(parents=True)
     copy2(original_wheel, packaged / original_wheel.name)
-    monkeypatch.setenv("TOOLFRAME_BUNDLED_WHEELHOUSE", str(bundled))
+    monkeypatch.setenv(variable, str(bundled))
 
     # Offline + a fresh application means this can only come from the bundle.
     request = "pypi:fixture-bundle-test==0.1.0"

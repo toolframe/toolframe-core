@@ -25,6 +25,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--wheelhouse", type=Path)
     args = parser.parse_args()
     original = args.binary.resolve()
     root = Path(tempfile.mkdtemp(prefix="toolframe-skill-"))
@@ -32,6 +33,8 @@ def main():
     shutil.copy2(original, binary)
     environment = {**os.environ, "TOOLFRAME_RUNTIME_ROOT": str(root / "runtime")}
     environment.pop("TOOLFRAME_WHEELHOUSE", None)
+    if args.wheelhouse:
+        environment["TOOLFRAME_WHEELHOUSE"] = str(args.wheelhouse.resolve())
     commands = []
 
     def run(*arguments, expected=0):
@@ -57,7 +60,7 @@ def main():
         )
         return value
 
-    # No wheelhouse or sibling checkout is supplied to the copied executable.
+    # The copied executable installs Core from the index or explicit test wheelhouse.
     authoring = root / "authoring"
     installed = run("--home", authoring, "skill", "install", "--json")
     assert installed["status"] == "installed"
@@ -74,16 +77,13 @@ def main():
     assert set(json.loads(receipt.read_text())["files"]) == set(shipped) - {
         receipt.name
     }
-    core_wheels = list((root / "runtime").rglob("toolframe_core-*.whl"))
-    assert core_wheels
-    for core_wheel in core_wheels:
-        with zipfile.ZipFile(core_wheel) as archive:
-            assert not any(
-                name.startswith(
-                    "toolframe_core/bundled_skills/toolframe-plugin-design/evals/"
-                )
-                for name in archive.namelist()
-            )
+    installed_skills = list(
+        (root / "runtime/core").glob(
+            "*/lib/python*/site-packages/toolframe_core/bundled_skills/toolframe-plugin-design"
+        )
+    )
+    assert len(installed_skills) == 1
+    assert not (installed_skills[0] / "evals").exists()
     assert not (authoring / "toolframe.toml").exists()
     assert not (authoring / ".toolframe").exists()
     assert (
@@ -172,9 +172,9 @@ def main():
         "skill_files": shipped,
         "starter_wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
         "checks": {
-            "copied_binary_without_source_or_wheelhouse": True,
+            "copied_binary_without_source_checkout": True,
             "complete_bundle_and_internal_links": True,
-            "evals_excluded_from_embedded_wheel_install_and_receipt": True,
+            "evals_excluded_from_installed_core_skill_and_receipt": True,
             "no_application_or_token_needed": True,
             "idempotent_install": True,
             "customized_reference_preserved": True,

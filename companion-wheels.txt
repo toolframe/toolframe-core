@@ -1,0 +1,2 @@
+# filename sha256 https-url
+# Release staging adds the Intel macOS companion pin. No wheel bytes are embedded.

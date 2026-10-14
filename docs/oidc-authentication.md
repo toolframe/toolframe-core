@@ -5,7 +5,7 @@ and third-party Agent consent. Auth owns local identities/sessions/grants; OIDC
 Auth uses Authlib for protocols and opaque token persistence; MCP Auth optionally
 verifies those tokens alongside its own keys. Install coordinated builds of SDK,
 Core, Auth, Dashboard Auth, MCP Auth and the OIDC plugin. This optional plugin is
-not part of the standard launcher bundle; installing Core does not enable it.
+not part of the Entry Register template; installing Core does not enable it.
 
 ## Gateway configuration
 

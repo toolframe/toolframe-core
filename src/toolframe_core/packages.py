@@ -246,7 +246,9 @@ class Packages:
         An explicit local wheel with the same filename replaces its bundled copy.
         uv does not promise precedence between duplicate --find-links candidates.
         """
-        directory = os.environ.get("TOOLFRAME_BUNDLED_WHEELHOUSE")
+        directory = os.environ.get("TOOLFRAME_COMPANION_WHEELHOUSE") or os.environ.get(
+            "TOOLFRAME_BUNDLED_WHEELHOUSE"
+        )
         if not directory:
             return []
         overrides = set()

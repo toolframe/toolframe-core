@@ -9,7 +9,7 @@ This runtime range is separate from the exact build-tool versions used by CI.
 The launcher selects an executable in this order:
 
 1. `--uv-path PATH`, or `TOOLFRAME_UV` when the flag is absent.
-2. The first compatible executable named `uv` on `PATH` (`uv.exe` on Windows).
+2. The first compatible executable named `uv` on `PATH`.
 3. The verified private copy under `$TOOLFRAME_RUNTIME_ROOT/uv/`, defaulting to
    `$HOME/.cache/toolframe/uv/`.
 4. A download of the target-specific release in `uv-release-manifest.txt`.
@@ -61,6 +61,30 @@ private copy exists, the launcher reports an error with recovery instructions.
 
 Platform support and release qualification remain as described in the
 [testing guide](testing.md).
+
+## Package sources and companion wheels
+
+The launcher installs the matching `toolframe-core` version from PyPI into its
+private environment. No Core, SDK, Cordis or plugin wheel is embedded. Plugins
+resolve from the application's configured index and its explicit sources.
+`--wheelhouse PATH` (or `TOOLFRAME_WHEELHOUSE`) supplies local wheels during
+bootstrap and plugin preparation. Changing local wheel bytes changes the Core
+bootstrap cache key, even if package versions stay the same.
+
+Intel macOS release builds contain the filename, HTTPS URL and SHA-256 of a
+cryptography companion wheel published beside the executable in GitHub Releases.
+The payload stays outside the executable and native PyPI wheel. The launcher
+checks cached bytes on every invocation, downloads a missing or damaged wheel
+online, verifies its hash and atomically stores it under
+`$TOOLFRAME_RUNTIME_ROOT/companions/<sha256>/`. A supplied wheelhouse can provide
+the same verified artifact before publication or for offline setup. A mismatched
+local wheel is rejected. `--offline` never downloads the companion.
+
+The internal `TOOLFRAME_COMPANION_WHEELHOUSE` handoff makes this dependency
+available to plugin resolution without recording cache paths in application
+configuration. Old launchers' bundled-wheel handoff remains readable for
+compatibility; new launchers clear inherited bundle paths. The authoring skill
+and templates still ship in the Python Core wheel with their original licenses.
 
 ## Background task policy
 

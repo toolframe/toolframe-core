@@ -1,7 +1,7 @@
 # Dashboard access and authorization
 
-Core 0.6.1 / SDK 0.3 use explicit scopes. Standard bundles include `toolframe-auth`
-and `toolframe-dashboard-auth`; Entry Register's template enables both. An empty
+Core 0.6.1 / SDK 0.3 use explicit scopes. The Entry Register template installs and
+enables `toolframe-auth` and `toolframe-dashboard-auth`. An empty
 `init` remains empty. Updating a binary alone never adds these plugins to an
 existing application's composition.
 
