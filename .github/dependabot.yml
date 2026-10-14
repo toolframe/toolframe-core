@@ -11,7 +11,7 @@ updates:
     commit-message:
       prefix: fix(container)
     ignore:
-      # The 0.6.2 launcher accepts uv >=0.12.2,<0.13.0.
+      # The 0.6.3 launcher accepts uv >=0.12.2,<0.13.0.
       # Widen this only alongside a compatible launcher release.
       - dependency-name: astral-sh/uv
         versions: ['>=0.13.0']
