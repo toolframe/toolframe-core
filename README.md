@@ -39,6 +39,10 @@ link. `uvx toolframe ...` runs the same CLI without a persistent installation.
 The [GitHub Release archives](https://github.com/toolframe/toolframe-core/releases)
 contain the identical executable for installation directly on `PATH`.
 
+For Docker, use the [container guide](docs/container.md) to initialize a persistent
+application with the Debian or Distroless image. Both include uv, Python, Core
+and Tini, and support Linux ARM64 and x86-64.
+
 The executable contains no Python wheels. First use reuses a compatible uv or
 prepares its verified fallback, installs Python 3.14.7 and `toolframe-core` from
 PyPI, and resolves each selected plugin independently. Core requires

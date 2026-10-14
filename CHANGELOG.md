@@ -5,6 +5,8 @@ imply that its distributions have been published or every target is qualified.
 
 ## Unreleased
 
+- Add Debian and Distroless container images with prepared Core runtimes, Tini,
+  persistent application volumes and verified multi-platform GHCR publication.
 - Run multiple SQL storage providers using service defaults and per-plugin bindings.
 - Retain store provider ownership across removal and restart; reject silent rebinding.
 - Bind migration plans and forward repair to their provider, and preserve admitted

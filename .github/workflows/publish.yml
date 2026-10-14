@@ -126,3 +126,14 @@ jobs:
           EOF
           gh release create "$RELEASE_TAG" --verify-tag --title "Toolframe $RELEASE_TAG" \
             --notes-file release-notes.txt releases/*.tar.gz releases/SHA256SUMS releases/manifest-*.json releases/*.whl
+
+  publish-containers:
+    needs: release-binaries
+    if: inputs.index == 'pypi'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/container.yml
+    with:
+      publish: true
+      release_artifacts: true
