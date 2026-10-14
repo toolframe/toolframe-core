@@ -1,6 +1,6 @@
 {
   "toolframe-sdk": "6c2657ee04efb6613d8f33e4cb7949fdec1a8672",
-  "fastapi-cordis": "400e0461a732e2c4cea59204b6b0c1e0016a796d",
+  "fastapi-cordis": "a132b777a53ee44e4fd02d81b9a2aa9275ca13c0",
   "toolframe-storage-sqlite": "4374d05d056a1abb3b94c9257fb306f036002241",
   "toolframe-storage-postgres": "ced70ecc6ef87b75fa27fab235effe9fd4f0617d",
   "toolframe-streamlit-dashboard": "81dd36ccbc881d6318ecee06c5d10e55afad8c4b",
