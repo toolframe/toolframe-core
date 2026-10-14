@@ -25,8 +25,8 @@ prek run --all-files
 The Ruff version and checked paths are pinned in
 [the hook configuration](.pre-commit-config.yaml); the Python rules remain in
 [pyproject.toml](pyproject.toml). CI uses these same hooks on all tracked files
-within their configured paths. Existing package, integration, and release checks
-run independently.
+within their configured paths. Package, integration, and release validation starts
+after the quality checks pass; see [CI checks](docs/ci.md).
 
 ## Branches and commits
 
@@ -42,6 +42,6 @@ Commits with its default subject length of 5–80 characters. Pull requests chec
 their commits and title so the title can be used for a Conventional Commit when
 squash merging.
 
-Local hooks can be bypassed. CI reports `branch-policy`, `code-quality`, and
-`commit-policy`; maintainers must configure required status checks separately to
-make passing checks a merge requirement.
+Local hooks can be bypassed. Configure `CI result` and the standalone `PR policy`
+as required status checks to enforce source validation and PR title/commit policy.
+The [CI guide](docs/ci.md) describes their triggers and gating behavior.

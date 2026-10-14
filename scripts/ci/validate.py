@@ -247,7 +247,8 @@ def launcher_checks(root, core, output, target, env):
         run("rustup", "target", "add", target, cwd=core, env=env)
         run(
             sys.executable,
-            root / "workspace/toolframe-fastmcp/scripts/build-macos-intel.py",
+            "scripts/ci/intel_companion.py",
+            "fetch",
             "--out-dir",
             wheels,
             cwd=core,

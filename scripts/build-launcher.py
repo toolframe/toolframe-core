@@ -11,6 +11,8 @@ import tomllib
 import zipfile
 from pathlib import Path
 
+from ci.intel_companion import load_manifest, verify_wheel
+
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (
     "aarch64-apple-darwin",
@@ -18,7 +20,6 @@ TARGETS = (
     "aarch64-unknown-linux-gnu",
     "x86_64-unknown-linux-gnu",
 )
-COMPANION = "cryptography-50.0.2-cp314-abi3-macosx_12_0_x86_64.whl"
 
 
 def sha256(path):
@@ -53,25 +54,23 @@ def prepare(args):
         "companions": [],
     }
     if args.target == "x86_64-apple-darwin":
-        native = args.native_wheelhouse / COMPANION if args.native_wheelhouse else None
+        companion = load_manifest(ROOT / "scripts/ci/intel-companion.json")
+        filename = companion["artifact"]["filename"]
+        native = args.native_wheelhouse / filename if args.native_wheelhouse else None
         if native is None or not native.is_file():
             raise ValueError(
-                f"Intel builds require a separately published companion: {COMPANION}"
+                f"Intel builds require a separately published companion: {filename}"
             )
-        with zipfile.ZipFile(native) as wheel:
-            metadata = wheel.read(
-                next(n for n in wheel.namelist() if n.endswith(".dist-info/WHEEL"))
-            ).decode()
-            assert "Tag: cp314-abi3-macosx_12_0_x86_64" in metadata
+        verify_wheel(native, companion)
         digest = sha256(native)
-        url = f"https://github.com/toolframe/toolframe-core/releases/download/v{version}/{COMPANION}"
-        (stage / "companion-wheels.txt").write_text(f"{COMPANION} {digest} {url}\n")
+        url = f"https://github.com/toolframe/toolframe-core/releases/download/v{version}/{filename}"
+        (stage / "companion-wheels.txt").write_text(f"{filename} {digest} {url}\n")
         # Keep external payloads outside the Cargo/maturin source tree.
         companion_output = args.output.resolve() / "companions"
         companion_output.mkdir(parents=True, exist_ok=True)
         shutil.copy2(native, companion_output / native.name)
         manifest["companions"].append(
-            {"filename": COMPANION, "sha256": digest, "url": url}
+            {"filename": filename, "sha256": digest, "url": url}
         )
     assert not list(stage.rglob("*.whl")), "No Python wheels may enter the native build"
     (stage / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
