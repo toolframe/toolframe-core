@@ -1,0 +1,29 @@
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+default_language_version:
+  python: python3.11
+
+repos:
+  - repo: local
+    hooks:
+      - id: check-branch-name
+        name: Check branch naming policy
+        entry: python scripts/check_branch_name.py
+        language: python
+        always_run: true
+        pass_filenames: false
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        types_or: [python, pyi]
+        files: '^(src/|tests/|scripts/(build-launcher\.py$|verify-release\.py$|verify-skill\.py$|check_branch_name\.py$|ci/))'
+      - id: ruff-format
+        types_or: [python, pyi]
+        args: [--check]
+        files: '^(src/|tests/|scripts/(build-launcher\.py$|verify-release\.py$|verify-skill\.py$|check_branch_name\.py$|ci/))'
+  - repo: https://github.com/commit-check/commit-check
+    rev: v2.18.3
+    hooks:
+      - id: check-message
+        stages: [commit-msg]

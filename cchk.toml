@@ -1,0 +1,10 @@
+[commit]
+conventional_commits = true
+allow_commit_types = ["feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "build", "ci"]
+
+[branch]
+conventional_branch = true
+allow_branch_types = ["feat", "fix", "release", "chore"]
+allow_branch_names = ["main"]
+# scripts/check_branch_name.py enforces these names literally, without the
+# additional standalone branch exceptions built into commit-check.

@@ -436,3 +436,5 @@ The package metadata uses `Apache-2.0 AND MIT` because the distribution includes
 both the Apache-licensed Core and MIT-licensed guide/templates. Each license
 applies to its respective files; this does not offer the Core under MIT.
 Third-party dependencies retain their own licenses.
+
+For development hooks and contribution rules, see [Contributing](CONTRIBUTING.md).
