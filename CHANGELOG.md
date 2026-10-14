@@ -5,6 +5,14 @@ imply that its distributions have been published or every target is qualified.
 
 ## Unreleased
 
+## 0.6.3
+
+- Apply container security updates, remove unused pip bootstrap dependencies and
+  privileged executable bits, and gate publication on vulnerability scans with
+  daily image checks and weekly dependency update proposals.
+
+## 0.6.2
+
 - Add Debian and Distroless container images with prepared Core runtimes, Tini,
   persistent application volumes and verified multi-platform GHCR publication.
 - Run multiple SQL storage providers using service defaults and per-plugin bindings.

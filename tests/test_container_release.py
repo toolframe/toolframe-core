@@ -17,7 +17,7 @@ prepare = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(prepare)
 
 
-def release(tmp_path, *, version="0.6.2", binary_hash=None, symlink=False):
+def release(tmp_path, *, version="0.6.3", binary_hash=None, symlink=False):
     target = prepare.TARGETS["arm64"]
     archive = tmp_path / f"toolframe-{version}-{target}.tar.gz"
     binary = b"verified-executable"
@@ -51,7 +51,7 @@ def release(tmp_path, *, version="0.6.2", binary_hash=None, symlink=False):
 def test_stages_verified_binary_and_licenses(tmp_path):
     release(tmp_path)
     output = tmp_path / "output"
-    prepare.stage(tmp_path, output, "0.6.2", "arm64")
+    prepare.stage(tmp_path, output, "0.6.3", "arm64")
     assert (output / "arm64/toolframe").read_bytes() == b"verified-executable"
     assert (output / "arm64/toolframe").stat().st_mode & 0o777 == 0o755
     assert {path.name for path in (output / "arm64").iterdir()} == {
@@ -65,13 +65,13 @@ def test_rejects_changed_archive(tmp_path):
     archive = release(tmp_path)
     archive.write_bytes(archive.read_bytes() + b"changed")
     with pytest.raises(ValueError, match="Checksum mismatch"):
-        prepare.stage(tmp_path, tmp_path / "output", "0.6.2", "arm64")
+        prepare.stage(tmp_path, tmp_path / "output", "0.6.3", "arm64")
 
 
 def test_rejects_wrong_binary_manifest(tmp_path):
     release(tmp_path, binary_hash="0" * 64)
     with pytest.raises(ValueError, match="Binary does not match"):
-        prepare.stage(tmp_path, tmp_path / "output", "0.6.2", "arm64")
+        prepare.stage(tmp_path, tmp_path / "output", "0.6.3", "arm64")
 
 
 def test_rejects_wrong_architecture_manifest(tmp_path):
@@ -81,13 +81,13 @@ def test_rejects_wrong_architecture_manifest(tmp_path):
     value["target"] = prepare.TARGETS["amd64"]
     manifest.write_text(json.dumps(value))
     with pytest.raises(ValueError, match="manifest does not match"):
-        prepare.stage(tmp_path, tmp_path / "output", "0.6.2", "arm64")
+        prepare.stage(tmp_path, tmp_path / "output", "0.6.3", "arm64")
 
 
 def test_does_not_extract_archive_symlinks(tmp_path):
     release(tmp_path, symlink=True)
     with pytest.raises(ValueError, match="regular file"):
-        prepare.stage(tmp_path, tmp_path / "output", "0.6.2", "arm64")
+        prepare.stage(tmp_path, tmp_path / "output", "0.6.3", "arm64")
 
 
 def test_accepts_per_platform_ci_checksums(tmp_path):
@@ -95,4 +95,4 @@ def test_accepts_per_platform_ci_checksums(tmp_path):
     (tmp_path / "SHA256SUMS").rename(
         tmp_path / f"SHA256SUMS-{prepare.TARGETS['arm64']}.txt"
     )
-    prepare.stage(tmp_path, tmp_path / "output", "0.6.2", "arm64")
+    prepare.stage(tmp_path, tmp_path / "output", "0.6.3", "arm64")
