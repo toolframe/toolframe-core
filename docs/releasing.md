@@ -23,18 +23,23 @@ Backup's operator extra requires Core. Testkit's pytest integration is an extra.
 
 ## Publisher setup
 
-Create GitHub environments `testpypi` and `pypi`. On each corresponding index,
-create a Trusted Publisher for **both** projects below:
+Create GitHub environments `testpypi` and `pypi` for Core, and
+`testpypi-launcher` and `pypi-launcher` for the launcher. On each corresponding
+index, create a Trusted Publisher for **both** projects below:
 
 | PyPI project | GitHub owner | Repository | Workflow | Environment |
 | --- | --- | --- | --- | --- |
 | `toolframe-core` | `toolframe` | `toolframe-core` | `publish.yml` | `testpypi` or `pypi` |
-| `toolframe` | `toolframe` | `toolframe-core` | `publish.yml` | `testpypi` or `pypi` |
+| `toolframe` | `toolframe` | `toolframe-core` | `publish.yml` | `testpypi-launcher` or `pypi-launcher` |
+
+The projects use separate upload jobs and environments so that each has a
+distinct publisher identity. PyPI does not allow two pending publishers with the
+same repository, workflow and environment for different project names.
 
 Use the actual owner if publishing from a fork. Each provider uses the same
 workflow/environment names in its own repository; see that repository's release
 guide. Follow [PyPI's Trusted Publishing documentation](https://docs.pypi.org/trusted-publishers/using-a-publisher/).
-The upload job alone receives `id-token: write`; it uses no PyPI API-token secret.
+Only the upload jobs receive `id-token: write`; they use no PyPI API-token secret.
 Environment reviewers and release-tag protections can restrict who releases.
 
 Source validation fetches sibling repositories. Public repositories need no
@@ -52,8 +57,9 @@ The tag must match both Python and Cargo versions. Branches and mismatched tags
 fail before validation.
 
 The workflow reruns validation at the tag, downloads exactly one Core wheel,
-one Core sdist and four native wheels from that run, then uploads that set.
-Only a successful production upload publishes GitHub Release assets: four
+one Core sdist and four native wheels from that run, then uploads each project's
+files in its own job. Both production uploads must succeed before publishing
+GitHub Release assets: four
 executable archives, manifests, checksums and the Intel macOS cryptography wheel.
 The companion is built from verified upstream sources. Its payload stays separate;
 only its exact URL and SHA-256 are compiled into the Intel launcher. Do not replace

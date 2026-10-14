@@ -38,7 +38,7 @@ jobs:
     uses: ./.github/workflows/validate.yml
     secrets: inherit
 
-  publish:
+  publish-core:
     needs: [release-tag, validate]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -52,30 +52,52 @@ jobs:
         with:
           name: python-dist
           path: dist/
+      - name: Require the complete Core release set
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          files = list(Path('dist').iterdir())
+          assert len(list(Path('dist').glob('toolframe_core-*.whl'))) == 1
+          assert len(list(Path('dist').glob('toolframe_core-*.tar.gz'))) == 1
+          assert len(files) == 2
+          PY
+      - name: Publish Core using its Trusted Publisher
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+          repository-url: ${{ inputs.index == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
+
+  publish-launcher:
+    needs: [release-tag, validate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: ${{ inputs.index }}-launcher
+    permissions:
+      id-token: write
+    steps:
       - name: Download all four validated native wheels
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: launcher-wheel-*
           merge-multiple: true
           path: dist/
-      - name: Require the complete release set
+      - name: Require the complete launcher release set
         run: |
           python - <<'PY'
           from pathlib import Path
           files = list(Path('dist').iterdir())
           assert len(list(Path('dist').glob('toolframe-*.whl'))) == 4
-          assert len(list(Path('dist').glob('toolframe_core-*.whl'))) == 1
-          assert len(list(Path('dist').glob('toolframe_core-*.tar.gz'))) == 1
-          assert len(files) == 6
+          assert len(files) == 4
           PY
-      - name: Publish using the selected Trusted Publisher
+      - name: Publish the launcher using its Trusted Publisher
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist/
           repository-url: ${{ inputs.index == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
 
   release-binaries:
-    needs: [validate, publish]
+    needs: [validate, publish-core, publish-launcher]
     if: inputs.index == 'pypi'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
