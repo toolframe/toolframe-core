@@ -65,6 +65,14 @@ The companion is built from verified upstream sources. Its payload stays separat
 only its exact URL and SHA-256 are compiled into the Intel launcher. Do not replace
 a published companion with different bytes: existing launchers will reject it.
 
+After production Release assets succeed, `publish-containers` calls the
+[container workflow](container.md#publish-to-github-container-registry). It builds
+and verifies Debian and Distroless images on native Linux ARM64 and x86-64 using
+the validated executable artifacts from the same run, then publishes their GHCR
+tags. First publication also requires setting the GHCR package to Public. A
+container-only rebuild or failed container publication can be retried through
+the separate Container images workflow without re-uploading Python packages.
+
 PyPI files are immutable. If upload partially succeeds, inspect the accepted
 files before recovery; do not rebuild and blindly retry the same version.
 If only GitHub Release creation fails, recover it from the validated

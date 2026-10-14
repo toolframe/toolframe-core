@@ -1,0 +1,14 @@
+**
+!Dockerfile
+!scripts/
+!scripts/container-healthcheck.py
+!build/
+!build/container/
+!build/container/amd64/
+!build/container/amd64/toolframe
+!build/container/amd64/LICENSE
+!build/container/amd64/NOTICE
+!build/container/arm64/
+!build/container/arm64/toolframe
+!build/container/arm64/LICENSE
+!build/container/arm64/NOTICE
