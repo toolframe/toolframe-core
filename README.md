@@ -1,5 +1,9 @@
 # Toolframe core
 
+[![CI](https://github.com/toolframe/toolframe-core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/toolframe/toolframe-core/actions/workflows/ci.yml)
+[![Container images](https://github.com/toolframe/toolframe-core/actions/workflows/container.yml/badge.svg?branch=main)](https://github.com/toolframe/toolframe-core/actions/workflows/container.yml)
+[![Container security](https://github.com/toolframe/toolframe-core/actions/workflows/container-security.yml/badge.svg?branch=main)](https://github.com/toolframe/toolframe-core/actions/workflows/container-security.yml)
+
 Toolframe is a persistent local control host for replaceable Python plugins.
 Core owns composition, immutable package environments, worker lifecycles,
 management operations and a durable Core journal. SQLite (`data/core.sqlite`) is

@@ -1,0 +1,44 @@
+name: Scan a Toolframe container
+description: Retain the full vulnerability inventory and enforce publication policy
+inputs:
+  image:
+    description: Local image tag or public registry reference
+    required: true
+  platform:
+    description: Linux platform to scan
+    required: true
+  image-source:
+    description: Trivy image source (docker or remote)
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567
+      with:
+        version: v0.76.0
+        cache: false
+    - name: Scan every severity and keep the package inventory
+      shell: bash
+      env:
+        SCAN_IMAGE: ${{ inputs.image }}
+        SCAN_PLATFORM: ${{ inputs.platform }}
+        SCAN_SOURCE: ${{ inputs.image-source }}
+      run: |
+        mkdir -p build/security
+        trivy image --image-src "$SCAN_SOURCE" --platform "$SCAN_PLATFORM" \
+          --scanners vuln --ignorefile '' --disable-telemetry --list-all-pkgs \
+          --timeout 10m --format json --output build/security/scan.json "$SCAN_IMAGE"
+        trivy version --format json > build/security/scanner.json
+        trivy convert --format cyclonedx --output build/security/sbom.cdx.json build/security/scan.json
+    - name: Enforce the security policy
+      shell: bash
+      run: |
+        python3 scripts/check-container-security.py build/security/scan.json \
+          --summary build/security/summary.md
+    - name: Add findings to the run summary
+      if: always()
+      shell: bash
+      run: |
+        if [ -f build/security/summary.md ]; then
+          cat build/security/summary.md >> "$GITHUB_STEP_SUMMARY"
+        fi

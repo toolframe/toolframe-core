@@ -1,0 +1,52 @@
+name: Container security
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-security-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: ${{ matrix.variant }} (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [standard, distroless]
+        arch: [amd64, arm64]
+        include:
+          - variant: standard
+            tag: latest
+          - variant: distroless
+            tag: distroless
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the public image
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+          TAG: ${{ matrix.tag }}
+        run: echo "ref=ghcr.io/${OWNER,,}/toolframe:$TAG" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/scan-container
+        with:
+          image: ${{ steps.image.outputs.ref }}
+          platform: linux/${{ matrix.arch }}
+          image-source: remote
+      - name: Save findings and the inventory
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-security-${{ matrix.variant }}-${{ matrix.arch }}
+          path: build/security/
+          if-no-files-found: warn
+          retention-days: 7

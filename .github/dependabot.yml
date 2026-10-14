@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:23'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 4
+    commit-message:
+      prefix: fix(container)
+    ignore:
+      # The 0.6.2 launcher accepts uv >=0.12.2,<0.13.0.
+      # Widen this only alongside a compatible launcher release.
+      - dependency-name: astral-sh/uv
+        versions: ['>=0.13.0']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:23'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 4
+    commit-message:
+      prefix: chore(ci)

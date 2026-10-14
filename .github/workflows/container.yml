@@ -6,8 +6,10 @@ on:
       - Dockerfile
       - .dockerignore
       - .github/workflows/container.yml
+      - .github/workflows/container-security.yml
+      - .github/actions/scan-container/**
       - scripts/*container*.py
-      - tests/test_container_release.py
+      - tests/test_container_*.py
   workflow_call:
     inputs:
       publish:
@@ -98,6 +100,7 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
           docker buildx build --platform "linux/$ARCH" --target "$VARIANT" \
+            --pull --no-cache-filter runtime \
             --build-arg "TOOLFRAME_VERSION=$VERSION" \
             --build-arg "TOOLFRAME_REVISION=$GITHUB_SHA" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
@@ -117,6 +120,21 @@ jobs:
           name: container-evidence-${{ matrix.variant }}-${{ matrix.arch }}
           path: build/container-verification*
           if-no-files-found: warn
+          retention-days: 7
+      - name: Scan the tested image before publication
+        uses: ./.github/actions/scan-container
+        with:
+          image: toolframe-check:local
+          platform: linux/${{ matrix.arch }}
+          image-source: docker
+      - name: Save security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-security-${{ matrix.variant }}-${{ matrix.arch }}
+          path: build/security/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Log in to GHCR
         if: inputs.publish
         uses: docker/login-action@783ae9cac559640a24c9212dfa6cd9e998252f9a

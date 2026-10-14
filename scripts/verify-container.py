@@ -12,7 +12,11 @@ from pathlib import Path
 
 def docker(*args, check=True, timeout=300):
     result = subprocess.run(
-        ["docker", *map(str, args)], capture_output=True, text=True, timeout=timeout
+        ["docker", *map(str, args)],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
     )
     if check and result.returncode:
         raise RuntimeError(f"docker {args[0]} failed: {result.stdout}\n{result.stderr}")
@@ -37,22 +41,42 @@ def main():
     assert info["Config"]["User"] == "65532:65532"
     assert info["Architecture"] == args.platform.split("/")[1]
     assert info["Config"]["Entrypoint"][:2] == ["/usr/bin/tini", "--"]
-    run = ["run", "--rm", "--platform", args.platform]
+    security = ["--cap-drop", "ALL", "--security-opt", "no-new-privileges:true"]
+    run = ["run", "--rm", "--platform", args.platform, *security]
     # A fresh container must have an offline Core, even without any application volume.
     docker(*run, "--network", "none", args.image, "--offline", "--help")
     report["cold_offline_core"] = True
     runtime_probe = (
-        "import bz2, ctypes, lzma, os, pathlib, platform, sqlite3, ssl; "
+        "import bz2, ctypes, importlib.util, lzma, os, pathlib, platform, sqlite3, ssl; "
         "assert os.getuid() == 65532; "
         "assert platform.python_version() == '3.14.7'; "
         "assert not pathlib.Path('/data/toolframe.toml').exists(); "
         "assert not pathlib.Path('/data/.toolframe/management.token').exists(); "
+        "assert importlib.util.find_spec('pip') is None; "
+        "assert importlib.util.find_spec('ensurepip') is None; "
+        "status = dict(line.split(':', 1) for line in pathlib.Path('/proc/self/status').read_text().splitlines() if ':' in line); "
+        "assert status['NoNewPrivs'].strip() == '1'; "
+        "assert int(status['CapBnd'].strip(), 16) == 0; "
+        "assert not any(p.is_file() and p.stat().st_mode & 0o6000 for p in pathlib.Path('/usr').rglob('*')); "
         f"assert pathlib.Path('/bin/sh').exists() == {args.variant == 'standard'}; "
         "print(platform.machine())"
     )
     report["runtime_architecture"] = docker(
         *run, "--entrypoint", "/opt/toolframe/python3", args.image, "-c", runtime_probe
     ).stdout.strip()
+    report["runtime_hardening"] = True
+    if args.variant == "distroless":
+        docker(
+            *run,
+            "--entrypoint",
+            "/opt/toolframe/python3",
+            args.image,
+            "-c",
+            "from pathlib import Path; "
+            "root = Path('/var/lib/dpkg/status.d'); "
+            "assert all((root / name).is_file() for name in ('tini', 'procps', 'libproc2-0', 'libsystemd0', 'libcap2'))",
+        )
+        report["copied_package_inventory"] = True
     # Verify PID 1 adopts and reaps an orphan after its original parent exits.
     reaping_probe = """
 import os, pathlib, time
@@ -172,6 +196,7 @@ while pathlib.Path(f'/proc/{orphan}').exists():
             "-d",
             "--platform",
             args.platform,
+            *security,
             "--name",
             container,
             "-v",
@@ -275,6 +300,7 @@ while pathlib.Path(f'/proc/{orphan}').exists():
             "-d",
             "--platform",
             args.platform,
+            *security,
             "--name",
             container,
             "--network",

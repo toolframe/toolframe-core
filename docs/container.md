@@ -11,9 +11,11 @@ Create a named volume, initialize an application and start the server:
 
 ```sh
 docker volume create toolframe-data
-docker run --rm -v toolframe-data:/data \
+docker run --rm --cap-drop ALL --security-opt no-new-privileges:true \
+  -v toolframe-data:/data \
   ghcr.io/toolframe/toolframe:0.6.2 init --template entry-register
 docker run -d --name toolframe --restart unless-stopped \
+  --cap-drop ALL --security-opt no-new-privileges:true \
   --stop-timeout 40 -p 127.0.0.1:9876:9876 -v toolframe-data:/data \
   ghcr.io/toolframe/toolframe:0.6.2
 ```
@@ -55,6 +57,10 @@ work; Git sources, plugins invoking a shell, and native source builds needing
 compilers or missing system libraries require another image. Neither variant
 includes a compiler toolchain. Distroless reduces OS tooling; it does not sandbox
 trusted plugin code.
+
+Both variants install Python packages with uv. They omit pip and ensurepip,
+including pip's separate vendored dependency copies. Plugins that invoke pip
+directly need adaptation to uv or a custom image with a maintained pip install.
 
 Use `docker logs toolframe` and the CLI for diagnosis:
 
@@ -148,11 +154,65 @@ reaping, Dashboard HTTP, an independent MCP connection, llms, plugin reload,
 graceful shutdown and data retention after recreation without a network.
 Interactive Dashboard checks and optional plugins need separate acceptance checks.
 
+## Security checks and updates
+
+The standard build applies available Debian package upgrades before installing
+runtime tools. Both images remove setuid/setgid permissions from the copied
+runtime tools and run as an unprivileged user. The quick start drops all Linux
+capabilities and enables `no-new-privileges`; the container verification suite
+uses these same settings. Keep the host's default seccomp policy enabled. Host
+kernel updates and container-engine isolation remain the operator's responsibility.
+
+Container CI scans the exact tested image with Trivy before uploading
+it. Publication fails for any Critical finding, any finding with a published
+fixed version (including Unknown severity), an unsupported OS, or an incomplete
+scan. Findings without a fix remain in the report; a passing check does not mean
+the image has no known vulnerabilities. Review Debian's advisory and affected
+code paths when assessing applicability. The policy has no blanket exclusions.
+
+The **Container security** workflow scans both architectures of the public
+`latest` and `distroless` images daily at 03:23 UTC and can also be run manually.
+It has read-only repository permissions and never publishes an image. A failure
+appears in GitHub Actions and the README security badge; maintainers can enable
+workflow failure notifications in their GitHub notification settings. Unfiltered
+JSON, scanner/database metadata and a CycloneDX inventory are retained for seven
+days. These artifacts are inventories, not signed image attestations.
+
+Dependabot checks Docker base/uv pins and GitHub Actions dependencies every
+Monday at 04:23 UTC. Update pull requests require review, all image checks and
+an explicit release or container-only publication run. Nothing auto-merges or
+auto-publishes. The uv update range follows the released launcher's compatibility
+contract; a new uv minor series needs a compatible launcher release. Also review
+the pinned Trivy version and the launcher's Python version when maintaining the
+image. CI refreshes the runtime build stage so Debian security upgrades can be
+picked up even when a base digest has not changed. For a local security rebuild,
+add `--pull --no-cache-filter runtime` to the Buildx command to avoid reusing an
+older package-install layer.
+
+Trivy covers recognizable OS packages and language dependency metadata. The
+Distroless build includes package records for copied Tini, `ps` and libraries;
+some records describe a full Debian package when only its runtime files are
+included. Native libraries bundled inside managed Python, the compiled launcher,
+plugins installed into `/data` after startup and the host kernel need separate
+assessment. The daily scan covers the two current stable aliases; older retained
+version tags need their own scan if still deployed.
+
+To apply the same policy locally after building an image, use Trivy 0.76.0:
+
+```sh
+mkdir -p .local/container/security
+trivy image --image-src docker --scanners vuln --ignorefile '' --list-all-pkgs \
+  --format json --output .local/container/security/scan.json toolframe:local
+python3 scripts/check-container-security.py .local/container/security/scan.json
+trivy convert --format cyclonedx --output .local/container/security/sbom.cdx.json \
+  .local/container/security/scan.json
+```
+
 ## Publish to GitHub Container Registry
 
 The production `publish.yml` calls `container.yml` after Python distributions
 and GitHub Release assets succeed. It uses that run's verified Linux executables.
-Native ARM64 and x86-64 jobs build and test both variants; version and stable
+Native ARM64 and x86-64 jobs build, test and scan both variants; version and stable
 alias tags are assembled only after all four jobs succeed. Intermediate
 `build-RUN-ATTEMPT-VARIANT-ARCH` tags identify each tested image.
 
@@ -179,7 +239,7 @@ before sharing the quick start. Organization policies may restrict publication.
 Local pushes require credentials with package write access. Use Docker's
 password-stdin authentication or use the workflow; never put credentials in the
 Dockerfile or build context. The allowlisted `.dockerignore` sends only the
-verified executables, licenses and health probe to Docker.
+verified executables, licenses, health probe and runtime hardening script to Docker.
 
 References: [GHCR](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
 [uv containers](https://docs.astral.sh/uv/guides/integration/docker/),

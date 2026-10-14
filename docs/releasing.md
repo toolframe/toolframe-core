@@ -69,7 +69,8 @@ After production Release assets succeed, `publish-containers` calls the
 [container workflow](container.md#publish-to-github-container-registry). It builds
 and verifies Debian and Distroless images on native Linux ARM64 and x86-64 using
 the validated executable artifacts from the same run, then publishes their GHCR
-tags. First publication also requires setting the GHCR package to Public. A
+tags after the [container security policy](container.md#security-checks-and-updates)
+passes. First publication also requires setting the GHCR package to Public. A
 container-only rebuild or failed container publication can be retried through
 the separate Container images workflow without re-uploading Python packages.
 

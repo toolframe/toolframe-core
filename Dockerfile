@@ -1,11 +1,7 @@
 # syntax=docker/dockerfile:1
-ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.8@sha256:d1cbaeadc234fe19c0d93daabcf5e98738cd93c6d1dd4918ef6aa30735feb23a
-ARG DISTROLESS_IMAGE=gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2
+FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a AS uv
 
-FROM ${UV_IMAGE} AS uv
-
-FROM ${DEBIAN_IMAGE} AS runtime
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS runtime
 ARG TARGETARCH
 ARG TOOLFRAME_VERSION=0.6.2
 ARG TOOLFRAME_REVISION
@@ -16,8 +12,10 @@ LABEL org.opencontainers.image.source="https://github.com/toolframe/toolframe-co
       org.opencontainers.image.version="${TOOLFRAME_VERSION}" \
       org.opencontainers.image.revision="${TOOLFRAME_REVISION}"
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ca-certificates git libstdc++6 procps tini \
     && rm -rf /var/lib/apt/lists/* \
+    && find /usr -xdev -type f -perm /6000 -exec chmod a-s '{}' + \
     && groupadd --gid 65532 nonroot \
     && useradd --uid 65532 --gid 65532 --create-home --home-dir /home/nonroot nonroot \
     && install -d -o 65532 -g 65532 /data /opt/toolframe
@@ -26,6 +24,7 @@ COPY --from=uv /uv /usr/local/bin/uv
 COPY build/container/${TARGETARCH}/toolframe /usr/local/bin/toolframe
 COPY build/container/${TARGETARCH}/LICENSE build/container/${TARGETARCH}/NOTICE /usr/share/doc/toolframe/
 COPY scripts/container-healthcheck.py /usr/local/lib/toolframe/healthcheck.py
+COPY scripts/harden-container.py /usr/local/lib/toolframe/harden.py
 ENV HOME=/home/nonroot \
     TOOLFRAME_UV=/usr/local/bin/uv \
     TOOLFRAME_RUNTIME_ROOT=/opt/toolframe/runtime \
@@ -41,7 +40,8 @@ WORKDIR /data
 RUN test "$(toolframe --version)" = "toolframe ${TOOLFRAME_VERSION}" \
     && UV_CACHE_DIR=/tmp/uv-build-cache toolframe --help > /dev/null \
     && ln -s "$(uv python find --managed-python 3.14.7)" /opt/toolframe/python3 \
-    && UV_CACHE_DIR=/tmp/uv-build-cache uv cache clean
+    && UV_CACHE_DIR=/tmp/uv-build-cache uv cache clean \
+    && /opt/toolframe/python3 /usr/local/lib/toolframe/harden.py
 VOLUME ["/data"]
 EXPOSE 9876
 STOPSIGNAL SIGTERM
@@ -54,14 +54,20 @@ FROM runtime AS ps-dependencies
 USER root
 # Core uses ps to reconcile worker ownership. Retain the final base's libc and
 # loader, and copy only ps's additional shared libraries under their SONAMEs.
-RUN mkdir -p /opt/ps-libs \
+# Include dpkg status fragments so scanners can identify these copied components.
+RUN mkdir -p /opt/ps-libs/var/lib/dpkg/status.d \
     && ldd /usr/bin/ps | awk '/=> \// { print $3 }' | while read -r library; do \
          case "$library" in */libc.so.*|*/libm.so.*) continue ;; esac; \
          directory=$(dirname "$(readlink -f "$library")"); \
          install -D "$library" "/opt/ps-libs$directory/$(basename "$library")"; \
-       done
+         package=$(dpkg-query -S "$(readlink -f "$library")") || exit 1; \
+         package=${package%%:*}; \
+         dpkg-query -s "$package" > "/opt/ps-libs/var/lib/dpkg/status.d/$package" || exit 1; \
+       done \
+    && dpkg-query -s procps > /opt/ps-libs/var/lib/dpkg/status.d/procps \
+    && dpkg-query -s tini > /opt/ps-libs/var/lib/dpkg/status.d/tini
 
-FROM ${DISTROLESS_IMAGE} AS distroless
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2 AS distroless
 ARG TOOLFRAME_VERSION=0.6.2
 ARG TOOLFRAME_REVISION
 LABEL org.opencontainers.image.source="https://github.com/toolframe/toolframe-core" \
