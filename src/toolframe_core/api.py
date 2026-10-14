@@ -148,6 +148,7 @@ def create_app(host, *, manage_lifespan=True):
         redoc_url=None,
         openapi_url=None,
     )
+
     @app.middleware("http")
     async def application_operator(request, call_next):
         path = request.url.path

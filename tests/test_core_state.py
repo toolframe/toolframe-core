@@ -167,6 +167,7 @@ async def test_secret_cache_preserves_history_numbers_and_schema_metadata(
     await journal.set_meta("nested", {"candidate": candidate})
     await journal.new_operation("validate", "alpha", {"token": "private-request"})
     settings = journal.settings
+
     async def assert_history(state):
         page = redact(await state.operation_page(), state.secrets)
         assert page["page"] == page["total"] == page["pages"] == 1
