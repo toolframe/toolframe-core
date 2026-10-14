@@ -1709,6 +1709,9 @@ class Host:
                 raise
 
     async def publish(self):
+        # This snapshot includes health changes already observed, including those
+        # repaired by a reload. A new failure during publication queues another pass.
+        self.health_publication_pending = False
         epoch = uuid.uuid4().hex
         generations = {
             name: runtime.generation for name, runtime in self.runtimes.items()
@@ -2341,7 +2344,6 @@ class Host:
             if self.health_publication_pending and not self.mutation.locked():
                 async with self.mutation:
                     await self.publish()
-                    self.health_publication_pending = False
 
     async def _exit_loop(self):
         while True:
