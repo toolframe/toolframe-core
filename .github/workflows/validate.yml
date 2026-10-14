@@ -2,13 +2,59 @@ name: Validate distributions and launchers
 
 on:
   workflow_call:
+    inputs:
+      reuse-stage:
+        type: string
+        default: none
+      rebuild:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 # Concurrency belongs to the caller: a reusable workflow must not cancel it.
 jobs:
+  reuse:
+    name: Resolve validated artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      reused: ${{ steps.resolve.outputs.reused }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14.7'
+      - name: Verify the source run, complete bundle and checksums
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_STAGE: ${{ inputs.reuse-stage }}
+          REBUILD: ${{ inputs.rebuild }}
+          TOOLFRAME_REPOSITORY_OWNER: ${{ vars.TOOLFRAME_REPOSITORY_OWNER || github.repository_owner }}
+        run: |
+          options=()
+          if [ "$REBUILD" = true ]; then options+=(--rebuild); fi
+          python scripts/ci/artifacts.py resolve --stage "$REUSE_STAGE" \
+            --output build/candidate "${options[@]}"
+      - name: Retain the promoted bytes and their provenance
+        if: steps.resolve.outputs.reused == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: validated-release
+          path: build/candidate/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
   postgres:
+    needs: reuse
+    if: needs.reuse.outputs.reused == 'false'
     name: PostgreSQL journal and mixed SQL storage
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -55,7 +101,10 @@ jobs:
             build/ci-postgres/*.json
             build/ci-postgres/workspace.txt
           if-no-files-found: warn
+          overwrite: true
   python:
+    needs: reuse
+    if: needs.reuse.outputs.reused == 'false'
     name: Python integration and distribution
     runs-on: macos-15
     timeout-minutes: 40
@@ -84,6 +133,7 @@ jobs:
           name: python-dist
           path: build/ci-python/python-dist/
           if-no-files-found: error
+          overwrite: true
           retention-days: 14
       - name: Save Python validation evidence
         if: always()
@@ -95,8 +145,70 @@ jobs:
             build/ci-python/*.xml
             build/ci-python/workspace.txt
           if-no-files-found: warn
+          overwrite: true
           retention-days: 14
 
   launcher:
+    needs: reuse
+    if: needs.reuse.outputs.reused == 'false'
     uses: ./.github/workflows/launcher.yml
     secrets: inherit
+
+  bundle:
+    name: Seal complete validation
+    needs: [reuse, python, postgres, launcher]
+    if: >-
+      always() && needs.reuse.result == 'success' &&
+      needs.reuse.outputs.reused == 'false' &&
+      needs.python.result == 'success' && needs.postgres.result == 'success' &&
+      needs.launcher.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14.7'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: '{python-dist,python-validation,postgres-validation,launcher-*}'
+          path: build/candidate/
+      - name: Seal distributions and installed-application evidence
+        env:
+          TOOLFRAME_REPOSITORY_OWNER: ${{ vars.TOOLFRAME_REPOSITORY_OWNER || github.repository_owner }}
+        run: python scripts/ci/artifacts.py seal --bundle build/candidate
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: validated-release
+          path: build/candidate/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+  result:
+    name: Validated artifacts
+    if: always()
+    needs: [reuse, python, postgres, launcher, bundle]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require verified reuse or complete fresh validation
+        env:
+          REUSE_RESULT: ${{ needs.reuse.result }}
+          REUSED: ${{ needs.reuse.outputs.reused }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+          POSTGRES_RESULT: ${{ needs.postgres.result }}
+          LAUNCHER_RESULT: ${{ needs.launcher.result }}
+          BUNDLE_RESULT: ${{ needs.bundle.result }}
+        run: |
+          test "$REUSE_RESULT" = success
+          case "$REUSED" in
+            true) expected=skipped ;;
+            false) expected=success ;;
+            *) exit 1 ;;
+          esac
+          for result in "$PYTHON_RESULT" "$POSTGRES_RESULT" "$LAUNCHER_RESULT" "$BUNDLE_RESULT"; do
+            test "$result" = "$expected"
+          done
