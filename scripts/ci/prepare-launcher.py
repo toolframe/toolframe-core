@@ -45,7 +45,8 @@ def main():
         subprocess.run(
             [
                 sys.executable,
-                str(root / "workspace/toolframe-fastmcp/scripts/build-macos-intel.py"),
+                str(core / "scripts/ci/intel_companion.py"),
+                "fetch",
                 "--out-dir",
                 str(wheels),
             ],

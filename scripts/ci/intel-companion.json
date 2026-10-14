@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "recipe": {
+    "revision": 1,
+    "python": "3.14.7",
+    "abi": "abi3",
+    "macos_deployment_target": "12.0",
+    "target": "x86_64-apple-darwin",
+    "rust": "1.94.1",
+    "uv": "0.12.8",
+    "openssl": {
+      "version": "4.0.3",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-4.0.3/openssl-4.0.3.tar.gz",
+      "sha256": "325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9"
+    },
+    "cryptography": {
+      "version": "50.0.2",
+      "url": "https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz",
+      "sha256": "7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5"
+    }
+  },
+  "artifact": {
+    "recipe_sha256": "d33588dea7c27df9c556705045e9c273a952537b0a1ca7cc13d46ff68fcbaf82",
+    "filename": "cryptography-50.0.2-cp314-abi3-macosx_12_0_x86_64.whl",
+    "url": "https://github.com/toolframe/toolframe-core/releases/download/v0.6.3/cryptography-50.0.2-cp314-abi3-macosx_12_0_x86_64.whl",
+    "sha256": "0cf1fa412b1ad05e98790bc8cb1dc1ff7a7a94a40fe71b8cc6c0810b8ffb97e2",
+    "size": 3946828
+  }
+}

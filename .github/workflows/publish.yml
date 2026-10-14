@@ -33,8 +33,15 @@ jobs:
       - name: Require the exact project version tag
         run: python scripts/ci/check-release.py --ref "$GITHUB_REF"
 
-  validate:
+  quality:
     needs: release-tag
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/quality.yml
+
+  validate:
+    needs: [release-tag, quality]
     uses: ./.github/workflows/validate.yml
     secrets: inherit
 

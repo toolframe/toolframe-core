@@ -4,17 +4,40 @@ on:
   pull_request:
   push:
     # publish.yml validates release tags in the publication run itself.
-    branches: ['**']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+
   validate:
+    needs: quality
     uses: ./.github/workflows/validate.yml
     secrets: inherit
+
+  result:
+    name: CI result
+    if: always()
+    needs: [quality, validate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      # Require this check when configuring branch protection. A skipped
+      # validation job must not turn a failed prerequisite into a green check.
+      - name: Require successful checks and validation
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        run: |
+          echo "Quality: $QUALITY_RESULT; validation: $VALIDATE_RESULT"
+          test "$QUALITY_RESULT" = success
+          test "$VALIDATE_RESULT" = success

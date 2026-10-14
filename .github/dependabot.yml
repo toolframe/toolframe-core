@@ -10,6 +10,19 @@ updates:
     open-pull-requests-limit: 4
     commit-message:
       prefix: fix(container)
+    pull-request-branch-name:
+      prefix: chore
+      template: '{prefix}/{name}'
+    groups:
+      # Catch every version and security update, including major versions.
+      # To split a dependency out, add a named group before these catch-alls;
+      # exclusions would fall back to noncompliant solo dependency/version names.
+      container-dependencies:
+        applies-to: version-updates
+        patterns: ['*']
+      container-security:
+        applies-to: security-updates
+        patterns: ['*']
     ignore:
       # The 0.6.3 launcher accepts uv >=0.12.2,<0.13.0.
       # Widen this only alongside a compatible launcher release.
@@ -25,3 +38,13 @@ updates:
     open-pull-requests-limit: 4
     commit-message:
       prefix: chore(ci)
+    pull-request-branch-name:
+      prefix: chore
+      template: '{prefix}/{name}'
+    groups:
+      actions-dependencies:
+        applies-to: version-updates
+        patterns: ['*']
+      actions-security:
+        applies-to: security-updates
+        patterns: ['*']

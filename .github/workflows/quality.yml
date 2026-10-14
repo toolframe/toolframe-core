@@ -1,11 +1,7 @@
 name: Code quality
 
 on:
-  push:
-    branches: ['**']
-  pull_request:
-    types: [opened, synchronize, reopened, edited]
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -21,10 +17,15 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.14.7'
-      - name: Check the actual source branch
+      - name: Check the source branch or selected release tag
         env:
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-        run: python scripts/check_branch_name.py "$BRANCH_NAME"
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            python scripts/ci/check-release.py --ref "$GITHUB_REF"
+          else
+            python scripts/check_branch_name.py "$BRANCH_NAME"
+          fi
 
   code-quality:
     runs-on: ubuntu-24.04
@@ -42,22 +43,7 @@ jobs:
 
   commit-policy:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.14.7'
-      - uses: commit-check/commit-check-action@a61779784a953fd9047c001c102cfeac5cf26964 # commit-check 2.18.3
-        with:
-          message: true
-          branch: false
-          pr-title: true
-          pr-comments: false
+    uses: ./.github/workflows/pr-policy.yml

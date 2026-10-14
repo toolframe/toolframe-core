@@ -61,9 +61,15 @@ one Core sdist and four native wheels from that run, then uploads each project's
 files in its own job. Both production uploads must succeed before publishing
 GitHub Release assets: four
 executable archives, manifests, checksums and the Intel macOS cryptography wheel.
-The companion is built from verified upstream sources. Its payload stays separate;
-only its exact URL and SHA-256 are compiled into the Intel launcher. Do not replace
-a published companion with different bytes: existing launchers will reject it.
+The companion reuses the verified bytes from the fixed Toolframe Release asset
+in the [Intel companion manifest](intel-companion.md). Publication does not
+compile cryptography or OpenSSL. It copies the same wheel into the new Core
+Release, preserving the launcher URL for that Core version. Its payload stays
+separate; only its exact URL and SHA-256 are compiled into the Intel launcher.
+Keep the source Release asset available for subsequent CI runs, and do not
+replace a published companion with different bytes: existing launchers will
+reject it. Native dependency updates use the explicit build procedure in the
+companion guide before ordinary CI or publication.
 
 After production Release assets succeed, `publish-containers` calls the
 [container workflow](container.md#publish-to-github-container-registry). It builds
