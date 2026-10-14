@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
   push:
+    # publish.yml validates release tags in the publication run itself.
+    branches: ['**']
   workflow_dispatch:
 
 permissions:

@@ -2,7 +2,7 @@
   "toolframe-sdk": "ef91b609137a5fe7bae8e0c893e74b096ff06ffe",
   "fastapi-cordis": "a132b777a53ee44e4fd02d81b9a2aa9275ca13c0",
   "toolframe-storage-sqlite": "67c3b0ac4365db81c6c866083330c6405f299dfd",
-  "toolframe-storage-postgres": "fd6d295b870c6130976a9eb1f91adafa3ee3c3dd",
+  "toolframe-storage-postgres": "0d8a527a22c5a7fc86e7bb2a46588f52f870ef0f",
   "toolframe-streamlit-dashboard": "30829c2a28bb271422a4712801feb197e3577214",
   "toolframe-fastmcp": "3236736f3fc194a8a8cf7ffc6617c33533178918",
   "toolframe-llms-txt": "dfeb2d9a314b2071e212e9f953f6adf35a8bda49",

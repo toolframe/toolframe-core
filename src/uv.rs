@@ -1211,17 +1211,9 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn accepts_only_the_exact_version_and_target_for_a_pinned_release() {
-        use std::os::unix::fs::PermissionsExt;
-
         let directory = tempfile::tempdir().expect("create temp directory");
-        let path = directory.path().join("uv");
-        fs::write(
-            &path,
-            "#!/bin/sh\necho 'uv 0.12.8 (test 2026-09-03 aarch64-apple-darwin)'\n",
-        )
-        .expect("write fake uv");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
-            .expect("make fake uv executable");
+        let path = directory.path().join("exact-uv");
+        fake_uv(&path, "uv 0.12.8 (test 2026-09-03 aarch64-apple-darwin)");
         let mut release = release_for_target("aarch64-apple-darwin").expect("read release");
         release.executable_sha256 = sha256_file(&path).expect("hash exact fake uv");
         let resolved = inspect_candidate(&path, Some(&release), UvSource::Managed)
@@ -1229,32 +1221,27 @@ mod tests {
             .expect("accept exact fake uv");
         assert_eq!(resolved.version, "0.12.8");
 
-        fs::write(
-            &path,
-            "#!/bin/sh\necho 'uv 0.12.7 (test 2026-09-03 aarch64-apple-darwin)'\n",
-        )
-        .expect("write old fake uv");
+        // Keep each executable fixture immutable after it has been launched.
+        let path = directory.path().join("old-uv");
+        fake_uv(&path, "uv 0.12.7 (test 2026-09-03 aarch64-apple-darwin)");
         release.executable_sha256 = sha256_file(&path).expect("hash old fake uv");
+        let error = inspect_candidate(&path, Some(&release), UvSource::Managed)
+            .await
+            .unwrap_err();
         assert!(
-            inspect_candidate(&path, Some(&release), UvSource::Managed)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("does not match pinned UV")
+            error.to_string().contains("does not match pinned UV"),
+            "{error:#}"
         );
 
-        fs::write(
-            &path,
-            "#!/bin/sh\necho 'uv 0.12.8 (test 2026-09-03 x86_64-apple-darwin)'\n",
-        )
-        .expect("write wrong-target fake uv");
+        let path = directory.path().join("wrong-target-uv");
+        fake_uv(&path, "uv 0.12.8 (test 2026-09-03 x86_64-apple-darwin)");
         release.executable_sha256 = sha256_file(&path).expect("hash wrong-target fake uv");
+        let error = inspect_candidate(&path, Some(&release), UvSource::Managed)
+            .await
+            .unwrap_err();
         assert!(
-            inspect_candidate(&path, Some(&release), UvSource::Managed)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("expected aarch64-apple-darwin")
+            error.to_string().contains("expected aarch64-apple-darwin"),
+            "{error:#}"
         );
     }
 

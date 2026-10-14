@@ -29,6 +29,9 @@ def sha256(path):
 def prepare(args):
     stage = args.stage.resolve()
     stage.mkdir(parents=True, exist_ok=False)
+    # Create the output directory as the host user before manylinux's root
+    # container writes the wheel, so later host steps can export the release.
+    (args.output.resolve() / "wheels").mkdir(parents=True, exist_ok=True)
     for name in (
         "Cargo.toml",
         "Cargo.lock",
