@@ -155,6 +155,9 @@ Plugins declare owned pages, tools and documents. Providers prepare a complete
 catalog, then acknowledge the selected epoch before Core makes their entrance
 available. A failed acknowledgement remains a visible unavailable entrance;
 publication is not presented as a distributed atomic transaction.
+Each publication consumes health changes already included in its snapshot, so a
+completed reload does not trigger another cutover for the same failure. Health
+changes observed while that snapshot is being published schedule another update.
 
 Native Streamlit pages call business services through the SDK page bridge. MCP
 tools declare schemas and target business methods; the provider does not import

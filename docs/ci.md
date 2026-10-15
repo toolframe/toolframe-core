@@ -1,19 +1,21 @@
 # CI checks
 
 Ordinary CI validates Python distributions, PostgreSQL integration and four native
-launcher wheels. Publication is a separate manual workflow described in
-[releasing](releasing.md).
+launcher wheels, or promotes the matching successful validation bundle.
+Publication is a separate manual workflow described in [releasing](releasing.md).
 
 ## Validation workflows
 
 `ci.yml` runs on pull request source updates, pushes to `main`, and manual
 dispatch. Feature branch pushes do not start a second full validation alongside
 the PR. Before opening a PR, use manual dispatch when remote validation is needed.
-Release tags are validated by `publish.yml`.
+Release tags are checked by `publish.yml`, which promotes successful main CI
+artifacts for that exact commit or runs complete validation when reuse is unavailable.
 
 Branch policy, lint, formatting and applicable PR commit/title checks must pass
 in `quality.yml` before `validate.yml` can start. Publication applies the same
-quality gate after checking its release tag. Python integration and architecture
+quality gate after checking its release tag. Quality checks run even when an
+existing validation bundle is reused. Python integration and architecture
 tests run on macOS ARM64. The PostgreSQL job starts its own PostgreSQL 16 service
 and exercises Core journals, failure recovery and simultaneous SQLite/PostgreSQL
 workers.
@@ -29,6 +31,30 @@ inside the source-validation gate, so a title edit can update a required check
 without cancelling or repeating native builds. Configure both `CI result` and
 the standalone `PR policy` as required status checks; required checks are a
 repository setting, not enabled by these workflow files.
+
+## Reusing validated artifacts
+
+PR source updates run complete validation. A successful run seals the Python
+distributions, all four native wheel/release sets and their test evidence into
+`validated-release`, retained for 30 days. Main can promote a matching bundle
+from the same-repository PR merged as that commit. Manual publication can then
+promote the successful main CI bundle for the exact tag commit. Both promotions
+preserve the original package and executable bytes.
+
+Reuse requires the complete Git tree, package versions and dependency owner to
+match. The source run must belong to this repository's `ci.yml`, and its latest
+attempt must have completed successfully. GitHub artifact digests, producer
+commits, complete file hashes and installed-launcher evidence are verified.
+Fork PR artifacts are not promoted into main; main validates those changes afresh.
+An older green run cannot override a newer failed or incomplete validation.
+
+Missing, expired, corrupt or mismatched artifacts, or a lookup/download failure,
+select complete validation. No failed check becomes successful merely because
+reuse was attempted. Set `rebuild` in a manual CI/publication dispatch to force
+fresh checks and builds. Re-running all jobs also bypasses reuse. See the
+[artifact contract](artifacts.md) for provenance and publication recovery.
+
+## Dependency updates and build pins
 
 Dependabot batches Docker and GitHub Actions updates into separate version and
 security groups. Catch-all groups include major versions and use compliant

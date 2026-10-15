@@ -230,6 +230,46 @@ async def test_optional_provider_failure_keeps_business_running(host, tmp_path):
     assert (await host.status())["application"] == "degraded"
 
 
+@pytest.mark.parametrize("new_failure", [False, True])
+async def test_catalog_publication_consumes_only_observed_health_changes(
+    host, tmp_path, monkeypatch, new_failure
+):
+    source = fixture_source(tmp_path, "alpha")
+    assert (await operate(host, "add", source=str(source), enable=True))[
+        "status"
+    ] == "succeeded"
+    publications = []
+    observations = []
+    original_write = host.state.set_meta
+    original_probe = host.probe
+
+    async def write_meta(key, value):
+        if key == "catalog":
+            publications.append(value["epoch"])
+            if new_failure and len(publications) == 1:
+                # A distinct failure arrives while the selected snapshot is sent.
+                host.health_publication_pending = True
+        return await original_write(key, value)
+
+    async def probe(runtime, *args, **kwargs):
+        result = await original_probe(runtime, *args, **kwargs)
+        observations.append(runtime.observed)
+        return result
+
+    monkeypatch.setattr(host.state, "set_meta", write_meta)
+    monkeypatch.setattr(host, "probe", probe)
+    async with host.mutation:
+        host.health_publication_pending = True
+        if not new_failure:
+            # A completed lifecycle publication already includes the old failure.
+            await host.publish()
+    # Observe complete health cycles rather than guessing when a timer will fire.
+    await until(lambda: len(observations) >= 3)
+    assert len(publications) == (2 if new_failure else 1)
+    assert host.epoch == publications[-1]
+    assert not host.health_publication_pending
+
+
 async def test_business_health_and_expiry_are_separate_from_core_and_optional_readiness(
     host, tmp_path, monkeypatch
 ):

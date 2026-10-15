@@ -3,13 +3,19 @@ name: CI
 on:
   pull_request:
   push:
-    # publish.yml validates release tags in the publication run itself.
+    # Publication independently verifies/promotes the selected release tag.
     branches: [main]
   workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Run all checks and builds even if validated artifacts exist
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   pull-requests: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -22,6 +28,9 @@ jobs:
   validate:
     needs: quality
     uses: ./.github/workflows/validate.yml
+    with:
+      reuse-stage: ${{ github.ref == 'refs/heads/main' && 'main' || 'none' }}
+      rebuild: ${{ inputs.rebuild || false }}
     secrets: inherit
 
   result:

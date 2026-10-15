@@ -56,9 +56,14 @@ for `publish.yml`, choose `testpypi`, inspect that run, then select `pypi`.
 The tag must match both Python and Cargo versions. Branches and mismatched tags
 fail before validation.
 
-The workflow reruns validation at the tag, downloads exactly one Core wheel,
-one Core sdist and four native wheels from that run, then uploads each project's
-files in its own job. Both production uploads must succeed before publishing
+The workflow promotes the successful main CI bundle for the exact tag commit,
+verifying its source tree, versions, provenance and all file hashes. When no
+eligible bundle is available it runs complete validation at the tag; the manual
+`rebuild` input also forces fresh validation. The resulting `validated-release`
+bundle belongs to this publication run. Each upload job verifies it again and
+stages exactly one Core wheel and sdist, or all four native wheels. See the
+[artifact contract](artifacts.md) for the PR → main → release promotion rules.
+Both production uploads must succeed before publishing
 GitHub Release assets: four
 executable archives, manifests, checksums and the Intel macOS cryptography wheel.
 The companion reuses the verified bytes from the fixed Toolframe Release asset
@@ -82,9 +87,9 @@ the separate Container images workflow without re-uploading Python packages.
 
 PyPI files are immutable. If upload partially succeeds, inspect the accepted
 files before recovery; do not rebuild and blindly retry the same version.
-If only GitHub Release creation fails, recover it from the validated
-`launcher-release-*` artifacts of the same run and verify their checksums before
-publishing. Do not rerun package publication solely to repair release assets.
+If only GitHub Release creation fails, recover it from the `launcher-release-*`
+directories inside that run's `validated-release` bundle and verify their checksums
+before publishing. Do not rerun package publication solely to repair release assets.
 
 The CLI binaries are unsigned and not Apple-notarized. macOS 12+, Linux glibc
 2.28+, both CPU architectures, physical hardware and any emulation used for

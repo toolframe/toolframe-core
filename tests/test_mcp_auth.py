@@ -332,9 +332,10 @@ async def test_provider_failure_disable_reload_and_expiry_never_open_mcp(mcp_hos
         ]["credential_id"] == issued["key"]["id"]
         short = await key(host, expires_at=time.time() + 0.1)
         await asyncio.sleep(0.15)
-        assert (
-            await remote.post("/mcp", json={}, headers=bearer(short))
-        ).status_code == 401
+        expired = await remote.post("/mcp", json={}, headers=bearer(short))
+        assert expired.status_code == 401, expired.text
+        assert expired.json()["error"]["code"] == "invalid_credentials"
+        assert expired.headers["www-authenticate"] == 'Bearer error="invalid_token"'
     # Full host restart retains the credential store and configured protection.
     await host.close()
     from toolframe_core.host import Host
