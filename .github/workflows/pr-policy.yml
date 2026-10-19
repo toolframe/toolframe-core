@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.14.7'
-      - uses: commit-check/commit-check-action@a61779784a953fd9047c001c102cfeac5cf26964 # commit-check 2.18.3
+      - uses: commit-check/commit-check-action@bcbadb3fec596872bcae51074d8fdbea15c02ba5 # commit-check 2.18.3
         with:
           message: true
           branch: false
