@@ -15,7 +15,7 @@ demo-entry-register 0.3.1. Each repository owns its own tag, validation and
 `publish.yml`. Core's source-validation pins must point to the coordinated
 commits available under the trusted GitHub owner.
 
-Publish `toolframe-core==0.6.3` and `toolframe==0.6.3` together through Core's
+Publish `toolframe-core==0.6.4` and `toolframe==0.6.4` together through Core's
 workflow after those packages are available. Optional packages can follow:
 object-store-local 0.1.0, object-store-s3 0.1.0, mcp-auth 0.2.0, oidc-auth 0.2.0,
 storage-postgres 0.1.0, jobs 0.1.0, audit 0.1.0, backup 0.1.0 and testkit 0.1.0.
@@ -51,7 +51,7 @@ credentials; see [CI](ci.md).
 ## Validate and publish
 
 `ci.yml` validates Core's wheel/sdist, real PostgreSQL integration and native
-launcher wheels on four platforms. Publication is manual: select tag `v0.6.3`
+launcher wheels on four platforms. Publication is manual: select tag `v0.6.4`
 for `publish.yml`, choose `testpypi`, inspect that run, then select `pypi`.
 The tag must match both Python and Cargo versions. Branches and mismatched tags
 fail before validation.
@@ -102,7 +102,7 @@ Prepublication acceptance supplies matching local wheels explicitly. After all
 uploads and repository visibility changes, run in a fresh environment:
 
 ```sh
-uv tool install toolframe==0.6.3
+uv tool install toolframe==0.6.4
 toolframe --version
 toolframe --home ./release-check init --template entry-register
 toolframe --home ./release-check serve
@@ -110,7 +110,7 @@ toolframe --home ./release-check serve
 toolframe --home ./release-check open
 ```
 
-Repeat with `uvx --from toolframe==0.6.3 toolframe ...` and with the downloaded
+Repeat with `uvx --from toolframe==0.6.4 toolframe ...` and with the downloaded
 native archive. Compare the archive SHA-256 with `SHA256SUMS`. The automated
 consumer probe can be repeated without a test wheelhouse:
 

@@ -5,6 +5,13 @@ imply that its distributions have been published or every target is qualified.
 
 ## Unreleased
 
+## 0.6.4
+
+- Refresh the container runtime packages to include Debian
+  `libexpat1 2.9.0-1~deb13u1`, fixing six Expat security advisories in
+  the standard image. Both image variants retain the existing vulnerability
+  publication policy.
+
 ## 0.6.3
 
 - Apply container security updates, remove unused pip bootstrap dependencies and

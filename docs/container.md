@@ -13,11 +13,11 @@ Create a named volume, initialize an application and start the server:
 docker volume create toolframe-data
 docker run --rm --cap-drop ALL --security-opt no-new-privileges:true \
   -v toolframe-data:/data \
-  ghcr.io/toolframe/toolframe:0.6.3 init --template entry-register
+  ghcr.io/toolframe/toolframe:0.6.4 init --template entry-register
 docker run -d --name toolframe --restart unless-stopped \
   --cap-drop ALL --security-opt no-new-privileges:true \
   --stop-timeout 40 -p 127.0.0.1:9876:9876 -v toolframe-data:/data \
-  ghcr.io/toolframe/toolframe:0.6.3
+  ghcr.io/toolframe/toolframe:0.6.4
 ```
 
 Open `http://localhost:9876`. To obtain the management sign-in link:
@@ -39,8 +39,8 @@ follow the [network and access guidance](../README.md#lan-access).
 
 | Tag | Contents and intended use |
 | --- | --- |
-| `0.6.3` | Debian 13 slim, shell, Git, process tools and the Toolframe runtime. Supports Git plugin sources and interactive diagnosis. |
-| `0.6.3-distroless` | Google Distroless Debian 13 C/C++ runtime, Toolframe, uv, managed Python, Tini and the `ps` dependencies required by Core. No shell, Git or OS package manager. |
+| `0.6.4` | Debian 13 slim, shell, Git, process tools and the Toolframe runtime. Supports Git plugin sources and interactive diagnosis. |
+| `0.6.4-distroless` | Google Distroless Debian 13 C/C++ runtime, Toolframe, uv, managed Python, Tini and the `ps` dependencies required by Core. No shell, Git or OS package manager. |
 | `latest` | Standard image for the latest stable Core release. |
 | `distroless` | Distroless image for the latest stable Core release. |
 
@@ -51,7 +51,7 @@ and Python/Core preparation path. Base images and uv are pinned by
 multi-platform digest in the Dockerfile.
 
 To use Distroless, replace the image in both quick-start commands with
-`ghcr.io/toolframe/toolframe:0.6.3-distroless`. It retains uv because Toolframe
+`ghcr.io/toolframe/toolframe:0.6.4-distroless`. It retains uv because Toolframe
 uses it for plugin environments. Python wheels and compatible pure-Python builds
 work; Git sources, plugins invoking a shell, and native source builds needing
 compilers or missing system libraries require another image. Neither variant
