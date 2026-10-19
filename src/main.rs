@@ -23,10 +23,10 @@ fn tracing_requested(value: Option<&str>) -> Result<bool> {
 
 fn core_requirement(postgres: bool, tracing: bool) -> &'static str {
     match (postgres, tracing) {
-        (true, true) => "toolframe-core[postgres,tracing]==0.6.3",
-        (true, false) => "toolframe-core[postgres]==0.6.3",
-        (false, true) => "toolframe-core[tracing]==0.6.3",
-        (false, false) => "toolframe-core==0.6.3",
+        (true, true) => "toolframe-core[postgres,tracing]==0.6.4",
+        (true, false) => "toolframe-core[postgres]==0.6.4",
+        (false, true) => "toolframe-core[tracing]==0.6.4",
+        (false, false) => "toolframe-core==0.6.4",
     }
 }
 
@@ -270,18 +270,18 @@ mod tests {
 
     #[test]
     fn runtime_profiles_select_only_the_requested_extras() {
-        assert_eq!(core_requirement(false, false), "toolframe-core==0.6.3");
+        assert_eq!(core_requirement(false, false), "toolframe-core==0.6.4");
         assert_eq!(
             core_requirement(false, true),
-            "toolframe-core[tracing]==0.6.3"
+            "toolframe-core[tracing]==0.6.4"
         );
         assert_eq!(
             core_requirement(true, false),
-            "toolframe-core[postgres]==0.6.3"
+            "toolframe-core[postgres]==0.6.4"
         );
         assert_eq!(
             core_requirement(true, true),
-            "toolframe-core[postgres,tracing]==0.6.3"
+            "toolframe-core[postgres,tracing]==0.6.4"
         );
     }
 }
