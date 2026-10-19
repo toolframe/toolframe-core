@@ -7,7 +7,7 @@
 Toolframe is a persistent local control host for replaceable Python plugins.
 Core owns composition, immutable package environments, worker lifecycles,
 management operations and a durable Core journal. SQLite (`data/core.sqlite`) is
-the default; Core 0.6 also supports a dedicated PostgreSQL database through runtime
+the default; Core 0.7 also supports a dedicated PostgreSQL database through runtime
 environment configuration. Dashboard, MCP, llms.txt, business
 storage and Entry Register are independently packaged plugins.
 
@@ -366,8 +366,8 @@ the exit code.
 | --- | --- |
 | `toolframe-core` | Persistent FastAPI/Cordis control host, gateway and thin Rust launcher. |
 | `toolframe-sdk` | Public definitions, worker protocol, services, resources and scoped clients. |
-| `toolframe-storage-sqlite` | Local owner databases, SQL authorization, transactions, receipts and migrations. |
-| `toolframe-storage-postgres` | External plugin stores, provisioning, restricted roles, migrations and database backups. |
+| `toolframe-sql-sqlite` | Local owner databases, SQL authorization, transactions, receipts and migrations. |
+| `toolframe-sql-postgres` | External plugin stores, provisioning, restricted roles, migrations and database backups. |
 | `toolframe-streamlit-dashboard` | Native Streamlit pages, shared navigation and management UI. |
 | `toolframe-fastmcp` | MCP tools and Streamable HTTP transport. |
 | `toolframe-llms-txt` | Index composition and explicitly packaged Markdown assets. |

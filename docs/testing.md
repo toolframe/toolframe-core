@@ -29,8 +29,8 @@ provider wheels, so it can run from a worktree without sibling source checkouts.
 Use a prepared Core development environment and matching wheels:
 
 ```sh
-TOOLFRAME_SDK_WHEEL=/path/to/toolframe_sdk-0.3.0-py3-none-any.whl \
-TOOLFRAME_STORAGE_SQLITE_WHEEL=/path/to/toolframe_storage_sqlite-0.3.1-py3-none-any.whl \
+TOOLFRAME_SDK_WHEEL=/path/to/toolframe_sdk-0.4.0-py3-none-any.whl \
+TOOLFRAME_STORAGE_SQLITE_WHEEL=/path/to/toolframe_sql_sqlite-0.4.0-py3-none-any.whl \
 .venv/bin/python -m pytest -q \
   tests/test_maintenance.py::test_real_core_sqlite_business_shutdown_has_public_inventory
 ```

@@ -47,7 +47,7 @@ rather than rely on ordering of stores or environment locks.
 | `application_name` | The composition's display name. |
 | `composition_revision` | SHA256 of the current `toolframe.toml`, matching the lock and the journal's last applied desired revision. |
 | `files` | Array of `{path, role, size, mode, sha256}` for regular files to snapshot. `size` is bytes; `mode` is an integer permission bitmask. `sha256` is the verified digest for required immutable artifacts, otherwise `null`. |
-| `stores` | Array of `{path, owner, provider}`. Core uses `owner: null, provider: "core"`; supported business stores identify their plugin owner and `"storage-sqlite"` provider. |
+| `stores` | Array of `{path, owner, provider}`. Core uses `owner: null, provider: "core"`; supported business stores identify their plugin owner and `"sql-sqlite"` provider. |
 | `retained_keys` | Array of `{path, owner, name}` identifying credential files to retain. `owner` is `null` for the management token and undeclared retained key files. No key contents or key hashes are returned. |
 | `dependency_wheels` | Array of `{environment_id, distribution, version, filename, sha256, path}` for recorded dependency wheels. A local `path` is verified against its locked hash; `path: null` is an explicit dependency rehydration prerequisite. |
 | `environment_locks` | Array of `{candidate_id, purpose, environment_id, sha256, python_version, python_implementation, platform_system, platform_machine, requires_python}`. `purpose` is `"backend"` or `"ui"`; the digest identifies the recorded lock text. Interpreter metadata comes from the source environment's regular `pyvenv.cfg`. `python_version` preserves its known precision: `"3.14"` means the source patch version is unknown, while `"3.14.7"` records a full version. Platform fields describe the local source inspection host. |
@@ -87,7 +87,7 @@ environments without importing Core's private journal layout.
 ## Supported state and refusal cases
 
 Format 1 supports local SQLite Core state, business stores managed by the standard
-`storage-sqlite` provider, and regular files within the application home. It
+`sql-sqlite` provider, and regular files within the application home. It
 validates SQLite integrity and business-store application/owner identities with
 read-only immutable connections. It requires an initialized Core schema version
 1 or 2 and the composition lock recorded by that journal. It never adopts a new

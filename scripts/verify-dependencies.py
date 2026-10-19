@@ -124,7 +124,7 @@ def main():
             for edge in graph["edges"]
         )
         assert any(
-            edge["source"] == "entry-register" and edge["target"] == "storage-sqlite"
+            edge["source"] == "entry-register" and edge["target"] == "sql-sqlite"
             for edge in graph["edges"]
         )
         assert {
@@ -144,7 +144,7 @@ def main():
         )
 
         for name, action in (
-            ("storage-sqlite", "reload"),
+            ("sql-sqlite", "reload"),
             ("entry-register", "disable"),
         ):
             plan = operation("plan", {"id": name, "action": action})

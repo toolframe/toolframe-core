@@ -680,7 +680,7 @@ class Host:
                 )
             proposed = {**(await self.selected()), name: candidate}
             graph = Graph(proposed, self.composition.bindings)
-            storage = self._storage_runtime(name, graph=graph)
+            storage = self._sql_runtime(name, graph=graph)
             plan = await self._migration_plan(storage, name, schema)
             if action == "migrate-plan":
                 (
@@ -833,7 +833,7 @@ class Host:
                         "status": "blocked",
                         "reason": "Storage provider is unavailable",
                     }
-                    blockers.setdefault(name, []).append("live_storage_history")
+                    blockers.setdefault(name, []).append("live_sql_history")
             stage = "dashboard_environment"
             stages[stage] = {"status": "skipped", "reason": "No Dashboard provider"}
             dashboard = graph.providers.get("dashboard")
@@ -897,7 +897,7 @@ class Host:
         for name, definition in self.graph.definitions.items():
             if definition.store and name in self.runtimes:
                 schemas[name] = await self.admin(
-                    self._storage_runtime(name), "inspect", {"owner": name}
+                    self._sql_runtime(name), "inspect", {"owner": name}
                 )
         return {
             "revision": self.config.revision,
@@ -979,11 +979,11 @@ class Host:
         (await self.state.set_meta(f"plan/{result['plan_id']}", result))
         return result
 
-    def _storage_runtime(self, owner, *, graph=None):
+    def _sql_runtime(self, owner, *, graph=None):
         provider = (graph or self.graph).stores.get(owner)
         if not provider or provider not in self.runtimes:
             raise PluginError(
-                "storage_unavailable",
+                "sql_unavailable",
                 "The owner's declared storage provider must be active",
             )
         self.stores.check(owner, provider)
@@ -1002,7 +1002,7 @@ class Host:
         return await storage.worker.request(
             "runtime.invoke",
             {
-                "service": "toolframe.storage.admin",
+                "service": "toolframe.sql.admin",
                 "method": method,
                 "params": params,
                 "context": {
@@ -1107,7 +1107,7 @@ class Host:
         store_exists = None
         if definition.private_secrets and definition.store:
             observed_store = await self.admin(
-                self._storage_runtime(name), "inspect", {"owner": name}
+                self._sql_runtime(name), "inspect", {"owner": name}
             )
             store_exists = observed_store["exists"]
         private_secrets = self.access.private_secrets(
@@ -1115,7 +1115,7 @@ class Host:
         )
         if definition.store:
             await self.change_schema(
-                self._storage_runtime(name),
+                self._sql_runtime(name),
                 "ensure_store",
                 {"owner": name, "schema": definition.store.model_dump()},
             )
@@ -1127,7 +1127,7 @@ class Host:
                 "config": candidate["config"],
                 "private_secrets": private_secrets,
                 "state_directory": str(self.home / "data/plugins")
-                if definition.provider_kind == "storage"
+                if definition.provider_kind == "sql"
                 else str(self.home / "data/objects" / name)
                 if definition.provider_kind == "object-store"
                 else None,
@@ -1510,7 +1510,7 @@ class Host:
                 and replacement.stores.get(name) in self.runtimes
             ):
                 plan = await self.admin(
-                    self._storage_runtime(name, graph=replacement),
+                    self._sql_runtime(name, graph=replacement),
                     "plan",
                     {"owner": name, "schema": definition.store.model_dump()},
                 )
@@ -1577,7 +1577,7 @@ class Host:
         try:
             if migration:
                 (await self.phase(operation, "migrating"))
-                storage = self._storage_runtime(migration["owner"], graph=replacement)
+                storage = self._sql_runtime(migration["owner"], graph=replacement)
                 result = await self.change_schema(storage, "apply", migration)
                 (await self.phase(operation, "migration_committed", result))
             self.graph = replacement
@@ -1869,7 +1869,7 @@ class Host:
             failure = None
             for runtime in root.runtimes.values():
                 if (
-                    runtime.candidate["definition"].get("provider_kind") == "storage"
+                    runtime.candidate["definition"].get("provider_kind") == "sql"
                     and runtime.worker.process.returncode is None
                 ):
                     try:
@@ -2211,7 +2211,7 @@ class Host:
                     "undeclared_dependency", "Dependency alias was not bound"
                 )
             target, service = binding
-            if service == "toolframe.storage.admin":
+            if service == "toolframe.sql.admin":
                 raise PluginError(
                     "forbidden", "Storage administrative interface is host-only"
                 )

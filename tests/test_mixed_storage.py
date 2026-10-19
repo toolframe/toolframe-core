@@ -15,8 +15,8 @@ from toolframe_sdk import PluginError
 from toolframe_core.config import atomic_write
 from toolframe_core.host import Host
 
-SQL = "toolframe.storage.sql"
-PROVIDERS = {"alpha": "storage-sqlite", "beta": "storage-postgres"}
+SQL = "toolframe.sql"
+PROVIDERS = {"alpha": "sql-sqlite", "beta": "sql-postgres"}
 
 
 def portable_store(directory, name, *, revision=1):
@@ -54,10 +54,10 @@ async def mixed(host, tmp_path, monkeypatch):
     if not admin:
         pytest.skip("Set TOOLFRAME_CORE_TEST_ADMIN_DSN for mixed SQL worker tests")
     psycopg = pytest.importorskip("psycopg")
-    pytest.importorskip("toolframe_storage_postgres")
+    pytest.importorskip("toolframe_sql_postgres")
     from psycopg import sql
-    from toolframe_storage_postgres.config import names
-    from toolframe_storage_postgres.provision import provision
+    from toolframe_sql_postgres.config import names
+    from toolframe_sql_postgres.provision import provision
 
     database = "tf_mixed_" + uuid.uuid4().hex
     application = host.composition.application.id
@@ -68,12 +68,12 @@ async def mixed(host, tmp_path, monkeypatch):
     try:
         composition = host.composition.model_copy(deep=True)
         composition.bindings = {
-            SQL: "storage-postgres",
-            "alpha/storage": "storage-sqlite",
+            SQL: "sql-postgres",
+            "alpha/sql": "sql-sqlite",
         }
         atomic_write(host.config.path, tomlkit.dumps(composition.model_dump()))
         workspace = Path(__file__).resolve().parents[2]
-        for provider in ("storage-sqlite", "storage-postgres"):
+        for provider in ("sql-sqlite", "sql-postgres"):
             result = await operate(
                 host,
                 "add",
@@ -121,10 +121,10 @@ async def test_mixed_routing_isolation_drain_disable_and_retained_restart(
         )
         assert await read(host, owner) == [{"id": 1, "label": owner}]
     assert await read(host, "gamma") == []
-    assert host.graph.stores == {**PROVIDERS, "gamma": "storage-postgres"}
+    assert host.graph.stores == {**PROVIDERS, "gamma": "sql-postgres"}
     assert (await host.status())["stores"]["beta"][
         "retained_provider"
-    ] == "storage-postgres"
+    ] == "sql-postgres"
     for owner, provider in PROVIDERS.items():
         other = "beta" if owner == "alpha" else "alpha"
         old = {name: runtime.generation for name, runtime in host.runtimes.items()}
@@ -175,7 +175,7 @@ async def test_mixed_routing_isolation_drain_disable_and_retained_restart(
             "drained",
         ]
         composition = restarted.composition.model_copy(deep=True)
-        composition.bindings["alpha/storage"] = "storage-postgres"
+        composition.bindings["alpha/sql"] = "sql-postgres"
         atomic_write(restarted.config.path, tomlkit.dumps(composition.model_dump()))
         failed = await operate(restarted, "apply")
         assert failed["error"]["code"] == "store_rebind_required", failed
@@ -189,8 +189,8 @@ async def test_mixed_routing_isolation_drain_disable_and_retained_restart(
         assert not restarted.runtimes
         assert (await restarted.status())["stores"]["alpha"][
             "retained_provider"
-        ] == "storage-sqlite"
-        composition.bindings["alpha/storage"] = "storage-sqlite"
+        ] == "sql-sqlite"
+        composition.bindings["alpha/sql"] = "sql-sqlite"
         atomic_write(restarted.config.path, tomlkit.dumps(composition.model_dump()))
         assert (await operate(restarted, "apply"))["status"] == "succeeded"
         assert (await read(restarted, "alpha"))[0]["label"] == "alpha"

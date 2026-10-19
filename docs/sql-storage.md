@@ -1,23 +1,23 @@
 # Multiple SQL storage providers
 
 One application can run SQLite and PostgreSQL storage providers together. Each
-plugin owns one managed store and continues to use the SDK's `context.storage()`
+plugin owns one managed store and continues to use the SDK's `context.sql()`
 client. The Core journal is configured separately; see
 [PostgreSQL Core state](postgresql-state.md).
 
 ## Configure a fresh composition
 
 Install both providers, then choose bindings before enabling store-owning plugins.
-For example, with `storage-sqlite` and `storage-postgres` enabled:
+For example, with `sql-sqlite` and `sql-postgres` enabled:
 
 ```toml
 [bindings]
-"toolframe.storage.sql" = "storage-postgres"
-"entry-register/storage" = "storage-sqlite"
+"toolframe.sql" = "sql-postgres"
+"entry-register/sql" = "sql-sqlite"
 ```
 
 The service binding selects PostgreSQL by default. The `plugin-id/alias` binding
-overrides it for Entry Register's `storage` requirement. Auth and other consumers
+overrides it for Entry Register's `sql` requirement. Auth and other consumers
 without overrides use PostgreSQL. Provision every PostgreSQL owner and inject its
 runtime credentials before starting the host, following that provider's setup
 guide. SQLite needs no external server. Both providers use SQL service version 1.
@@ -45,18 +45,18 @@ Keep the SQLite service default and override only new PostgreSQL store owners:
 
 ```toml
 [bindings]
-"toolframe.storage.sql" = "storage-sqlite"
-"orders/storage" = "storage-postgres"
+"toolframe.sql" = "sql-sqlite"
+"orders/sql" = "sql-postgres"
 ```
 
-Here `orders` is an example new plugin ID and `storage` is its SQL requirement
+Here `orders` is an example new plugin ID and `sql` is its SQL requirement
 alias. Use the names declared by the plugin you are installing.
 
 1. Back up the application home and its existing stores. Add the bindings while
    the original SQLite provider remains enabled.
 2. Provision the new PostgreSQL owner, supply its runtime environment, and install
    and enable the PostgreSQL provider before enabling that owner.
-3. Review `plan` and confirm that existing owners retain `storage-sqlite`. Apply
+3. Review `plan` and confirm that existing owners retain `sql-sqlite`. Apply
    the reviewed composition, then verify the new plugin through its public service.
 
 The existing SQLite data stays in its original stores. If PostgreSQL should later
@@ -94,7 +94,7 @@ replacement operations. See the [architecture contract](architecture.md#data-own
 
 ## Plugin and lifecycle limits
 
-A managed store must declare a required `toolframe.storage.sql` dependency. All
+A managed store must declare a required `toolframe.sql` dependency. All
 SQL aliases in one plugin must resolve to the same provider. SQL consumers must
 target a storage provider. Plugins needing another owner's data call its service.
 

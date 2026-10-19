@@ -7,7 +7,7 @@ description: Load when designing, creating, or extending a Toolframe business pl
 # Toolframe plugin design
 
 Turn the user's business outcome into an independently packaged Toolframe plugin.
-This skill targets Toolframe Core 0.6.1 and SDK 0.3. The attached references and
+This skill targets Toolframe Core 0.7.0 and SDK 0.4. The attached references and
 starter travel with the application; a Toolframe source checkout is optional.
 
 ## Establish the design

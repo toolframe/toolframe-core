@@ -71,10 +71,8 @@ def snapshot(graph, *, known=None, rows=None, bindings=None, cordis=()):
 
 def test_impacts_use_planner_and_separate_optional_and_shared_presentations():
     candidates = {
-        "storage": candidate("storage", provider="storage"),
-        "auth": candidate(
-            "auth", requires={"db": Requirement(service="storage.service")}
-        ),
+        "sql": candidate("sql", provider="sql"),
+        "auth": candidate("auth", requires={"db": Requirement(service="sql.service")}),
         "passwords": candidate(
             "passwords",
             requires={"auth": Requirement(service="auth.service")},
@@ -83,7 +81,7 @@ def test_impacts_use_planner_and_separate_optional_and_shared_presentations():
         "dashboard": candidate("dashboard", provider="dashboard"),
         "optional": candidate(
             "optional",
-            requires={"db": Requirement(service="storage.service", optional=True)},
+            requires={"db": Requirement(service="sql.service", optional=True)},
         ),
         "optional-auth": candidate(
             "optional-auth",
@@ -97,21 +95,17 @@ def test_impacts_use_planner_and_separate_optional_and_shared_presentations():
     assert candidates == before  # A diagnostic cannot prepare or modify candidates.
     assert "never-publish-this" not in str(report)
     for action in ("reload", "disable"):
-        result = report["impacts"]["storage"][action]
+        result = report["impacts"]["sql"][action]
         replacement = (
             graph
             if action == "reload"
             else Graph(
-                {
-                    name: value
-                    for name, value in candidates.items()
-                    if name != "storage"
-                },
+                {name: value for name, value in candidates.items() if name != "sql"},
                 {},
             )
         )
-        assert result["affected"] == sorted(graph.affected(replacement, {"storage"}))
-        assert result["affected"] == ["auth", "dashboard", "passwords", "storage"]
+        assert result["affected"] == sorted(graph.affected(replacement, {"sql"}))
+        assert result["affected"] == ["auth", "dashboard", "passwords", "sql"]
         assert result["required_dependents"] == ["auth", "passwords"]
         assert result["presentation_providers"] == ["dashboard"]
         assert result["optional_consumers"] == ["optional", "optional-auth"]
@@ -152,12 +146,12 @@ def test_selected_definition_wins_over_new_candidate_and_cordis_supplies_state()
 
 def test_disabled_supplier_missing_optional_and_absent_presentation_are_visible():
     known = {
-        "storage": candidate("storage", provider="storage"),
+        "sql": candidate("sql", provider="sql"),
         "app": candidate(
             "app",
             resources=(page(),),
             requires={
-                "store": Requirement(service="storage.service"),
+                "store": Requirement(service="sql.service"),
                 "optional": Requirement(service="remote.service", optional=True),
             },
         ),
@@ -169,19 +163,19 @@ def test_disabled_supplier_missing_optional_and_absent_presentation_are_visible(
         known=known,
         rows=[
             row("app", healthy=False, state="blocked"),
-            row("storage", enabled=False, healthy=False),
+            row("sql", enabled=False, healthy=False),
             row("disabled-page", enabled=False, healthy=False),
         ],
     )
     nodes = {node["id"]: node for node in report["nodes"]}
-    assert nodes["storage"]["state"] == "disabled"
-    assert nodes["storage"]["definition_source"] == "last_candidate"
+    assert nodes["sql"]["state"] == "disabled"
+    assert nodes["sql"]["definition_source"] == "last_candidate"
     assert nodes["requirement:app:optional"]["state"] == "missing"
     assert nodes["provider:dashboard"]["state"] == "missing"
     assert len(nodes) == len(report["nodes"])
     assert set(report["impacts"]) == {"app"}
     assert any(
-        edge["target"] == "storage" and edge["state"] == "missing"
+        edge["target"] == "sql" and edge["state"] == "missing"
         for edge in report["edges"]
     )
     assert any(

@@ -1,6 +1,6 @@
 # Dashboard access and authorization
 
-Core 0.6.1 / SDK 0.3 use explicit scopes. The Entry Register template installs and
+Core 0.7.0 / SDK 0.4 use explicit scopes. The Entry Register template installs and
 enables `toolframe-auth` and `toolframe-dashboard-auth`. An empty
 `init` remains empty. Updating a binary alone never adds these plugins to an
 existing application's composition.
@@ -35,14 +35,14 @@ dashboard_auth = "dashboard-auth"
 failure_mode = "closed"   # new applications keep protected access closed during outages
 
 [plugins.auth]
-source = "pypi:toolframe-auth==0.2.0"
+source = "pypi:toolframe-auth==0.3.0"
 enabled = true
 [plugins.auth.config]
 session_max_seconds = 604800
 session_idle_seconds = 86400
 
 [plugins.dashboard-auth]
-source = "pypi:toolframe-dashboard-auth==0.1.3"
+source = "pypi:toolframe-dashboard-auth==0.2.0"
 enabled = true
 ```
 
@@ -53,7 +53,7 @@ Choose **Deny protected business access** for confidential applications. The
 **Access by entrance** panel shows effective/configured Dashboard and MCP policies,
 local-control authority and declared public HTTP methods. A declaration may be
 unavailable when its plugin is stopped; it is not a credential-protected endpoint.
-The failure-policy editor requires Core 0.6.1 and Dashboard Auth 0.1.3.
+The failure-policy editor requires Core 0.7.0 and Dashboard Auth 0.2.0.
 
 If a first-password operation commits its record but the
 composition changed concurrently, its response includes the one-time secret,
@@ -100,7 +100,7 @@ admission. Healthy reload/restart retains eligible sessions, not Streamlit memor
 
 ## Failure and recovery
 
-New applications created with Core 0.6.1 write `access.failure_mode="closed"`.
+New applications created with Core 0.7.0 write `access.failure_mode="closed"`.
 Templates receive this value only when they omit it; an explicit template choice
 is preserved. When a protected auth provider or Dashboard Auth integration fails
 or is disabled, closed policy makes protected business access unavailable (HTTP
@@ -143,9 +143,9 @@ secrets never enter management operation history or exported composition.
 All plugins now require `AuthorizationSpec`, explicit method `audience`, method
 scopes for business/system APIs and page scopes. Legacy packages fail validation;
 there is no synthetic whole-plugin permission. Update custom definitions using
-the bundled skill's `references/plugin-api.md` and SDK 0.3. Validate the matching
-provider wheels before applying the reviewed composition together. Auth 0.2.0
-and Dashboard Auth 0.1.3 support the flows described here. Keep the old executable/composition for rollback
+the bundled skill's `references/plugin-api.md` and SDK 0.4. Validate the matching
+provider wheels before applying the reviewed composition together. Auth 0.3.0
+and Dashboard Auth 0.2.0 support the flows described here. Keep the old executable/composition for rollback
 until the new packages validate; ordinary business databases keep their schemas.
 
 An upgraded composition without `[access]` adopts public business access once its
@@ -157,8 +157,8 @@ still apply. Generated `plugins/` business source is never overwritten.
 After compatible storage and presentation providers are installed and Core is running:
 
 ```sh
-toolframe --home APP plugin add pypi:toolframe-auth==0.2.0 --enable
-toolframe --home APP plugin add pypi:toolframe-dashboard-auth==0.1.3 --enable
+toolframe --home APP plugin add pypi:toolframe-auth==0.3.0 --enable
+toolframe --home APP plugin add pypi:toolframe-dashboard-auth==0.2.0 --enable
 ```
 
 The standard binary supplies these wheels. Open **Access passwords** through the

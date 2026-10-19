@@ -128,7 +128,7 @@ build-backend = "hatchling.build"
 name = "toolframe-fixture"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = ["toolframe-sdk==0.3.0"]
+dependencies = ["toolframe-sdk==0.4.0"]
 [project.entry-points."toolframe.plugins"]
 fixture = "fixture:plugin"
 [tool.hatch.build.targets.wheel]
@@ -221,7 +221,7 @@ async def test_external_state_rejects_scratch_validation_before_worker_start(tmp
     definition = PluginDefinition(
         id="external-storage",
         kind="provider",
-        provider_kind="storage",
+        provider_kind="sql",
         factory="external:Provider",
         authorization=AuthorizationSpec(),
         runtime_validation="separate_application",

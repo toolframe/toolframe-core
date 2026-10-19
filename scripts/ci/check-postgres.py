@@ -13,7 +13,7 @@ def main():
         )
     if importlib.util.find_spec("psycopg") is None:
         raise SystemExit("Install the Core postgres extra before running this check")
-    if importlib.util.find_spec("toolframe_storage_postgres") is None:
+    if importlib.util.find_spec("toolframe_sql_postgres") is None:
         raise SystemExit(
             "Install the pinned PostgreSQL storage provider before running this check"
         )

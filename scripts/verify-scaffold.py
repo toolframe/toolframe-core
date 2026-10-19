@@ -40,7 +40,7 @@ def main():
 
     def run(*arguments, expected=0, structured=True):
         completed = subprocess.run(
-            [str(binary), *map(str, arguments)],
+            [str(binary), "--wheelhouse", str(wheels), *map(str, arguments)],
             env=environment,
             cwd=root,
             stdin=subprocess.DEVNULL,
@@ -194,7 +194,7 @@ def main():
     assert inventory(source) == before
     local_wheels = root / "wheelhouse"
     local_wheels.mkdir()
-    for name in ("toolframe_sdk", "toolframe_storage_sqlite"):
+    for name in ("toolframe_core", "toolframe_sdk", "toolframe_sql_sqlite"):
         for wheel in wheels.glob(f"{name}-*.whl"):
             shutil.copy2(wheel, local_wheels / wheel.name)
     configuration = home / "toolframe.toml"
@@ -237,7 +237,7 @@ def main():
                 after["plugins"] == [] and after["operations"] == status["operations"]
             )
             assert configuration.read_bytes() == composition_before
-            storage = next(local_wheels.glob("toolframe_storage_sqlite-*.whl"))
+            storage = next(local_wheels.glob("toolframe_sql_sqlite-*.whl"))
             run("--home", home, "plugin", "add", storage, "--enable", "--json")
             added = run("--home", home, "plugin", "add", plugin_wheel, "--json")
             assert added["status"] == "succeeded"

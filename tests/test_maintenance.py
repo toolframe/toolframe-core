@@ -171,7 +171,7 @@ def business_store(home, owner="notes", *, application_id=None):
         database.execute(
             "INSERT INTO _toolframe_identity VALUES(?,?)", (owner, application_id)
         )
-    metadata(home, "store_bindings", {owner: "storage-sqlite"})
+    metadata(home, "store_bindings", {owner: "sql-sqlite"})
     return path
 
 
@@ -248,7 +248,7 @@ async def test_real_core_sqlite_business_shutdown_has_public_inventory(tmp_path)
                 host,
                 "add",
                 source=str(Path(sqlite_wheel).expanduser().resolve()),
-                id="storage-sqlite",
+                id="sql-sqlite",
                 enable=True,
             )
             assert result["status"] == "succeeded", result
@@ -276,7 +276,7 @@ async def test_real_core_sqlite_business_shutdown_has_public_inventory(tmp_path)
         assert inventory.status == "STOPPED"
         assert {(item.owner, item.provider) for item in inventory.stores} == {
             (None, "core"),
-            ("maintenance-store", "storage-sqlite"),
+            ("maintenance-store", "sql-sqlite"),
         }
         assert len(inventory.environment_locks) == 2
         direct = [
@@ -287,7 +287,7 @@ async def test_real_core_sqlite_business_shutdown_has_public_inventory(tmp_path)
         ]
         assert {item["name"] for item in direct} >= {
             "toolframe-sdk",
-            "toolframe-storage-sqlite",
+            "toolframe-sql-sqlite",
             "fixture-maintenance-store",
         }
         assert all(
@@ -411,9 +411,9 @@ def test_active_runtime_without_owner_marker_is_uncertain(home):
 def test_layout_artifacts_business_identity_and_secret_redaction(home):
     install(
         home,
-        "storage-sqlite",
-        provider_kind="storage",
-        factory="toolframe_storage_sqlite.plugin:SqliteProvider",
+        "sql-sqlite",
+        provider_kind="sql",
+        factory="toolframe_sql_sqlite.plugin:SqliteProvider",
     )
     install(home, secrets=("lookup",))
     business_store(home)
@@ -461,7 +461,7 @@ def test_remote_dependency_is_explicit_rehydration_prerequisite(home):
 
 @pytest.mark.parametrize("external", [False, True])
 def test_external_provider_is_refused_even_if_disabled(home, external):
-    install(home, "storage-postgres", provider_kind="storage", external=external)
+    install(home, "sql-postgres", provider_kind="sql", external=external)
     expect_failure(home, "maintenance_external_state")
 
 
@@ -524,9 +524,9 @@ def test_required_local_artifact_is_verified(home, damage):
 def test_business_store_identity_and_missing_key_are_refused(home):
     install(
         home,
-        "storage-sqlite",
-        provider_kind="storage",
-        factory="toolframe_storage_sqlite.plugin:SqliteProvider",
+        "sql-sqlite",
+        provider_kind="sql",
+        factory="toolframe_sql_sqlite.plugin:SqliteProvider",
     )
     install(home, secrets=("lookup",))
     store = business_store(home, application_id="another-application")
@@ -631,8 +631,8 @@ def test_non_store_attachments_remain_snapshot_files(home):
 def test_unapplied_composition_cannot_bypass_external_state_detection(home):
     config = ConfigFile(home)
     composition, _ = config.read()
-    composition.plugins["storage-postgres"] = PluginRequest(
-        source="pypi:toolframe-storage-postgres==0.1.0", enabled=True
+    composition.plugins["sql-postgres"] = PluginRequest(
+        source="pypi:toolframe-sql-postgres==0.2.0", enabled=True
     )
     atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
     expect_failure(home, "maintenance_recovery_required")
@@ -777,7 +777,7 @@ def test_direct_archive_cannot_bypass_captured_wheel_safety(home, damage, code):
 
 
 def test_unknown_external_provider_kind_and_separate_application_are_refused(home):
-    candidate = install(home, "objects", provider_kind="storage")
+    candidate = install(home, "objects", provider_kind="sql")
     candidate["definition"]["provider_kind"] = "object-store"
     update_candidate(home, candidate)
     expect_failure(home, "maintenance_external_state")
@@ -1079,7 +1079,7 @@ def test_recorded_semantic_composition_corruption_is_refused(home, section):
     if section == "application":
         recorded[section]["name"] = "different application name"
     elif section == "bindings":
-        recorded[section]["notes/storage"] = "external-storage"
+        recorded[section]["notes/sql"] = "external-storage"
     elif section == "runtime":
         recorded[section]["drain_timeout"] += 1
     elif section == "packages":
@@ -1149,9 +1149,9 @@ def test_current_composition_plugin_without_candidate_is_refused(home):
 def test_ghost_retained_store_owner_is_refused_despite_matching_database_identity(home):
     install(
         home,
-        "storage-sqlite",
-        provider_kind="storage",
-        factory="toolframe_storage_sqlite.plugin:SqliteProvider",
+        "sql-sqlite",
+        provider_kind="sql",
+        factory="toolframe_sql_sqlite.plugin:SqliteProvider",
     )
     business_store(home, owner="ghost")
     expect_failure(home, "maintenance_external_state")

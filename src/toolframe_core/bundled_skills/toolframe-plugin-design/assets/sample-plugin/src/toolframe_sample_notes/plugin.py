@@ -52,7 +52,7 @@ plugin = PluginDefinition(
             "sample-notes.write": ScopeSpec(title="Capture notes"),
         }
     ),
-    requires={"storage": Requirement(service="toolframe.storage.sql")},
+    requires={"sql": Requirement(service="toolframe.sql")},
     services={
         SERVICE: ServiceSpec(
             methods={

@@ -5,6 +5,14 @@ imply that its distributions have been published or every target is qualified.
 
 ## Unreleased
 
+## 0.7.0
+
+- Rename the SQL providers to `toolframe-sql-sqlite` and `toolframe-sql-postgres`,
+  with plugin IDs `sql-sqlite` and `sql-postgres`.
+- Adopt SDK 0.4's `RuntimeContext.sql()`, `SqlClient`, and `toolframe.sql` service
+  contract throughout Core, templates, and plugin documentation. Install the
+  matching SDK 0.4-compatible plugin releases together.
+
 ## 0.6.4
 
 - Refresh the container runtime packages to include Debian

@@ -279,8 +279,8 @@ def main():
                                 != by_id(status)["entry-register"]
                             )
                             assert (
-                                by_id(after)["storage-sqlite"]
-                                == by_id(status)["storage-sqlite"]
+                                by_id(after)["sql-sqlite"]
+                                == by_id(status)["sql-sqlite"]
                             )
                             outcome["reload"] = op
                             outcome["after_reload"] = {

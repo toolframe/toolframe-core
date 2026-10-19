@@ -1,9 +1,9 @@
 # PostgreSQL Core state
 
-Core 0.6 can keep its management journal in PostgreSQL instead of `data/core.sqlite`.
+Core 0.7 can keep its management journal in PostgreSQL instead of `data/core.sqlite`.
 The journal contains candidates, selected plugin versions, operation history,
 idempotency keys and recovery metadata. It is independent of the optional
-`storage-postgres` plugin, which owns business and authentication data.
+`sql-postgres` plugin, which owns business and authentication data.
 
 Use one Core process per application, Python 3.14+, and PostgreSQL 16+. SQLite is
 the default and keeps its existing schema history. PostgreSQL uses a **dedicated
@@ -15,7 +15,7 @@ business databases. Do not provision Core tables in a business-provider database
 Install the coordinated Core release with its optional driver:
 
 ```sh
-pip install 'toolframe-core[postgres]==0.6.4'
+pip install 'toolframe-core[postgres]==0.7.0'
 toolframe-core --home ./app init
 ```
 

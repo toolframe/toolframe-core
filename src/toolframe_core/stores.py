@@ -24,7 +24,7 @@ class RetainedStores:
             providers = {
                 name
                 for name, definition in definitions.items()
-                if definition.get("provider_kind") == "storage"
+                if definition.get("provider_kind") == "sql"
             }
             active = {
                 name
@@ -37,9 +37,9 @@ class RetainedStores:
                     continue
                 choices = {
                     preferences.get(f"{owner}/{alias}")
-                    or preferences.get("toolframe.storage.sql")
+                    or preferences.get("toolframe.sql")
                     for alias, requirement in definition.get("requires", {}).items()
-                    if requirement["service"] == "toolframe.storage.sql"
+                    if requirement["service"] == "toolframe.sql"
                 } - {None}
                 choices = choices or active or providers
                 if choices:
