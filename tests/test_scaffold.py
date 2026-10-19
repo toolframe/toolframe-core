@@ -267,7 +267,7 @@ def test_names_resources_and_business_example_remain_consistent(
             set(methods) == {"capture", "list_notes"}
             and methods["list_notes"].read_only
         )
-        assert definition.requires["storage"].service == "toolframe.storage.sql"
+        assert definition.requires["sql"].service == "toolframe.sql"
         resources = {resource.kind: resource for resource in definition.resources}
         assert resources["dashboard.page"].data["entrypoint"] == f"{module}.page:render"
         assert resources["mcp.tool"].data["service"] == f"{identifier}.notes"

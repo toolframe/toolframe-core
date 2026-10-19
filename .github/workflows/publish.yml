@@ -86,7 +86,7 @@ jobs:
           repository-url: ${{ inputs.index == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
 
   publish-launcher:
-    needs: [release-tag, validate]
+    needs: [release-tag, validate, publish-core]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:

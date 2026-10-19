@@ -285,7 +285,7 @@ def _exit_code(code):
         "migration_required",
         "dependency",
         "dependency_unavailable",
-        "storage_unavailable",
+        "sql_unavailable",
         "schema",
         "store_not_declared",
         "plugin_missing",

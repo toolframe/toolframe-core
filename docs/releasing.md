@@ -8,17 +8,17 @@ contains no Python wheels; it resolves Core and selected plugins from PyPI.
 
 ## Coordinated first release
 
-Publish SDK 0.3.0 first. Cordis 0.2.2 must be available before Core. Then publish
-the template packages: storage-sqlite 0.3.1, auth 0.2.0, dashboard-auth 0.1.3,
+Publish SDK 0.4.0 first. Cordis 0.2.2 must be available before Core. Then publish
+the template packages: sql-sqlite 0.3.1, auth 0.2.0, dashboard-auth 0.1.3,
 streamlit-dashboard 0.4.2, fastmcp 0.2.1, llms-txt 0.2.1 and
 demo-entry-register 0.3.1. Each repository owns its own tag, validation and
 `publish.yml`. Core's source-validation pins must point to the coordinated
 commits available under the trusted GitHub owner.
 
-Publish `toolframe-core==0.6.4` and `toolframe==0.6.4` together through Core's
+Publish `toolframe-core==0.7.0` and `toolframe==0.6.4` together through Core's
 workflow after those packages are available. Optional packages can follow:
 object-store-local 0.1.0, object-store-s3 0.1.0, mcp-auth 0.2.0, oidc-auth 0.2.0,
-storage-postgres 0.1.0, jobs 0.1.0, audit 0.1.0, backup 0.1.0 and testkit 0.1.0.
+sql-postgres 0.1.0, jobs 0.1.0, audit 0.1.0, backup 0.1.0 and testkit 0.1.0.
 Backup's operator extra requires Core. Testkit's pytest integration is an extra.
 
 ## Publisher setup

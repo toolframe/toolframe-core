@@ -51,7 +51,7 @@ Run `serve` in a separate terminal. Add required providers to the composition
 before enabling a plugin that consumes their services. For a local SQLite wheel:
 
 ```sh
-toolframe --home APP plugin add /path/to/toolframe_storage_sqlite-0.3.1-py3-none-any.whl --enable
+toolframe --home APP plugin add /path/to/toolframe_sql_sqlite-0.4.0-py3-none-any.whl --enable
 toolframe --home APP plugin add APP/plugins/customer-notes
 toolframe --home APP plugin validate customer-notes
 toolframe --home APP plugin validate customer-notes --runtime

@@ -22,7 +22,7 @@ from toolframe_core.graph import Graph
 from toolframe_core.host import Host, Root
 from toolframe_core.stores import RetainedStores
 
-SQL = "toolframe.storage.sql"
+SQL = "toolframe.sql"
 
 
 def candidate(name, *, provider=None, requirements=None, store=False):
@@ -34,7 +34,7 @@ def candidate(name, *, provider=None, requirements=None, store=False):
         authorization=AuthorizationSpec(),
         requires=requirements or {},
         services={SQL: ServiceSpec(methods={"query": MethodSpec(audience="internal")})}
-        if provider == "storage"
+        if provider == "sql"
         else {},
         store=StoreSchema(
             revision="v1", migrations=(Migration(revision="v1", sql="SELECT 1;"),)
@@ -47,11 +47,11 @@ def candidate(name, *, provider=None, requirements=None, store=False):
 
 def composition():
     return {
-        "sqlite": candidate("sqlite", provider="storage"),
-        "postgres": candidate("postgres", provider="storage"),
+        "sqlite": candidate("sqlite", provider="sql"),
+        "postgres": candidate("postgres", provider="sql"),
         **{
             name: candidate(
-                name, requirements={"storage": Requirement(service=SQL)}, store=True
+                name, requirements={"sql": Requirement(service=SQL)}, store=True
             )
             for name in ("alpha", "beta")
         },
@@ -59,8 +59,8 @@ def composition():
 
 
 def test_multiple_sql_providers_use_default_and_per_consumer_bindings():
-    graph = Graph(composition(), {SQL: "postgres", "alpha/storage": "sqlite"})
-    assert graph.storage_providers == {"sqlite", "postgres"}
+    graph = Graph(composition(), {SQL: "postgres", "alpha/sql": "sqlite"})
+    assert graph.sql_providers == {"sqlite", "postgres"}
     assert graph.stores == {"alpha": "sqlite", "beta": "postgres"}
     assert graph.dependencies["alpha"] == {"sqlite"}
     assert graph.dependencies["beta"] == {"postgres"}
@@ -83,7 +83,7 @@ def test_multiple_unbound_providers_are_ambiguous():
 def test_disabled_explicit_provider_never_falls_back_to_the_other_database():
     values = composition()
     del values["postgres"]
-    graph = Graph(values, {SQL: "postgres", "alpha/storage": "sqlite"})
+    graph = Graph(values, {SQL: "postgres", "alpha/sql": "sqlite"})
     assert graph.stores == {"alpha": "sqlite"}
     assert graph.missing["beta"] == [SQL]
 
@@ -95,7 +95,7 @@ def test_two_aliases_cannot_assign_one_plugin_to_two_stores(optional):
         "alpha",
         store=True,
         requirements={
-            "storage": Requirement(service=SQL),
+            "sql": Requirement(service=SQL),
             "archive": Requirement(service=SQL, optional=optional),
         },
     )
@@ -106,7 +106,7 @@ def test_two_aliases_cannot_assign_one_plugin_to_two_stores(optional):
 
 
 @pytest.mark.parametrize(
-    "requirements", [{}, {"storage": Requirement(service=SQL, optional=True)}]
+    "requirements", [{}, {"sql": Requirement(service=SQL, optional=True)}]
 )
 def test_managed_store_requires_a_required_sql_dependency(requirements):
     with pytest.raises(PluginError) as error:
@@ -119,7 +119,7 @@ def test_sql_dependency_must_resolve_to_a_storage_provider():
     values["postgres"]["definition"].update(kind="business", provider_kind=None)
     with pytest.raises(PluginError) as error:
         Graph(values, {SQL: "postgres"})
-    assert error.value.code == "invalid_storage_provider"
+    assert error.value.code == "invalid_sql_provider"
 
 
 def test_route_providers_still_have_one_owner():
@@ -194,10 +194,10 @@ async def test_nested_calls_use_the_admitted_binding_snapshot():
         host.runtimes,
         ExitStack(),
         paths={("alpha",): 1},
-        bindings={"alpha": {"storage": ("sqlite", SQL)}},
+        bindings={"alpha": {"sql": ("sqlite", SQL)}},
     )
     host.roots = {root.id: root}
-    host.graph = SimpleNamespace(bindings={"alpha": {"storage": ("postgres", SQL)}})
+    host.graph = SimpleNamespace(bindings={"alpha": {"sql": ("postgres", SQL)}})
 
     async def invoke(root, target, service, method, payload, **kwargs):
         return target
@@ -210,7 +210,7 @@ async def test_nested_calls_use_the_admitted_binding_snapshot():
             {
                 "root_id": root.id,
                 "chain": ["alpha"],
-                "alias": "storage",
+                "alias": "sql",
                 "method": "query",
             },
         )
@@ -223,7 +223,7 @@ async def test_root_cleanup_attempts_every_provider_and_can_retry():
     runtimes = {
         name: SimpleNamespace(
             name=name,
-            candidate={"definition": {"provider_kind": "storage"}},
+            candidate={"definition": {"provider_kind": "sql"}},
             worker=SimpleNamespace(process=SimpleNamespace(returncode=None)),
         )
         for name in ("sqlite", "postgres")

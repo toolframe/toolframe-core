@@ -45,8 +45,8 @@ __all__ = [
 _HASH = re.compile(r"[a-f0-9]{64}")
 _RUN = re.compile(r"[a-f0-9]{32}")
 _DISTRIBUTION = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
-_LOCAL_STORAGE = "storage-sqlite"
-_LOCAL_STORAGE_FACTORY = "toolframe_storage_sqlite.plugin:SqliteProvider"
+_LOCAL_SQL = "sql-sqlite"
+_LOCAL_SQL_FACTORY = "toolframe_sql_sqlite.plugin:SqliteProvider"
 _LOCAL_PROVIDERS = {
     "dashboard",
     "mcp",
@@ -633,13 +633,13 @@ def _inventory(home):
         if (
             definition.get("runtime_validation") == "separate_application"
             or (
-                kind == "storage"
+                kind == "sql"
                 and (
-                    definition["id"] != _LOCAL_STORAGE
-                    or definition.get("factory") != _LOCAL_STORAGE_FACTORY
+                    definition["id"] != _LOCAL_SQL
+                    or definition.get("factory") != _LOCAL_SQL_FACTORY
                 )
             )
-            or (kind is not None and kind not in _LOCAL_PROVIDERS | {"storage"})
+            or (kind is not None and kind not in _LOCAL_PROVIDERS | {"sql"})
         ):
             _fail(
                 "maintenance_external_state",
@@ -674,7 +674,7 @@ def _inventory(home):
         validate_plugin_id(owner)
         if (
             owner not in definitions
-            or provider != _LOCAL_STORAGE
+            or provider != _LOCAL_SQL
             or provider not in definitions
         ):
             _fail(

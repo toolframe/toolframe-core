@@ -12,7 +12,7 @@ class Notes(Plugin):
                 "note_invalid", "A note needs 1–1000 nonblank characters."
             )
         body = body.strip()
-        async with self.context.storage().transaction() as tx:
+        async with self.context.sql().transaction() as tx:
             created = await tx.execute(
                 "INSERT INTO notes(body, created_at) VALUES (?, ?)",
                 (body, datetime.now(UTC).isoformat()),
@@ -30,7 +30,7 @@ class Notes(Plugin):
             or not 1 <= limit <= 100
         ):
             raise PluginError("note_invalid", "limit must be an integer from 1 to 100.")
-        notes = await self.context.storage().query(
+        notes = await self.context.sql().query(
             "SELECT id, body, created_at FROM notes ORDER BY id DESC LIMIT ?", (limit,)
         )
         return {"notes": notes, "count": len(notes)}
@@ -44,5 +44,5 @@ class Notes(Plugin):
         raise PluginError("method_not_found", f"Unknown method {service}/{method}")
 
     async def health(self):
-        await self.context.storage().query("SELECT id FROM notes LIMIT 1")
+        await self.context.sql().query("SELECT id FROM notes LIMIT 1")
         return {"runtime": "ready", "business": "ready"}

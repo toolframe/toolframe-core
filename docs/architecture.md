@@ -198,13 +198,13 @@ service. Business implementations remain scope-based.
 
 ## External plugin storage
 
-Core 0.5.3 and SDK 0.3 allow a storage provider to select explicit PostgreSQL
+Core 0.7 and SDK 0.4 allow a storage provider to select explicit PostgreSQL
 migration SQL. Core asks the selected provider whether a plugin store is already
 initialized before generating private keys. If an initialized store's retained
 key is missing, activation requires restoring the key. This works for remote
 stores without relying on a local `data.sqlite` file.
 
-Core defaults to `data/core.sqlite`; Core 0.6 can select a dedicated PostgreSQL
+Core defaults to `data/core.sqlite`; Core 0.7 can select a dedicated PostgreSQL
 journal at bootstrap. Private keys and package artifacts remain in the application
 home. Plugin-storage credentials can be injected as environment variables inherited
 by trusted plugin workers; Core journal credentials are removed from those worker

@@ -14,7 +14,7 @@ Selecting another provider does not migrate data.
 ## Local development installation
 
 Build the matching object-storage SDK and Core revision before installing the
-new providers. Existing SDK 0.3.0 releases do not include this development API.
+new providers. Existing SDK 0.4.0 releases do not include this development API.
 For sibling development checkouts, build wheels into one directory:
 
 ```sh

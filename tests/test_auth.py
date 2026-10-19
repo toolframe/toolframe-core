@@ -37,7 +37,7 @@ async def app_host(tmp_path):
     await host.start()
     try:
         for repo in (
-            "toolframe-storage-sqlite",
+            "toolframe-sql-sqlite",
             "toolframe-auth",
             "toolframe-dashboard-auth",
             "toolframe-demo-entry-register",
@@ -155,7 +155,7 @@ async def test_public_default_protected_scopes_public_api_and_recovery(app_host)
         ).status_code == 403
         assert (
             await local.post(
-                "/_toolframe/v1/services/storage-sqlite/toolframe.storage.sql/query",
+                "/_toolframe/v1/services/sql-sqlite/toolframe.sql/query",
                 json={"sql": "SELECT 1"},
             )
         ).status_code == 403

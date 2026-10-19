@@ -1,6 +1,6 @@
 # Public plugin contract
 
-Target: `toolframe-sdk==0.3.0`, Core 0.6.1, Python 3.14. Use this packaged reference
+Target: `toolframe-sdk==0.4.0`, Core 0.7.0, Python 3.14. Use this packaged reference
 and the starter when the source workspace is unavailable. If the installed SDK
 version differs, inspect its public definitions before adapting these examples.
 
@@ -99,7 +99,7 @@ passwords and management tokens are not MCP keys. Protected MCP stays unavailabl
 if its verifier is absent or fails, independently of Dashboard fallback. New Core
 applications write `failure_mode="closed"`; older files omitting it retain legacy
 public fallback. Review existing choices before changing them. The access-password
-page shows entrance states; its failure-policy editor requires Core 0.6.1.
+page shows entrance states; its failure-policy editor requires Core 0.7.0.
 
 Scopes authorize methods, not individual rows. Password labels identify grants,
 not people. Per-person or tenant data needs a trusted identity and explicit
@@ -116,14 +116,14 @@ trusted application code, not a sandbox for untrusted extensions.
 
 ## Managed SQLite
 
-Declare `requires={"storage": Requirement(service="toolframe.storage.sql")}`
+Declare `requires={"sql": Requirement(service="toolframe.sql")}`
 and `store=StoreSchema(revision="v1", migrations=(Migration(...),))` when needed.
 The provider allocates a database for the stable plugin ID. It retains data when
 a plugin is disabled, removed or reloaded. Core's own SQLite holds management
 state and is not business storage.
 
 ```python
-storage = self.context.storage()  # requires alias "storage"
+storage = self.context.sql()  # requires alias "sql"
 async with storage.transaction() as tx:
     result = await tx.execute("INSERT INTO notes(body) VALUES (?)", (body,))
     rows = await tx.query(

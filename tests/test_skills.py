@@ -156,6 +156,9 @@ def test_legacy_eval_install_upgrade_preserves_customizations(
     home = tmp_path / "app"
     destination = home / ".agents/skills" / SKILL_NAME
     # Reproduce a pre-exclusion binary's complete copy and receipt.
+    legacy_evals = mutable_bundle / "evals"
+    legacy_evals.mkdir(exist_ok=True)
+    (legacy_evals / "cases.json").write_text("{}\n")
     copytree(mutable_bundle, destination)
     (destination / RECEIPT).write_text(
         json.dumps(
@@ -383,7 +386,7 @@ async def test_generated_starter_runs_headless_and_retains_data_after_edit(
     source = Path(json.loads(capsys.readouterr().out)["path"])
     workspace = Path(__file__).resolve().parents[2]
     storage = await operate(
-        host, "add", source=str(workspace / "toolframe-storage-sqlite"), enable=True
+        host, "add", source=str(workspace / "toolframe-sql-sqlite"), enable=True
     )
     assert storage["status"] == "succeeded", storage
     added = await operate(host, "add", source=str(source))
@@ -391,7 +394,7 @@ async def test_generated_starter_runs_headless_and_retains_data_after_edit(
     assert "customer-notes" not in host.runtimes
     enabled = await operate(host, "enable", id="customer-notes")
     assert enabled["status"] == "succeeded", enabled
-    assert set(host.runtimes) == {"storage-sqlite", "customer-notes"}
+    assert set(host.runtimes) == {"sql-sqlite", "customer-notes"}
     service = "customer-notes.notes"
     note = await host.call_service(
         "customer-notes", service, "capture", {"body": " First "}
@@ -410,7 +413,7 @@ async def test_generated_starter_runs_headless_and_retains_data_after_edit(
     reload = await operate(host, "reload", id="customer-notes")
     assert reload["status"] == "succeeded", reload
     assert host.runtimes["customer-notes"].generation != before["customer-notes"]
-    assert host.runtimes["storage-sqlite"].generation == before["storage-sqlite"]
+    assert host.runtimes["sql-sqlite"].generation == before["sql-sqlite"]
     second = await host.call_service(
         "customer-notes", service, "capture", {"body": "second"}
     )

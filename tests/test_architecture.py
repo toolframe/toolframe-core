@@ -10,8 +10,8 @@ from packaging.requirements import Requirement
 REPOSITORIES = (
     "toolframe-core",
     "toolframe-sdk",
-    "toolframe-storage-sqlite",
-    "toolframe-storage-postgres",
+    "toolframe-sql-sqlite",
+    "toolframe-sql-postgres",
     "toolframe-streamlit-dashboard",
     "toolframe-fastmcp",
     "toolframe-llms-txt",

@@ -330,7 +330,7 @@ def postgres_checks(root, core, output, env):
         "--no-sources",
         "--find-links",
         root / "workspace/toolframe-sdk/dist",
-        root / "workspace/toolframe-storage-postgres",
+        root / "workspace/toolframe-sql-postgres",
         cwd=core,
         env=env,
     )

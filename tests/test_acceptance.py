@@ -36,17 +36,17 @@ def store_source(directory, name, *, revision=1, broken=False):
     (source / "fixture/__init__.py").write_text(f"""import asyncio
 from toolframe_sdk import AuthorizationSpec, ScopeSpec, Plugin, PluginDefinition, ServiceSpec, MethodSpec, Requirement, StoreSchema, Migration
 plugin=PluginDefinition(authorization=AuthorizationSpec(), id={name!r},factory='fixture:Example',
-requires={{'storage':Requirement(service='toolframe.storage.sql')}},
+requires={{'sql':Requirement(service='toolframe.sql')}},
 services={{{name + ".service"!r}:ServiceSpec(methods={{'read':MethodSpec(audience="internal", read_only=True),'write':MethodSpec(audience="internal", )}})}},
 store=StoreSchema(revision='v{revision}',migrations=(Migration(revision='v1',sql='CREATE TABLE records(id INTEGER PRIMARY KEY, label TEXT NOT NULL);'){extra},)))
 class Example(Plugin):
     async def activate(self):
         {"raise RuntimeError('candidate failed after migration')" if broken else "pass"}
     async def health(self):
-        await self.context.storage().query('SELECT count(*) FROM records')
+        await self.context.sql().query('SELECT count(*) FROM records')
         return {{'runtime':'ready'}}
     async def invoke(self, service, method, params):
-        storage=self.context.storage()
+        storage=self.context.sql()
         if method=='read': return await storage.query('SELECT * FROM records ORDER BY id')
         async with storage.transaction(mutation_id=params.get('mutation_id')) as tx:
             await tx.execute('INSERT INTO records(label) VALUES (?)',[params['label']])
@@ -57,9 +57,9 @@ class Example(Plugin):
 
 
 async def install_storage(host):
-    source = Path(__file__).resolve().parents[2] / "toolframe-storage-sqlite"
+    source = Path(__file__).resolve().parents[2] / "toolframe-sql-sqlite"
     result = await operate(
-        host, "add", source=str(source), id="storage-sqlite", enable=True
+        host, "add", source=str(source), id="sql-sqlite", enable=True
     )
     assert result["status"] == "succeeded", result
 
@@ -190,9 +190,7 @@ async def test_migration_requires_review_and_lost_commit_ack_never_restarts_old_
     assert "alpha" not in host.runtimes
     assert (await host.status())["forward_repair"]
     monkeypatch.setattr(host, "admin", real_admin)
-    info = await host.admin(
-        host.runtimes["storage-sqlite"], "inspect", {"owner": "alpha"}
-    )
+    info = await host.admin(host.runtimes["sql-sqlite"], "inspect", {"owner": "alpha"})
     assert info["revision"] == "v2"
     backups = list((host.home / "data/plugins/alpha/backups").glob("*.sqlite"))
     assert len(backups) == 1

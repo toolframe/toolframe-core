@@ -17,11 +17,11 @@ class Graph:
         self.bindings = {}
         self.missing = {}
         self.providers = {}
-        self.storage_providers = set()
+        self.sql_providers = set()
         self.stores = {}
         for name, definition in self.definitions.items():
-            if definition.provider_kind == "storage":
-                self.storage_providers.add(name)
+            if definition.provider_kind == "sql":
+                self.sql_providers.add(name)
             elif definition.provider_kind:
                 if definition.provider_kind in self.providers:
                     raise PluginError(
@@ -60,7 +60,7 @@ class Graph:
             sql_requirements = {
                 alias: requirement
                 for alias, requirement in definition.requires.items()
-                if requirement.service == "toolframe.storage.sql"
+                if requirement.service == "toolframe.sql"
             }
             if definition.store and not any(
                 not requirement.optional for requirement in sql_requirements.values()
@@ -81,9 +81,9 @@ class Graph:
                 )
             if storage:
                 provider = next(iter(storage))
-                if provider not in self.storage_providers:
+                if provider not in self.sql_providers:
                     raise PluginError(
-                        "invalid_storage_provider",
+                        "invalid_sql_provider",
                         "The SQL service must be supplied by a storage provider",
                         {"owner": name, "provider": provider},
                     )
