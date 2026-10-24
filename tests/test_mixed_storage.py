@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import tomlkit
+from dependencies import source as dependency_source
 from test_acceptance import store_source, until
 from test_host import host, operate  # noqa: F401
 from toolframe_sdk import PluginError
@@ -72,12 +73,12 @@ async def mixed(host, tmp_path, monkeypatch):
             "alpha/sql": "sql-sqlite",
         }
         atomic_write(host.config.path, tomlkit.dumps(composition.model_dump()))
-        workspace = Path(__file__).resolve().parents[2]
+        Path(__file__).resolve().parents[2]
         for provider in ("sql-sqlite", "sql-postgres"):
             result = await operate(
                 host,
                 "add",
-                source=str(workspace / f"toolframe-{provider}"),
+                source=dependency_source(f"toolframe-{provider}"),
                 enable=True,
             )
             assert result["status"] == "succeeded", result

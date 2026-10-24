@@ -8,6 +8,7 @@ import json
 import re
 import shutil
 import tokenize
+from importlib.resources import files
 from pathlib import Path
 
 import tomlkit
@@ -40,8 +41,14 @@ def _python(source, rename):
     return tokenize.untokenize(tokens)
 
 
-def _render(identifier, package, module):
-    template = dict(_files(bundled_skill().joinpath("assets", "sample-plugin")))
+def _render(identifier, package, module, presentation="dashboard"):
+    template = dict(
+        _files(
+            files("toolframe_core").joinpath("web_template")
+            if presentation == "web"
+            else bundled_skill().joinpath("assets", "sample-plugin")
+        )
+    )
     document = tomlkit.parse(template[Path("pyproject.toml")].decode("utf-8"))
     project = document["project"]
     entries = project["entry-points"]["toolframe.plugins"]
@@ -94,11 +101,27 @@ def _render(identifier, package, module):
                 content.decode("utf-8"),
             )
             content = source.encode("utf-8")
+        elif presentation == "web" and relative.suffix in {".toml", ".html", ".js"}:
+            content = (
+                content.decode("utf-8")
+                .replace(original_module, module)
+                .replace(original_id, identifier)
+                .encode("utf-8")
+            )
+        if presentation == "web" and relative.suffix == ".md":
+            content = (
+                content.decode("utf-8")
+                .replace(original_module, module)
+                .replace(original_id, identifier)
+                .encode("utf-8")
+            )
         rendered[relative] = content
     return rendered
 
 
-def new_plugin(home: Path, identifier: str, *, output: Path | None = None):
+def new_plugin(
+    home: Path, identifier: str, *, output: Path | None = None, presentation="dashboard"
+):
     validate_plugin_id(identifier)
     package = f"toolframe-{identifier}"
     # The existing ID grammar permits a trailing '-', unlike distribution names.
@@ -116,7 +139,7 @@ def new_plugin(home: Path, identifier: str, *, output: Path | None = None):
     )
     if destination.exists() or destination.is_symlink():
         raise conflict
-    rendered = _render(identifier, package, module)
+    rendered = _render(identifier, package, module, presentation)
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
         # mkdir is exclusive, including an empty directory or dangling symlink

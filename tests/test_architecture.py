@@ -2,9 +2,9 @@
 
 import ast
 import tomllib
-from pathlib import Path
 
 import pytest
+from dependencies import source_tree
 from packaging.requirements import Requirement
 
 REPOSITORIES = (
@@ -23,18 +23,30 @@ REPOSITORIES = (
 )
 
 
-@pytest.mark.parametrize("repository", (*REPOSITORIES, "toolframe-sample-notes"))
+@pytest.mark.parametrize(
+    "repository", (*REPOSITORIES, "toolframe-sample-notes", "toolframe-web-notes")
+)
 def test_repository_uses_only_its_implementation_and_public_sdk(repository):
-    root = Path(__file__).resolve().parents[2] / repository
+    root = (
+        source_tree(repository)
+        if repository not in {"toolframe-sample-notes", "toolframe-web-notes"}
+        else source_tree("toolframe-core")
+    )
     if repository == "toolframe-sample-notes":
         root = (
-            root.parent
-            / "toolframe-core/src/toolframe_core/bundled_skills"
+            root
+            / "src/toolframe_core/bundled_skills"
             / "toolframe-plugin-design/assets/sample-plugin"
         )
+    if repository == "toolframe-web-notes":
+        root = root / "src/toolframe_core/web_template"
     assert root.is_dir(), f"Integration workspace is missing {repository}"
     own = repository.replace("-", "_")
     allowed = {own, "toolframe_sdk"}
+    if repository == "toolframe-web-notes":
+        allowed.add(
+            "toolframe_web"
+        )  # Public presentation helpers live in the web extra.
     forbidden_libraries = (
         {"streamlit", "fastmcp"}
         if repository in {"toolframe-core", "toolframe-sdk"}
@@ -51,7 +63,9 @@ def test_repository_uses_only_its_implementation_and_public_sdk(repository):
         forbidden_libraries.add("sqlite3")
     for file in (root / "src").rglob("*.py"):
         # Shipped authoring assets are a separate plugin, checked in their own case.
-        if repository == "toolframe-core" and "bundled_skills" in file.parts:
+        if repository == "toolframe-core" and {"bundled_skills", "web_template"} & set(
+            file.parts
+        ):
             continue
         for node in ast.walk(ast.parse(file.read_text(), filename=str(file))):
             imports = []

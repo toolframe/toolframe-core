@@ -1,13 +1,13 @@
 ---
 name: toolframe-plugin-design
-version: "0.3.2"
+version: "0.4.0"
 description: Load when designing, creating, or extending a Toolframe business plugin, including its domain model, persistence, or dashboard and MCP interfaces. Excludes routine application operation, calling existing tools, standalone Streamlit apps, Codex plugins, and Toolframe runtime/provider internals.
 ---
 
 # Toolframe plugin design
 
 Turn the user's business outcome into an independently packaged Toolframe plugin.
-This skill targets Toolframe Core 0.7.0 and SDK 0.4. The attached references and
+This skill targets Toolframe Core 0.8.0 and the SDK Web contract v1. The attached references and
 starter travel with the application; a Toolframe source checkout is optional.
 
 ## Establish the design
@@ -29,16 +29,23 @@ coding; continue without an extra design-approval ceremony.
 For implementation, read [plugin-api.md](references/plugin-api.md) before defining
 services, storage or resources. Use public `toolframe_sdk` contracts. Business
 state belongs in provider-managed storage; business services own its meaning.
-Dashboard pages and MCP tools call those services.
+Presentation handlers and MCP tools call those services.
 Declare owned read/write scopes and each method's audience. Use page permissions
-for navigation and controls; core enforces service permissions. Choose each entrance explicitly. Confidential applications need protected Dashboard
+for navigation and controls; core enforces service permissions. Choose each entrance explicitly. Confidential applications need protected browser
 access with `failure_mode="closed"`, a separate protected MCP policy, and no sensitive
 `public_api` methods or llms documents. Preserve an existing application's explicit
 policy until an authorized change. Method scopes do not provide person/tenant or
 row isolation. [plugin-api.md](references/plugin-api.md) defines these boundaries.
 
+For an HTML **Web app**, read [web-authoring.md](references/web-authoring.md)
+before selecting a starter, browser libraries or asset packaging. It covers the
+Web contract, the recommended htmx/Tailwind recipe, and installed verification.
+Keep an existing app's explicit framework choices. Dashboard-only work continues
+with the default starter below.
+
 For a **new** plugin, read [operations.md](references/operations.md), then run
-`toolframe --home APP plugin new PLUGIN-ID --json`. Customize the generated source
+`toolframe --home APP plugin new PLUGIN-ID --json` (add `--presentation web`
+for a Web app). Customize the generated source
 at `APP/plugins/PLUGIN-ID/`; `--output PATH` selects an exact alternative directory.
 The CLI renders the core-packaged [Notes example](assets/sample-plugin), including
 consistent package, module and service identities. Generation alone leaves the

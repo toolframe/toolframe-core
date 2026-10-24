@@ -125,10 +125,23 @@ def parser():
     _add_json_option(new)
     new.add_argument("id")
     new.add_argument(
+        "--presentation", choices=("dashboard", "web"), default="dashboard"
+    )
+    new.add_argument(
         "--output",
         type=Path,
         help="Exact destination directory; defaults to APP/plugins/PLUGIN-ID under --home",
     )
+
+    web = commands.add_parser(
+        "web", help="Prepare sealed Web plugin wheels without Node/npm"
+    )
+    _add_json_option(web)
+    web_commands = web.add_subparsers(dest="action", required=True)
+    prepare_web = web_commands.add_parser("prepare")
+    _add_json_option(prepare_web)
+    prepare_web.add_argument("source", type=Path)
+    prepare_web.add_argument("--offline", action="store_true")
 
     add = plugin_commands.add_parser("add")
     _add_json_option(add)
@@ -499,11 +512,24 @@ def run(arguments):
     if arguments.command == "plugin" and arguments.action == "new":
         from .scaffold import new_plugin
 
-        result = new_plugin(config.home, arguments.id, output=arguments.output)
+        result = new_plugin(
+            config.home,
+            arguments.id,
+            output=arguments.output,
+            presentation=arguments.presentation,
+        )
         if getattr(arguments, "json", False):
             _emit_json(result)
         else:
             print(f"Created plugin {result['plugin_id']} at {result['path']}")
+        return 0
+    if arguments.command == "web":
+        from .web_build import prepare
+
+        result = asyncio.run(
+            prepare(config, arguments.source, offline=arguments.offline)
+        )
+        _emit_json(result)
         return 0
     if arguments.command == "skill":
         from .skills import installation_message

@@ -10,10 +10,11 @@ from pathlib import Path
 from shutil import copytree
 
 import pytest
+from dependencies import source as dependency_source
 from test_host import host, operate  # noqa: F401
 from toolframe_sdk import PluginError
 
-from toolframe_core import cli, skills
+from toolframe_core import cli, scaffold, skills
 from toolframe_core.skills import RECEIPT, SKILL_NAME, bundled_skill, install_skill
 
 
@@ -113,6 +114,7 @@ def mutable_bundle(tmp_path, monkeypatch):
         )
     )
     monkeypatch.setattr(skills, "bundled_skill", lambda: source)
+    monkeypatch.setattr(scaffold, "bundled_skill", lambda: source)
     return source
 
 
@@ -384,9 +386,8 @@ async def test_generated_starter_runs_headless_and_retains_data_after_edit(
         == 0
     )
     source = Path(json.loads(capsys.readouterr().out)["path"])
-    workspace = Path(__file__).resolve().parents[2]
     storage = await operate(
-        host, "add", source=str(workspace / "toolframe-sql-sqlite"), enable=True
+        host, "add", source=dependency_source("toolframe-sql-sqlite"), enable=True
     )
     assert storage["status"] == "succeeded", storage
     added = await operate(host, "add", source=str(source))

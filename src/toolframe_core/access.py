@@ -313,6 +313,12 @@ class Access:
             "actor": actor.kind,
             "user_id": actor.user_id,
             "allowed_scopes": [s for s in catalog if actor.allows([s], catalog)],
+            "links": await self.host.web_access.links(identity)
+            if hasattr(self.host, "web_access")
+            else {},
+            "landing_url": self.host.gateway.landing_url
+            if hasattr(self.host, "gateway")
+            else "/",
             "login_url": "/_toolframe/auth/login",
             "logout_url": "/_toolframe/auth/logout",
         }

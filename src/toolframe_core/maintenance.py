@@ -49,6 +49,7 @@ _LOCAL_SQL = "sql-sqlite"
 _LOCAL_SQL_FACTORY = "toolframe_sql_sqlite.plugin:SqliteProvider"
 _LOCAL_PROVIDERS = {
     "dashboard",
+    "web",
     "mcp",
     "llms",
     "auth",
@@ -61,6 +62,7 @@ _OMIT = {
     ".toolframe/endpoint.json",
     ".toolframe/environments",
     ".toolframe/tmp",
+    ".toolframe/web-build-cache",
 }
 
 
@@ -612,15 +614,19 @@ def _inventory(home):
                     )
                 ):
                     _fail(message="A locked candidate differs from the journal")
-                if (
-                    locked
-                    and "ui_environment" in locked
-                    and locked["ui_environment"] != candidate.get("ui_environment")
-                ):
-                    _fail(message="A locked UI environment differs from the journal")
+                for field in ("ui_environment", "web_environment"):
+                    if (
+                        locked
+                        and field in locked
+                        and locked[field] != candidate.get(field)
+                    ):
+                        _fail(
+                            message="A locked presentation environment differs from the journal"
+                        )
         if set(composition.plugins) - {plugin["id"] for plugin in plugins}:
             _fail(message="A locked plugin is missing from the journal")
 
+    selected = {plugin["current_candidate"] for plugin in plugins}
     artifacts, definitions, wheels, environments = {}, {}, {}, []
     for candidate in candidates.values():
         definition = candidate["definition"]
@@ -630,6 +636,14 @@ def _inventory(home):
         ):
             _fail(message="A retained plugin definition is invalid")
         kind = definition.get("provider_kind")
+        if (
+            kind == "web"
+            and candidate["id"] in selected
+            and not candidate.get("web_environment")
+        ):
+            _fail(
+                message="A selected Web provider has no recorded presentation environment"
+            )
         if (
             definition.get("runtime_validation") == "separate_application"
             or (
@@ -650,6 +664,7 @@ def _inventory(home):
         for purpose, environment_field in (
             ("backend", "environment"),
             ("ui", "ui_environment"),
+            ("web", "web_environment"),
         ):
             if environment_field == "environment" or candidate.get(environment_field):
                 environment = candidate[environment_field]

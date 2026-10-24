@@ -1360,7 +1360,7 @@ wheels = [
 
 [[package]]
 name = "toolframe-core"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -1424,7 +1424,7 @@ dev = [
 
 [[package]]
 name = "toolframe-sdk"
-version = "0.4.0"
+version = "0.4.0+web.1"
 source = { editable = "../toolframe-sdk" }
 dependencies = [
     { name = "jsonschema" },

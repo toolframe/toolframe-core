@@ -1,8 +1,5 @@
 # Toolframe core
 
-[![CI](https://github.com/toolframe/toolframe-core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/toolframe/toolframe-core/actions/workflows/ci.yml)
-[![Container images](https://github.com/toolframe/toolframe-core/actions/workflows/container.yml/badge.svg?branch=main)](https://github.com/toolframe/toolframe-core/actions/workflows/container.yml)
-[![Container security](https://github.com/toolframe/toolframe-core/actions/workflows/container-security.yml/badge.svg?branch=main)](https://github.com/toolframe/toolframe-core/actions/workflows/container-security.yml)
 
 Toolframe is a persistent local control host for replaceable Python plugins.
 Core owns composition, immutable package environments, worker lifecycles,
@@ -66,6 +63,11 @@ launcher version without preparing Python or contacting a package index. Python
 library users can install `toolframe-core` on Python 3.14+; plugin authors install
 `toolframe-sdk`. The Python CLI entry point is `toolframe-core`.
 
+For full HTML applications with forms, app-owned JavaScript/CSS and no Node build
+environment, use `plugin new NAME --presentation web` and follow
+[Web applications](docs/web.md). Web and Streamlit can share one Core with explicit
+presentation mounts.
+
 ## LAN access
 
 The default listener is `127.0.0.1`. Bind all IPv4 interfaces for one run:
@@ -122,7 +124,7 @@ application directory and invoke `$toolframe-plugin-design` with your business
 requirements. Existing sessions may need to refresh skill discovery.
 
 The skill covers domain/data design, public SDK services, managed SQLite,
-optional Streamlit/MCP/llms resources and validation/reload. Its references and
+optional Web/Streamlit/MCP/llms resources and validation/reload. Its references and
 buildable Notes template ship inside the Core wheel; no Toolframe
 source checkout is required. Create source with the same CLI the agent uses:
 
@@ -178,7 +180,7 @@ toolframe --home APP skill install --output ./toolframe-plugin-design --json
 
 `--output` names the exact skill directory. Installation needs no running server,
 application configuration or management token. The skill has its own semantic
-version in the `SKILL.md` YAML frontmatter, currently `version: "0.3.1"`.
+version in the `SKILL.md` YAML frontmatter, currently `version: "0.4.0"`.
 An installation receipt records that version and every shipped file's SHA-256.
 The skill's top-level `evals/` directory is development-only: it stays in the
 source repository and is excluded from the core wheel, installed copies and
@@ -418,6 +420,7 @@ independent client checks are recorded separately in the [testing guide](docs/te
 
 - [Object storage](docs/object-storage.md): local/S3 binary files and Image Gallery.
 - [Runtime preparation](docs/runtime.md): installed uv reuse, overrides and offline startup.
+- [Web applications](docs/web.md): source preparation, explicit roots, permissions and updates.
 - [Architecture](docs/architecture.md): ownership, packages, lifecycle and data contracts.
 - [Authentication](docs/authentication.md): access policy, scopes and recovery.
 - [Dependency diagnostics](docs/dependency-graph.md): status and operation impact.

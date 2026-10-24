@@ -1,10 +1,12 @@
 import asyncio
-from pathlib import Path
+import json
 from types import SimpleNamespace
 
 import httpx
 import pytest
 import tomlkit
+from dependencies import source as dependency_source
+from dependencies import wheelhouse
 from toolframe_sdk import PluginError
 
 from toolframe_core import api
@@ -25,7 +27,7 @@ build-backend="hatchling.build"
 [project]
 name="fixture-{name}"
 version="0.1.0"
-dependencies=["toolframe-sdk==0.4.0"]
+dependencies=["toolframe-sdk==0.4.0+web.1"]
 [project.entry-points."toolframe.plugins"]
 {name}="fixture:plugin"
 [tool.hatch.build.targets.wheel]
@@ -60,13 +62,49 @@ async def operate(host, action, **params):
     return await host.wait_operation(operation["id"])
 
 
+@pytest.mark.parametrize("profile", ["ui", "web"])
+async def test_restaging_same_wheel_preserves_presentation_recovery_locks(
+    host, tmp_path, profile
+):
+    source = fixture_source(tmp_path, "alpha")
+    added = await operate(host, "add", source=str(source), enable=True)
+    assert added["status"] == "succeeded", added
+    row = await host.state.plugin("alpha")
+    selected = await host.state.candidate(row["current_candidate"])
+    environment = selected["environment"]
+    selected[profile + "_environment"] = environment
+    selected[profile + "_cohort"] = {"alpha": selected["id"]}
+    await host.state.save_candidate(selected)
+
+    staged = await operate(host, "update", id="alpha")
+    assert staged["status"] == "succeeded", staged
+    assert staged["result"]["candidate"] == selected["id"]
+    retained = await host.state.candidate(selected["id"])
+    assert retained[profile + "_environment"] == environment
+    assert retained[profile + "_cohort"] == {"alpha": selected["id"]}
+    locked = json.loads((host.home / "toolframe.lock").read_text())
+    assert (
+        locked["plugins"]["alpha"]["current_candidate"][profile + "_environment"]
+        == environment
+    )
+
+    module = source / "fixture/__init__.py"
+    module.write_text(
+        module.read_text() + "\n# New candidate has no selected cohort.\n"
+    )
+    changed = await operate(host, "update", id="alpha")
+    assert changed["status"] == "succeeded", changed
+    assert changed["result"]["candidate"] != selected["id"]
+    candidate = await host.state.candidate(changed["result"]["candidate"])
+    assert profile + "_environment" not in candidate
+
+
 @pytest.fixture
 async def host(tmp_path):
     home = tmp_path / "application"
     config = ConfigFile(home)
     composition = config.initialize()
-    workspace = Path(__file__).resolve().parents[2]
-    composition.packages.find_links = [str(workspace / "toolframe-sdk/dist")]
+    composition.packages.find_links = [str(wheelhouse())]
     composition.runtime.health_interval = 0.2
     atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
     host = await Host.create(home)
@@ -256,12 +294,11 @@ async def test_management_auth_origin_and_empty_gateway(host):
 
 
 async def test_real_llms_provider_http_through_gateway(host):
-    workspace = Path(__file__).resolve().parents[2]
     result = await operate(
         host,
         "add",
         id="llms-txt",
-        source=str(workspace / "toolframe-llms-txt"),
+        source=dependency_source("toolframe-llms-txt"),
         enable=True,
     )
     assert result["status"] == "succeeded", result

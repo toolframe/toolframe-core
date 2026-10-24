@@ -1,0 +1,29 @@
+<section id="notes">
+  {% if error %}<p role="alert" class="border border-red-200 bg-red-50 text-red-800 rounded-xl p-4 mb-5">{{ error }}</p>{% endif %}
+  {% if can_write %}
+  <form method="post" action="{{ ctx.url('create') }}" hx-post="{{ ctx.url('create') }}" hx-target="#notes" hx-swap="outerHTML" class="bg-white rounded-2xl border border-slate-200 p-6 mb-8">
+    {{ ctx.form_fields()|safe }}<input type="hidden" name="request_id" value="{{ request_id }}">
+    <label for="new-note" class="block font-medium mb-3">Capture a thought</label>
+    <div><textarea id="new-note" name="body" data-note-input maxlength="1000" required rows="3" class="w-full rounded-lg border border-slate-300 p-3 focus:outline-indigo-500" placeholder="What would you like to remember?">{{ value }}</textarea><span data-count class="text-xs text-slate-500"></span></div>
+    <button class="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-5 py-2.5">Save note</button>
+  </form>
+  {% endif %}
+  <div class="space-y-4">
+  {% for note in notes %}
+    <article class="rounded-xl border border-slate-200 bg-white p-5">
+      <p class="whitespace-pre-wrap break-words" hx-disable>{{ note.body }}</p>
+      <p class="text-xs text-slate-500 mt-3">{{ note.created_at }}</p>
+      {% if can_write %}
+      <details class="mt-3"><summary class="cursor-pointer text-sm text-indigo-700">Edit note</summary>
+        <form method="post" action="{{ ctx.url('update', {'id': note.id}) }}" hx-post="{{ ctx.url('update', {'id': note.id}) }}" hx-target="#notes" hx-swap="outerHTML" class="mt-3">
+          {{ ctx.form_fields()|safe }}<input type="hidden" name="revision" value="{{ note.revision }}">
+          <label class="sr-only" for="note-{{ note.id }}">Note text</label>
+          <textarea id="note-{{ note.id }}" name="body" maxlength="1000" required class="w-full rounded-lg border border-slate-300 p-3">{{ note.body }}</textarea>
+          <button class="mt-2 rounded-lg bg-slate-900 text-white px-4 py-2">Update</button>
+        </form>
+      </details>
+      {% endif %}
+    </article>
+  {% else %}<p class="text-slate-500 text-center py-12">Your notes will appear here.</p>{% endfor %}
+  </div>
+</section>

@@ -1,0 +1,7 @@
+/.local/
+/.issues/
+/.worktrees/
+/build/
+/dist/
+/.venv/
+__pycache__/

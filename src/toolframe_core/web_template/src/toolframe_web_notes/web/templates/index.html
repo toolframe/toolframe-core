@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"includeIndicatorStyles":false}'>
+  <title>Notes · Toolframe</title>
+  {{ asset_tags(ctx) }}
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen" hx-history="false">
+  <main class="max-w-3xl mx-auto px-6 py-12">
+    <header class="flex justify-between items-center mb-10">
+      <div><p class="text-sm text-slate-500 uppercase tracking-widest">Toolframe</p><h1 class="text-4xl font-semibold mt-2">Notes</h1></div>
+      <nav class="flex gap-4 text-sm">
+      {% if 'provider.dashboard' in ctx.links %}<a class="underline" href="{{ ctx.link('provider.dashboard') }}">Dashboard</a>{% endif %}
+      {% if ctx.presentation.actor in ['password', 'operator', 'user'] %}<form method="post" action="{{ ctx.presentation.logout_url }}"><button class="underline">Sign out</button></form>{% else %}<a class="underline" href="{{ ctx.presentation.login_url }}">Sign in</a>{% endif %}
+      </nav>
+    </header>
+    <p id="notice" role="alert" class="text-amber-800 mb-4"></p>
+    {% include 'notes.html' %}
+  </main>
+</body>
+</html>

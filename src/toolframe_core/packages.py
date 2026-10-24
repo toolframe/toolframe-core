@@ -325,6 +325,33 @@ class Packages:
         return actual
 
     async def _build(self, source, destination):
+        source = Path(source)
+        if source.is_dir():
+            project = tomllib.loads((source / "pyproject.toml").read_text())
+            if (source / "web-assets.toml").is_file() or project.get("tool", {}).get(
+                "toolframe", {}
+            ).get("web", {}).get("manifests"):
+                staged = destination.parent / "web-source"
+                await command(
+                    self.uv,
+                    "--no-config",
+                    "run",
+                    "--no-project",
+                    "--no-sources",
+                    "--python",
+                    sys.executable,
+                    "--with",
+                    "toolframe-web==0.1.0",
+                    *self.flags(),
+                    "toolframe-web",
+                    "stage",
+                    source,
+                    staged,
+                    "--cache",
+                    self.root / "web-build-cache",
+                    *(["--offline"] if self.settings.offline else []),
+                )
+                source = staged
         await command(
             self.uv,
             "--no-config",
@@ -533,7 +560,9 @@ class Packages:
             else None,
         }
 
-    async def environment(self, artifacts, *, ui=False):
+    async def environment(self, artifacts, *, ui=False, extra=None):
+        extra = extra or ("ui" if ui else "backend")
+        ui = extra == "ui"
         requirements = []
         names = set()
         for artifact in artifacts:
@@ -544,7 +573,6 @@ class Packages:
                     f"Conflicting distributions in environment: {name}",
                 )
             names.add(name)
-            extra = "ui" if ui else "backend"
             suffix = f"[{extra}]" if extra in artifact.get("extras", []) else ""
             path = self.home / artifact["artifact"]
             if (
@@ -603,6 +631,7 @@ class Packages:
                     "python": sys.version,
                     "platform": platform.platform(),
                     "ui": ui,
+                    **({"extra": extra} if extra != "backend" and not ui else {}),
                     "runtime_profile": profile,
                 }
             )

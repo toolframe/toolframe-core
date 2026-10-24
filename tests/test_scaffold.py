@@ -307,3 +307,28 @@ def test_names_resources_and_business_example_remain_consistent(
         for name in list(sys.modules):
             if name == module or name.startswith(module + "."):
                 del sys.modules[name]
+
+
+def test_web_starter_renames_browser_assets_and_keeps_domain_layer_headless(tmp_path):
+    result = new_plugin(tmp_path, "customer-notes", presentation="web")
+    root = Path(result["path"])
+    recipe = tomllib.loads((root / "web-assets.toml").read_text())
+    assert recipe["application"]["package"] == "toolframe_customer_notes"
+    assert all(
+        "toolframe_customer_notes" in path for path in recipe["tailwind"]["sources"]
+    )
+    document = (
+        root / "src/toolframe_customer_notes/web/templates/notes.html"
+    ).read_text()
+    assert (
+        "customer-notes" not in document
+    )  # URLs use context helpers, not fixed owner strings.
+    module = (root / "src/toolframe_customer_notes/webapp.py").read_text()
+    assert "customer-notes.write" in module
+    service = (root / "src/toolframe_customer_notes/service.py").read_text()
+    assert "toolframe_web" not in service
+    project = tomllib.loads((root / "pyproject.toml").read_text())
+    assert project["project"]["optional-dependencies"]["web"] == [
+        "toolframe-web==0.1.0"
+    ]
+    assert not (root / "src/toolframe_customer_notes/web/assets.json").exists()
