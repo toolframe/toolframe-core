@@ -160,7 +160,7 @@ def create_app(host, *, manage_lifespan=True):
 
     @app.middleware("http")
     async def application_operator(request, call_next):
-        path = request.url.path
+        path = request.scope["path"]
         identity = host.access.identity(request)
         selected = host.gateway.match(path)
         if not trusted(

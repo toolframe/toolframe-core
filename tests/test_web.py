@@ -132,7 +132,7 @@ class Access:
             kind="password", credential_id=identity.session, scopes=allowed
         )
 
-    async def presentation(self, identity):
+    async def presentation(self, identity, *, principal=None):
         return {"actor": "password", "allowed_scopes": ["example.read"]}
 
 

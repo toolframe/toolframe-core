@@ -6,7 +6,7 @@ import asyncio
 import html
 import secrets
 from http.cookies import CookieError, SimpleCookie
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -37,7 +37,8 @@ async def forward(host, request, mount, runtime, address):
 
     request_id = secrets.token_hex(12)
     raw = request.scope.get("raw_path", b"").lower()
-    path = request.url.path
+    path = request.scope["path"]
+    query = request.scope.get("query_string", b"").decode("ascii")
     if (
         any(value in raw for value in (b"%2f", b"%5c", b"%2e", b"%00", b"%25"))
         or "//" in path
@@ -57,7 +58,7 @@ async def forward(host, request, mount, runtime, address):
     if mount.prefix != "/" and path == mount.prefix:
         if request.method in {"GET", "HEAD"}:
             return RedirectResponse(
-                path + "/" + ("?" + request.url.query if request.url.query else ""),
+                quote(path, safe="/") + "/" + ("?" + query if query else ""),
                 status_code=308,
             )
         return JSONResponse(
@@ -117,8 +118,7 @@ async def forward(host, request, mount, runtime, address):
         body = bytearray()
         async with asyncio.timeout(host.composition.web.request_timeout):
             async for chunk in request.stream():
-                body.extend(chunk)
-                if len(body) > host.composition.web.max_body_bytes:
+                if len(body) + len(chunk) > host.composition.web.max_body_bytes:
                     return JSONResponse(
                         {
                             "error": {
@@ -128,9 +128,11 @@ async def forward(host, request, mount, runtime, address):
                         },
                         status_code=413,
                     )
-            url = address + mount.relative(path)
-            if request.url.query:
-                url += "?" + request.url.query
+                body.extend(chunk)
+            url = httpx.URL(address).copy_with(
+                path=quote(mount.relative(path), safe="/"),
+                query=request.scope.get("query_string", b""),
+            )
             async with (
                 httpx.AsyncClient(
                     timeout=host.composition.web.request_timeout, trust_env=False
@@ -153,9 +155,7 @@ async def forward(host, request, mount, runtime, address):
                     and not request.headers.get("hx-request")
                     and request.headers.get("sec-fetch-mode", "navigate") == "navigate"
                 ):
-                    destination = request.url.path + (
-                        "?" + request.url.query if request.url.query else ""
-                    )
+                    destination = quote(path, safe="/") + ("?" + query if query else "")
                     return RedirectResponse(
                         "/_toolframe/auth/login?"
                         + urlencode({"return_to": destination}),

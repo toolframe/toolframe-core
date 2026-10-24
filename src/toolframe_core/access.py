@@ -299,13 +299,15 @@ class Access:
                     raise
         return actor
 
-    async def presentation(self, identity):
-        try:
-            actor = await self.resolve(identity)
-        except PluginError as error:
-            if error.code not in {"authentication_required", "auth_transition"}:
-                raise
-            actor = Principal(kind="anonymous")
+    async def presentation(self, identity, *, principal=None):
+        actor = principal
+        if actor is None:
+            try:
+                actor = await self.resolve(identity)
+            except PluginError as error:
+                if error.code not in {"authentication_required", "auth_transition"}:
+                    raise
+                actor = Principal(kind="anonymous")
         catalog = self.catalog()
         return {
             **(await self.mode()),

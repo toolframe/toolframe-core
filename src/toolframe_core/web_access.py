@@ -138,9 +138,16 @@ class WebAccess:
         entry = self.context(
             runtime, params["key"], params["epoch"], params.get("access_context")
         )
+        phase = params.get("phase", "complete")
+        if phase not in ("authorize", "complete"):
+            raise PluginError("invalid_request", "Unknown Web admission phase")
         catalog = self.catalogs[entry.resource.key]
         asset = params.get("asset")
         if asset is not None:
+            if phase != "complete":
+                raise PluginError(
+                    "invalid_request", "Assets require complete admission"
+                )
             if entry.method not in {"GET", "HEAD"} or not entry.path.startswith(
                 "/_tf/assets/"
             ):
@@ -183,7 +190,10 @@ class WebAccess:
             *entry.resource.resource.required_scopes,
             *(route.required_scopes if route else ()),
         )
-        await self.principal(entry, entry.scopes)
+        principal = await self.principal(entry, entry.scopes)
+        if phase == "authorize":
+            # Parsing may follow, but this phase never grants service-call authority.
+            return {"authorized": True}
         csrf = self.csrf(entry)
         if entry.method not in SAFE_METHODS:
             if not isinstance(params.get("revision"), str) or not hmac.compare_digest(
@@ -198,7 +208,9 @@ class WebAccess:
             ):
                 raise PluginError("csrf_failed", "Form verification failed")
         entry.admitted = True
-        presentation = await self.host.access.presentation(entry.identity)
+        presentation = await self.host.access.presentation(
+            entry.identity, principal=principal
+        )
         return {
             "presentation": presentation,
             "revision": entry.revision,
