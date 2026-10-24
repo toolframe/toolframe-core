@@ -1,6 +1,6 @@
 # Public plugin contract
 
-Target: `toolframe-sdk==0.4.0`, Core 0.7.0, Python 3.14. Use this packaged reference
+Target: `toolframe-sdk==0.4.0+web.1`, Core 0.8.0, Web 0.1.0, Python 3.14. Use this packaged reference
 and the starter when the source workspace is unavailable. If the installed SDK
 version differs, inspect its public definitions before adapting these examples.
 
@@ -74,6 +74,7 @@ and keep private content out of published documents.
 
 | Entrance | Required decision |
 | --- | --- |
+| Web apps | Set protected browser access with closed failure policy for confidential data. Resource `access="authenticated"` requires an identity even in global public mode. Resource, route and method scopes all apply; unsafe requests also need CSRF/revision proofs. |
 | Dashboard and `/_toolframe/v1/services/...` | Set `access.mode="protected"` and `access.failure_mode="closed"` for confidential data; enforce method scopes. |
 | `/api/...` | Only explicitly public business methods are reachable; Dashboard/MCP credentials do not protect them. |
 | `/mcp` | Independent `mcp_access` policy; public by default, or a healthy MCP auth provider and scoped MCP credentials in protected mode. |
@@ -81,8 +82,9 @@ and keep private content out of published documents.
 | Local control / management | Direct loopback control and the management token are operator recovery paths; remote system calls require system authority. |
 
 An MCP tool resource publishes a business method to the MCP catalog, whose policy
-is independent of Dashboard login. For confidential tools, install/enable a
-compatible `toolframe-mcp-auth` provider and set:
+is independent of Dashboard login. `toolframe-fastmcp` (plugin ID `fastmcp`)
+provides the MCP transport; `toolframe-mcp-auth` (ID `mcp-auth`) verifies its keys.
+For confidential tools, install/enable both compatible providers and set:
 
 ```toml
 [access]
@@ -99,14 +101,17 @@ passwords and management tokens are not MCP keys. Protected MCP stays unavailabl
 if its verifier is absent or fails, independently of Dashboard fallback. New Core
 applications write `failure_mode="closed"`; older files omitting it retain legacy
 public fallback. Review existing choices before changing them. The access-password
-page shows entrance states; its failure-policy editor requires Core 0.7.0.
+page shows entrance states and the configured failure policy.
+See [operations](operations.md#protected-browser-and-mcp-clients) for provider
+installation, credential management and public client entry points.
 
 Scopes authorize methods, not individual rows. Password labels identify grants,
 not people. Per-person or tenant data needs a trusted identity and explicit
 business-layer row filtering. Never use a caller-supplied label as identity.
 System/internal methods cannot be published as public APIs or MCP tools. The
-starter deliberately publishes a public read-only query; remove that flag when
-adapting it for private data.
+Dashboard starter deliberately publishes a public read-only query; remove that
+flag when adapting it for private data. The Web starter leaves all methods
+`public_api=False` and publishes no MCP tools or llms documents.
 
 Page `service.call(..., activity=False)` is for background polling, so it does not
 extend a session's idle deadline or last-use timestamp. Interactive calls default
@@ -153,6 +158,7 @@ blocks activation when absent.
 
 | Kind | `Resource.data` |
 | --- | --- |
+| `web.app` | `contract=1`, `entrypoint="package.web.app:app"`, `package`, `assets="web/assets.json"`, optional `access="authenticated"`. Add `toolframe-web` in the `web` extra. See [Web authoring](web-authoring.md). |
 | `dashboard.page` | `entrypoint="package.page:render"`, optional integer `order`. |
 | `mcp.tool` | `service`, `method`, `description`, `input_schema`, `output_schema`. Keep the schemas consistent with the target method. |
 | `llms.document` | `package` and relative `path` to packaged Markdown. |
@@ -162,6 +168,51 @@ plugin generation and are withdrawn when it stops. MCP names are prefixed with
 the plugin ID, for example `sample-notes__list_notes`. Set a query's service
 `MethodSpec.read_only=True`; write methods remain explicit mutations. The first
 MCP provider supports tools, not resources or prompts.
+
+Web UI and a method description do not create an MCP resource. To expose the Web
+starter's existing business operations to an agent, explicitly add resources like
+these to its `PluginDefinition.resources`, using its public contracts:
+
+```python
+from .contracts import INPUTS, OUTPUTS, SERVICE
+
+(
+    Resource(
+        id="list_notes",
+        kind="mcp.tool",
+        required_scopes=("web-notes.read",),
+        data={
+            "service": SERVICE,
+            "method": "list",
+            "description": "List the most recent shared notes.",
+            "input_schema": INPUTS["list"],
+            "output_schema": OUTPUTS["list"],
+        },
+    ),
+)
+(
+    Resource(
+        id="create_note",
+        kind="mcp.tool",
+        required_scopes=("web-notes.write",),
+        data={
+            "service": SERVICE,
+            "method": "create",
+            "description": "Create a shared note with a stable request_id for retries.",
+            "input_schema": INPUTS["create"],
+            "output_schema": OUTPUTS["create"],
+        },
+    ),
+)
+```
+
+Replace `web-notes` with the generated ID. Keep these methods `public_api=False`;
+MCP does not require public HTTP publication. Configure protected `mcp_access`
+before making confidential tools reachable, install both MCP and its auth
+provider, and verify the actual client with anonymous, reader and writer grants.
+The service retains transactions, idempotency and row authorization across Web,
+Dashboard and MCP callers. This shared-notes example has no per-person rows;
+private personal data requires additional service rules and trusted identity.
 
 Dashboard pages are ordinary synchronous `render(context: PageContext)` functions:
 

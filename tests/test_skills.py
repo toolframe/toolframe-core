@@ -219,6 +219,7 @@ def test_skill_upgrade_and_replacement_preserve_generated_plugins(
     for arguments in (
         ["customer-notes"],
         ["external-notes", "--output", str(external)],
+        ["web-notes", "--presentation", "web"],
     ):
         assert (
             cli.main(["--home", str(home), "plugin", "new", *arguments, "--json"]) == 0

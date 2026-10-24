@@ -1,13 +1,14 @@
 from uuid import uuid4
 
-from toolframe_sdk import PluginError, WebApp, WebRoute
+from toolframe_sdk import PluginError
 from toolframe_web import json, redirect, render
 
-from .plugin import SERVICE
+from ..api import call
+from ..model import input_data, row_revision
 
 
 async def page(request, ctx, *, error="", value="", status=200, request_id=None):
-    notes = (await ctx.call(SERVICE + "@1/list"))["notes"]
+    notes = (await call(ctx, "list"))["notes"]
     if "application/json" in request.headers.get("accept", ""):
         return json(
             {"notes": notes, "revision": ctx.revision, "csrf": ctx.csrf_token},
@@ -29,14 +30,11 @@ async def page(request, ctx, *, error="", value="", status=200, request_id=None)
 
 
 async def create(request, ctx):
-    data = (
-        request.json()
-        if "application/json" in request.headers.get("content-type", "")
-        else await request.form()
-    )
+    data, _is_json = await input_data(request)
     try:
-        note = await ctx.call(
-            SERVICE + "@1/create",
+        note = await call(
+            ctx,
+            "create",
             {"body": data.get("body"), "request_id": data.get("request_id")},
         )
     except PluginError as error:
@@ -46,9 +44,11 @@ async def create(request, ctx):
             request,
             ctx,
             error=error.message,
-            value=data.get("body", ""),
+            value=data.get("body", "") if isinstance(data.get("body", ""), str) else "",
             status=409 if error.code == "note_conflict" else 422,
-            request_id=data.get("request_id"),
+            request_id=data.get("request_id")
+            if isinstance(data.get("request_id"), str)
+            else None,
         )
     if "application/json" in request.headers.get("accept", ""):
         return json(note, status=201)
@@ -60,15 +60,12 @@ async def create(request, ctx):
 
 
 async def update(request, ctx):
-    data = (
-        request.json()
-        if "application/json" in request.headers.get("content-type", "")
-        else await request.form()
-    )
+    data, is_json = await input_data(request)
     try:
-        revision = int(data.get("revision", 0))
-        await ctx.call(
-            SERVICE + "@1/update",
+        revision = row_revision(data, is_json)
+        await call(
+            ctx,
+            "update",
             {
                 "id": request.path_params["id"],
                 "body": data.get("body"),
@@ -93,14 +90,4 @@ async def update(request, ctx):
         await page(request, ctx)
         if request.headers.get("hx-request") == "true"
         else redirect(ctx.url("index"))
-    )
-
-
-def app():
-    return WebApp(
-        routes=(
-            WebRoute("index", "/", ("GET",), page),
-            WebRoute("create", "/", ("POST",), create, ("web-notes.write",)),
-            WebRoute("update", "/notes/{id}", ("POST",), update, ("web-notes.write",)),
-        )
     )

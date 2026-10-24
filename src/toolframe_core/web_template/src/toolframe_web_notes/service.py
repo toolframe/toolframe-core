@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from toolframe_sdk import Plugin, PluginError
 
-from .plugin import SERVICE
+from .contracts import SERVICE
 
 
 def body_text(value):

@@ -10,7 +10,7 @@ from toolframe_sdk import (
     StoreSchema,
 )
 
-SERVICE = "web-notes.notes"
+from .contracts import INPUTS, OUTPUTS, SERVICE
 
 plugin = PluginDefinition(
     id="web-notes",
@@ -26,15 +26,26 @@ plugin = PluginDefinition(
         SERVICE: ServiceSpec(
             methods={
                 "list": MethodSpec(
+                    description="List the 100 most recent shared notes, newest first.",
+                    input_schema=INPUTS["list"],
+                    output_schema=OUTPUTS["list"],
                     audience="business",
                     required_scopes=("web-notes.read",),
                     read_only=True,
                 ),
                 "create": MethodSpec(
-                    audience="business", required_scopes=("web-notes.write",)
+                    description="Create a shared note. Reusing request_id with the same text returns the original note; different text raises note_conflict.",
+                    input_schema=INPUTS["create"],
+                    output_schema=OUTPUTS["create"],
+                    audience="business",
+                    required_scopes=("web-notes.write",),
                 ),
                 "update": MethodSpec(
-                    audience="business", required_scopes=("web-notes.write",)
+                    description="Replace a shared note's text at the supplied revision. A missing or changed note raises note_conflict; success returns its new revision.",
+                    input_schema=INPUTS["update"],
+                    output_schema=OUTPUTS["update"],
+                    audience="business",
+                    required_scopes=("web-notes.write",),
                 ),
             }
         )
@@ -56,7 +67,7 @@ plugin = PluginDefinition(
             required_scopes=("web-notes.read",),
             data={
                 "contract": 1,
-                "entrypoint": "toolframe_web_notes.webapp:app",
+                "entrypoint": "toolframe_web_notes.web.app:app",
                 "package": "toolframe_web_notes",
                 "assets": "web/assets.json",
             },

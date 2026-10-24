@@ -1,3 +1,4 @@
+export function mountNotes() {
 const instances = new WeakMap();
 async function initialize(root = document) {
   for (const input of root.querySelectorAll("[data-note-input]")) {
@@ -5,7 +6,7 @@ async function initialize(root = document) {
     const output = input.parentElement.querySelector("[data-count]");
     if (!output) continue;
     instances.set(input, null);
-    const { attach } = await import("./components/count.js");
+    const { attach } = await import("../model/count.js");
     if (input.isConnected) instances.set(input, attach(input, output));
   }
 }
@@ -43,3 +44,4 @@ document.addEventListener("htmx:beforeSwap", event => {
   }
 });
 initialize();
+}

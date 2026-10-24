@@ -9,17 +9,27 @@ public_output = "web/public"
 [document]
 styles = ["app.css"]
 scripts = ["vendor/htmx.min.js"]
-modules = ["app.js"]
+modules = ["app/index.js"]
 visibility = "inherit"
 
 [[files]]
-path = "app.js"
-source = "web_src/app.js"
-dependencies = ["components/count.js"]
+path = "app/index.js"
+source = "src/toolframe_web_notes/web/app/index.js"
+dependencies = ["pages/notes/index.js"]
 
 [[files]]
-path = "components/count.js"
-source = "web_src/components/count.js"
+path = "pages/notes/index.js"
+source = "src/toolframe_web_notes/web/pages/notes/index.js"
+dependencies = ["pages/notes/ui/index.js"]
+
+[[files]]
+path = "pages/notes/ui/index.js"
+source = "src/toolframe_web_notes/web/pages/notes/ui/index.js"
+dependencies = ["pages/notes/model/count.js"]
+
+[[files]]
+path = "pages/notes/model/count.js"
+source = "src/toolframe_web_notes/web/pages/notes/model/count.js"
 
 [[files]]
 path = "vendor/htmx.min.js"
@@ -39,6 +49,6 @@ sha256 = "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985"
 
 [tailwind]
 version = "4.3.3"
-input = "web_src/input.css"
-sources = ["src/toolframe_web_notes/web/templates/index.html", "src/toolframe_web_notes/web/templates/notes.html"]
+input = "src/toolframe_web_notes/web/app/styles/input.css"
+sources = ["src/toolframe_web_notes/web/pages/notes/ui/templates/index.html", "src/toolframe_web_notes/web/pages/notes/ui/templates/notes.html"]
 output = "app.css"

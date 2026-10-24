@@ -22,12 +22,58 @@ is edited directly. A Web resource uses `kind="web.app"`, contract `1`, a stable
 resource ID, `module:factory`, import package and sealed asset manifest path.
 The factory returns SDK `WebApp` containing explicit `WebRoute` handlers.
 
+## Organize the presentation with FSD
+
+Start with the page that owns the workflow. The generated source uses:
+
+```text
+src/package/
+  contracts.py                 # public service schemas and identifiers
+  plugin.py, service.py         # business definition and durable behavior
+  web/
+    app/                       # composition, routes, entrypoint, global styles
+      __init__.py, index.js, styles/input.css
+    pages/notes/               # one independently owned page slice
+      __init__.py, index.js     # Python and ESM public APIs
+      ui/                      # SSR handlers, templates and browser interactions
+      model/                   # form normalization and local view state
+      api/                     # ctx.call adapter to public business contracts
+```
+
+`app` imports the page's public `__init__.py` or `index.js`; code outside a slice
+does not reach into its internal segments. Imports within a slice may connect its
+own UI, model and API. Different page slices do not import one another. Add
+`shared` only for infrastructure/UI actually reused across pages. Add `features`
+or `entities` only for a clear responsibility reused across pages, maintaining the
+downward order `app → pages → features → entities → shared`. Do not create empty
+layers, `widgets` or `processes` to fill out a diagram.
+
+Keep templates, JS, CSS and page-specific assets beside their owning slice.
+Global styles belong to `app`; genuinely shared UI belongs to `shared`.
+The manifest can read these paths directly and preserves declared output paths
+for relative/dynamic imports and CSS URLs. `web/assets.json` and `web/public` are
+prepare staging/wheel outputs, not source layers. This Python SSR/native ESM
+mapping needs no TypeScript build, Node/npm or Steiger installation. Existing
+plugins keep their framework and structure unless a restructure was requested;
+updating the template or installed skill never regenerates their source.
+
 Handlers receive `WebRequest` and request-scoped `WebContext`. Use `await ctx.call`
 to invoke declared business services; Core retains the visitor's identity and
 checks resource, route and method scopes. GET/HEAD handlers can call only
 `read_only` business methods. Keep domain mutations, idempotency and row ownership
 in those services. Web code runs in a shared presentation cohort, separately from
 the owner service and Streamlit; do not import business implementations into it.
+The presentation's `model` and `api` names do not transfer business ownership:
+transactions, idempotency, row revisions and person/tenant authorization remain
+in the service. Pure public schemas/identifiers may be shared; service classes,
+SQL connections and worker state may not. The starter's notes are shared among
+authorized callers. It does not implement private per-person rows.
+
+The starter's service methods declare descriptions, required fields, closed
+object schemas, string lengths, positive integer revisions and bounded outputs.
+Keep that contract complete when adapting it. Optional MCP tools target those
+same methods and schemas; Web UI alone does not make them callable by an agent.
+Use the private MCP recipe in [plugin-api.md](plugin-api.md) when requested.
 
 ## Prepare the wheel
 
@@ -67,6 +113,11 @@ CSP is strict by default. Use browser-ready CSP-compatible libraries; enable onl
 the app capabilities actually required. Apps share a trusted origin, so this is
 not an untrusted-code sandbox. Generic ASGI mounts, WebSockets, SSE and streaming
 responses are outside Web contract v1.
+For classic or module Workers, declare `worker-src: ("'self'",)` and all script,
+fetch and WASM dependencies in the allowlist. Worker script responses use the
+current app's script/connect capabilities; WASM compilation needs an explicit
+`'wasm-unsafe-eval'` script capability. Public scripts revalidate a policy-aware
+ETag, while HTML/SVG asset responses retain their restrictive sandbox policy.
 
 Finish with package checks and installed evidence: no-Node prepare/install,
 public Core URLs, anonymous/reader/writer requests, full forms and fragments,

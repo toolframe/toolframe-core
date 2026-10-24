@@ -318,12 +318,12 @@ def test_web_starter_renames_browser_assets_and_keeps_domain_layer_headless(tmp_
         "toolframe_customer_notes" in path for path in recipe["tailwind"]["sources"]
     )
     document = (
-        root / "src/toolframe_customer_notes/web/templates/notes.html"
+        root / "src/toolframe_customer_notes/web/pages/notes/ui/templates/notes.html"
     ).read_text()
     assert (
         "customer-notes" not in document
     )  # URLs use context helpers, not fixed owner strings.
-    module = (root / "src/toolframe_customer_notes/webapp.py").read_text()
+    module = (root / "src/toolframe_customer_notes/web/app/__init__.py").read_text()
     assert "customer-notes.write" in module
     service = (root / "src/toolframe_customer_notes/service.py").read_text()
     assert "toolframe_web" not in service

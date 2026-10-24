@@ -15,6 +15,12 @@ resources to a separate Web provider cohort and issues request-bound references
 for handler admission and business calls. The provider adapts HTTP, templates,
 forms and sealed asset sets. Domain services retain mutation semantics and data.
 
+New Web presentation sources start with FSD app composition and page slices.
+Python packages and native ESM expose slice public APIs without an additional
+build toolchain. Reuse justifies lower layers; the starter does not create empty
+layers. This keeps page changes together while retaining the existing business
+service as the authority for data, transactions and permissions.
+
 Each app owns its full document, CSS and JavaScript versions. Recommend htmx and
 standalone Tailwind for simple forms while keeping them optional. Author-time
 preparation accepts explicit browser-ready asset graphs, verifies pinned bytes
