@@ -14,8 +14,10 @@ import sys
 import tarfile
 import tempfile
 import tomllib
+import urllib.request
 import zipfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 CORE = Path(__file__).resolve().parents[2]
 PYTHON = "3.14.7"
@@ -49,8 +51,63 @@ def snapshot_core(destination):
             shutil.copy2(source, target)
 
 
+def prepare_sdist(root, repository, pin):
+    if set(pin) != {"version", "sha256"} or not re.fullmatch(
+        r"[0-9a-f]{64}", pin["sha256"]
+    ):
+        raise ValueError(f"Invalid distribution pin: {repository}")
+    version = pin["version"]
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", version):
+        raise ValueError(f"Invalid distribution version: {repository}")
+    name = f"{repository.replace('-', '_')}-{version}"
+    filename = name + ".tar.gz"
+    supplied = os.environ.get("TOOLFRAME_CI_SDIST_DIR")
+    if supplied:
+        data = (Path(supplied) / filename).read_bytes()
+    else:
+        with urllib.request.urlopen(
+            f"https://pypi.org/pypi/{repository}/{version}/json", timeout=30
+        ) as response:
+            release = json.load(response)
+        artifact = next(
+            item
+            for item in release["urls"]
+            if item["filename"] == filename and item["packagetype"] == "sdist"
+        )
+        url = urlparse(artifact["url"])
+        if url.scheme != "https" or url.hostname != "files.pythonhosted.org":
+            raise ValueError(f"Unexpected distribution host: {repository}")
+        if artifact["digests"]["sha256"] != pin["sha256"]:
+            raise ValueError(f"Distribution metadata hash mismatch: {repository}")
+        with urllib.request.urlopen(artifact["url"], timeout=30) as response:
+            data = response.read(32 * 1024 * 1024 + 1)
+    if (
+        len(data) > 32 * 1024 * 1024
+        or hashlib.sha256(data).hexdigest() != pin["sha256"]
+    ):
+        raise ValueError(f"Distribution hash mismatch: {repository}")
+    archive = root / filename
+    archive.write_bytes(data)
+    staging = root / "sdists" / repository
+    staging.mkdir(parents=True)
+    with tarfile.open(archive) as bundle:
+        if any(Path(member.name).parts[0] != name for member in bundle.getmembers()):
+            raise ValueError(f"Unexpected distribution layout: {repository}")
+        bundle.extractall(staging, filter="data")
+    source = staging / name
+    project = tomllib.loads((source / "pyproject.toml").read_text())["project"]
+    if project["name"] != repository or project["version"] != version:
+        raise ValueError(f"Distribution identity mismatch: {repository}")
+    source.rename(root / "workspace" / repository)
+
+
 def prepare_siblings(root, pins, source_root, owner, env):
     for repository, commit in pins.items():
+        if not re.fullmatch(r"[a-z0-9-]+", repository):
+            raise ValueError(f"Invalid dependency name: {repository}")
+        if isinstance(commit, dict):
+            prepare_sdist(root, repository, commit)
+            continue
         if not re.fullmatch(r"[a-z0-9-]+", repository) or not re.fullmatch(
             r"[0-9a-f]{40}", commit
         ):
@@ -136,6 +193,7 @@ def python_checks(root, core, output, env):
         "uv",
         "sync",
         "--locked",
+        "--no-editable",
         "--group",
         "dev",
         "--python",
@@ -154,6 +212,8 @@ def python_checks(root, core, output, env):
         "scripts/build-launcher.py",
         "scripts/verify-release.py",
         "scripts/verify-skill.py",
+        "scripts/verify-scaffold.py",
+        "scripts/check-authoring-catalog.py",
         "scripts/ci",
         cwd=core,
         env=env,
@@ -170,6 +230,33 @@ def python_checks(root, core, output, env):
     )
     distribution = output / "python-dist"
     run("uv", "build", "--no-sources", "--out-dir", distribution, cwd=core, env=env)
+    authoring_wheels = root / "authoring-wheels"
+    authoring_wheels.mkdir()
+    for wheel in distribution.glob("*.whl"):
+        shutil.copy2(wheel, authoring_wheels / wheel.name)
+    for name in ("toolframe-web", "toolframe-streamlit-dashboard"):
+        run(
+            "uv",
+            "build",
+            "--no-sources",
+            "--wheel",
+            "--out-dir",
+            authoring_wheels,
+            root / "workspace" / name,
+            cwd=core,
+            env=env,
+        )
+    run(
+        "uv",
+        "run",
+        "--no-sync",
+        "python",
+        "scripts/check-authoring-catalog.py",
+        "--wheelhouse",
+        authoring_wheels,
+        cwd=core,
+        env=env,
+    )
     run(
         "uv",
         "tool",

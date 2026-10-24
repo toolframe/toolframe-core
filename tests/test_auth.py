@@ -9,13 +9,15 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import tomlkit
+from dependencies import authoring_source, wheelhouse
+from dependencies import source as dependency_source
 from toolframe_sdk import PluginError, Principal
 
 from toolframe_core.access import Identity
 from toolframe_core.api import create_app
+from toolframe_core.authoring import new_plugin
 from toolframe_core.config import ConfigFile, atomic_write
 from toolframe_core.host import Host
-from toolframe_core.scaffold import new_plugin
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,7 +32,7 @@ async def operate(host, action, **params):
 async def app_host(tmp_path):
     config = ConfigFile(tmp_path)
     composition = config.initialize(host="0.0.0.0")
-    composition.packages.find_links = [str(ROOT / "toolframe-sdk/dist")]
+    composition.packages.find_links = [str(wheelhouse())]
     composition.runtime.health_interval = 0.2
     atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
     host = await Host.create(tmp_path)
@@ -42,7 +44,7 @@ async def app_host(tmp_path):
             "toolframe-dashboard-auth",
             "toolframe-demo-entry-register",
         ):
-            await operate(host, "add", source=str(ROOT / repo), enable=True)
+            await operate(host, "add", source=dependency_source(repo), enable=True)
         yield host
     finally:
         await host.close()
@@ -108,7 +110,9 @@ async def test_public_default_protected_scopes_public_api_and_recovery(app_host)
         assert catalog["entrances"]["declared_public_api"] == [
             "/api/entry-register/entry-register.entries/list_entries"
         ]
-        assert (await remote.get("/_toolframe/auth/login")).status_code == 200
+        form = await remote.get("/_toolframe/auth/login")
+        assert form.status_code == 200
+        assert form.headers["referrer-policy"] == "same-origin"
         invalid = await remote.post(
             "/_toolframe/auth/login",
             json={"password": "wrong"},
@@ -479,7 +483,12 @@ async def test_dynamic_grant_includes_newly_installed_business_scopes(app_host):
     dynamic = Identity(
         session=(await host.access.login("dynamic-business-secret", "dynamic"))["token"]
     )
-    created = new_plugin(host.home, "future-notes")
+    created = await new_plugin(
+        ConfigFile(host.home),
+        "future-notes",
+        template="toolframe-streamlit-dashboard/notes",
+        source=authoring_source("toolframe-streamlit-dashboard"),
+    )
     await operate(host, "add", source=created["path"], enable=True)
     actor = await host.access.admit(dynamic, ["future-notes.write"])
     row = await host.call_service(

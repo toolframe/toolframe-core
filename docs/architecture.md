@@ -151,7 +151,7 @@ retained. SQL and object writes do not share a transaction. See
 
 ## Resource publication and gateway
 
-Plugins declare owned pages, tools and documents. Providers prepare a complete
+Plugins declare owned pages, Web apps, tools and documents. Providers prepare a complete
 catalog, then acknowledge the selected epoch before Core makes their entrance
 available. A failed acknowledgement remains a visible unavailable entrance;
 publication is not presented as a distributed atomic transaction.
@@ -169,6 +169,19 @@ The llms provider serves explicitly declared package documents. It does not scan
 repositories for arbitrary Markdown. Withdrawal removes the owning plugin's
 entries. Core reserves management and health routes and owns HTTP/WebSocket
 admission; providers own their application lifespans.
+
+Web factories, route handlers and the owner's `web` extra share a dedicated Web
+cohort; their business service workers and the Dashboard UI cohort remain
+independent. Source capture precedes browser asset preparation and wheel building.
+Runtime publication uses only the sealed wheel. Core validates the prepared
+catalog and owns request identity, route admission, revision/CSRF checks and
+mount selection; the provider owns HTTP adaptation, templates and asset bytes.
+
+Schema 2 explicitly assigns `web.<owner>.<resource>` and `provider.dashboard`
+mounts and a landing target. Schema 1 keeps Dashboard at root. Core and protocol
+namespaces stay fixed, including OAuth issuer and MCP resource URLs. Unavailable
+mounts stay selected and return 503. See [Web operations](web.md) and
+[the Web ownership decision](adr/0014-web-presentation.md).
 
 ## Management and access
 

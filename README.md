@@ -1,8 +1,5 @@
 # Toolframe core
 
-[![CI](https://github.com/toolframe/toolframe-core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/toolframe/toolframe-core/actions/workflows/ci.yml)
-[![Container images](https://github.com/toolframe/toolframe-core/actions/workflows/container.yml/badge.svg?branch=main)](https://github.com/toolframe/toolframe-core/actions/workflows/container.yml)
-[![Container security](https://github.com/toolframe/toolframe-core/actions/workflows/container-security.yml/badge.svg?branch=main)](https://github.com/toolframe/toolframe-core/actions/workflows/container-security.yml)
 
 Toolframe is a persistent local control host for replaceable Python plugins.
 Core owns composition, immutable package environments, worker lifecycles,
@@ -66,6 +63,11 @@ launcher version without preparing Python or contacting a package index. Python
 library users can install `toolframe-core` on Python 3.14+; plugin authors install
 `toolframe-sdk`. The Python CLI entry point is `toolframe-core`.
 
+For full HTML applications with forms, app-owned JavaScript/CSS and no Node build
+environment, use `plugin new NAME --template toolframe-web/notes` with its authoring wheel and follow
+[Web applications](docs/web.md). Web and Streamlit can share one Core with explicit
+presentation mounts.
+
 ## LAN access
 
 The default listener is `127.0.0.1`. Bind all IPv4 interfaces for one run:
@@ -121,53 +123,43 @@ uv run python scripts/verify-network.py \
 application directory and invoke `$toolframe-plugin-design` with your business
 requirements. Existing sessions may need to refresh skill discovery.
 
-The skill covers domain/data design, public SDK services, managed SQLite,
-optional Streamlit/MCP/llms resources and validation/reload. Its references and
-buildable Notes template ship inside the Core wheel; no Toolframe
-source checkout is required. Create source with the same CLI the agent uses:
+The skill covers domain/data design, public SDK services, managed SQL, optional
+Web/Streamlit/MCP resources and installed validation. Core ships the guidance and
+a minimal provider-free `toolframe-core/basic` template. Optional templates are
+owned by their distributions and discovered from static wheel metadata:
 
 ```sh
-toolframe --home APP plugin new customer-notes
-# Or select an exact destination and get machine-readable output:
-toolframe --home APP plugin new reading-tracker --output ./plugins/reading-tracker --json
+toolframe --home APP template list
+toolframe --home APP template list --catalog
+toolframe --home APP plugin new greeting --json
+# Select a matching local authoring wheel and an optional template:
+toolframe --home APP template show toolframe-web/notes --from wheel:/path/to/toolframe_web-0.1.0-py3-none-any.whl --json
+toolframe --home APP plugin new notes --from wheel:/path/to/toolframe_web-0.1.0-py3-none-any.whl --template toolframe-web/notes
 ```
 
-The default is `APP/plugins/<plugin-id>/`. `--output` is the complete destination,
-relative to the current directory when not absolute. Existing files, directories
-and symlinks (including dangling links) are refused with exit 5. IDs follow the
-existing lowercase slug rule: `[a-z][a-z0-9-]{0,63}`.
+The default is now basic, with one internal service, bounded schemas and a test;
+it does not add SQL, Web, Dashboard or MCP. Select
+`toolframe-streamlit-dashboard/notes` explicitly for the previous Notes example.
+`--presentation web` and `--presentation dashboard` remain optional-template
+aliases. See [distribution authoring](docs/authoring.md) for index sources,
+parameters, local/catalog discovery, third-party manifests and compatibility.
 
-For `customer-notes`, the distribution is `toolframe-customer-notes`, Python module
-is `toolframe_customer_notes`, entry-point key and plugin ID are `customer-notes`,
-and services use `customer-notes.*`. JSON returns `plugin_id`, `package_name`,
-`python_module`, the absolute `path`, and `status: "created"`.
-For an ID ending in `-`, the distribution adds `plugin` at the end so it remains
-a valid Python package name (for example `a-` → `toolframe-a-plugin`); the module
-uses that distribution with hyphens changed to underscores. The plugin ID is kept.
+Generation works without an initialized application or running provider. Optional
+code executes only in the selected distribution's isolated authoring environment;
+it is not installed into Core. Generation does not register, enable or mount a
+runtime plugin. Core installation and basic generation do not acquire optional
+presentation templates.
 
-Generation needs no initialized application, installed skill, server or management
-token. It creates source only: no wheel build, plugin dependency installation,
-composition edit, registration or activation. The launcher still prepares its
-own core runtime on first use when necessary. `plugins/` is not scanned or loaded
-automatically.
+The output defaults to `APP/plugins/NAME`; `--output PATH` selects an exact
+alternative directory. Existing files, directories and symlinks are refused with
+exit 5. JSON returns the plugin/package/module identity, absolute path, status
+and selected template metadata. Generated projects are user-owned and remain
+unchanged across template or skill upgrades. Edit existing source directly.
 
-Customize the generated service, schema, page, read-only MCP tool and llms document
-for the business requirements; remove optional surfaces you do not need. Existing
-plugins are edited directly, never regenerated. Build from the generated directory
-with `uv build --wheel`. With core running and required providers installed:
-
-```sh
-toolframe --home APP plugin add APP/plugins/customer-notes
-toolframe --home APP plugin validate customer-notes
-toolframe --home APP plugin validate customer-notes --runtime
-# Explicit activation after validation:
-toolframe --home APP plugin enable customer-notes
-```
-
-The Notes starter requires the SQLite storage provider; install and enable it
-before runtime validation/activation. `add` captures and builds the local source,
-validates it, and leaves it disabled by default. See the operations reference for
-provider installation, wheelhouse configuration, reload and explicit migrations.
+Build basic/Dashboard source with `uv build --wheel`; prepare Web source with
+`toolframe --home APP web prepare SOURCE`. Install required providers separately,
+then use `plugin add`, `plugin validate --runtime` and `plugin enable` for the
+business plugin. See [authoring](docs/authoring.md) for the complete workflow.
 
 For an existing application, or to obtain a separate copy:
 
@@ -178,7 +170,7 @@ toolframe --home APP skill install --output ./toolframe-plugin-design --json
 
 `--output` names the exact skill directory. Installation needs no running server,
 application configuration or management token. The skill has its own semantic
-version in the `SKILL.md` YAML frontmatter, currently `version: "0.3.1"`.
+version in the `SKILL.md` YAML frontmatter, currently `version: "0.5.0"`.
 An installation receipt records that version and every shipped file's SHA-256.
 The skill's top-level `evals/` directory is development-only: it stays in the
 source repository and is excluded from the core wheel, installed copies and
@@ -418,6 +410,7 @@ independent client checks are recorded separately in the [testing guide](docs/te
 
 - [Object storage](docs/object-storage.md): local/S3 binary files and Image Gallery.
 - [Runtime preparation](docs/runtime.md): installed uv reuse, overrides and offline startup.
+- [Web applications](docs/web.md): source preparation, explicit roots, permissions and updates.
 - [Architecture](docs/architecture.md): ownership, packages, lifecycle and data contracts.
 - [Authentication](docs/authentication.md): access policy, scopes and recovery.
 - [Dependency diagnostics](docs/dependency-graph.md): status and operation impact.
@@ -431,10 +424,11 @@ independent client checks are recorded separately in the [testing guide](docs/te
 Toolframe Core and its Rust launcher are licensed under the Apache License,
 Version 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-The bundled plugin authoring guide and templates in
+The bundled plugin authoring guide in
 [`src/toolframe_core/bundled_skills/toolframe-plugin-design/`](src/toolframe_core/bundled_skills/toolframe-plugin-design/)
 are licensed under [MIT](src/toolframe_core/bundled_skills/toolframe-plugin-design/LICENSE).
-Plugins generated by `toolframe plugin new` include the template's MIT license.
+The basic template under `src/toolframe_core/basic_template/` is also MIT-licensed.
+Generated plugins retain their template license; optional templates ship in their owning packages.
 
 The package metadata uses `Apache-2.0 AND MIT` because the distribution includes
 both the Apache-licensed Core and MIT-licensed guide/templates. Each license

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from dependencies import source as dependency_source
 from test_auth import ROOT, app_host, client, credential, operate  # noqa: F401
 from test_mcp_auth import key, mcp_host, policy  # noqa: F401
 from toolframe_sdk import PluginError
@@ -158,7 +159,7 @@ async def test_discovery_gateway_and_optional_oidc_failure_preserve_keys(
     await operate(
         host,
         "add",
-        source=str(ROOT / "toolframe-oidc-auth"),
+        source=dependency_source("toolframe-oidc-auth"),
         enable=True,
         config={
             "public_url": "https://app.example",

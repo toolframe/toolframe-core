@@ -203,12 +203,15 @@ async def test_lan_http_auth_session_and_origin_checks(tmp_path, monkeypatch):
                     "/mcp", headers={**authorization, "Sec-Fetch-Site": "cross-site"}
                 )
             ).status_code == 403
+            form = await client.get("/_toolframe/session")
+            assert form.headers["referrer-policy"] == "same-origin"
             login = await client.post(
                 "/_toolframe/session",
                 data={"token": host.token},
                 headers={"Origin": "http://192.168.1.10:9876"},
             )
             assert login.status_code == 303
+            assert login.headers["referrer-policy"] == "no-referrer"
             assert "httponly" in login.headers["set-cookie"].lower()
             assert (await client.get("/_toolframe/v1/status")).status_code == 200
             assert (await client.get("/llms.txt")).text == "provider response"

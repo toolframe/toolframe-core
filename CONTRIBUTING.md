@@ -17,8 +17,8 @@ The `pre-commit` hook checks the branch name, Python lint, and formatting. The
 they do not rewrite a commit's contents. Fix lint and formatting explicitly:
 
 ```sh
-uvx ruff==0.16.8 check --fix src tests scripts/build-launcher.py scripts/verify-release.py scripts/verify-skill.py scripts/ci scripts/check_branch_name.py
-uvx ruff==0.16.8 format src tests scripts/build-launcher.py scripts/verify-release.py scripts/verify-skill.py scripts/ci scripts/check_branch_name.py
+uvx ruff==0.16.8 check --fix src tests scripts/build-launcher.py scripts/verify-release.py scripts/verify-skill.py scripts/verify-scaffold.py scripts/check-authoring-catalog.py scripts/ci scripts/check_branch_name.py
+uvx ruff==0.16.8 format src tests scripts/build-launcher.py scripts/verify-release.py scripts/verify-skill.py scripts/verify-scaffold.py scripts/check-authoring-catalog.py scripts/ci scripts/check_branch_name.py
 prek run --all-files
 ```
 

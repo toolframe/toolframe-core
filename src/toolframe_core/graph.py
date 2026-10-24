@@ -185,17 +185,21 @@ class Graph:
 
     def affected(self, replacement, changed):
         result = self.dependents(changed) | replacement.dependents(changed)
-        page_owners = {
-            resource.owner
-            for resource in self.resources() + replacement.resources()
-            if resource.resource.kind == "dashboard.page"
-        }
-        if result & page_owners:
-            result |= {
-                graph.providers["dashboard"]
-                for graph in (self, replacement)
-                if "dashboard" in graph.providers
+        for kind, resource_kind in (
+            ("dashboard", "dashboard.page"),
+            ("web", "web.app"),
+        ):
+            owners = {
+                resource.owner
+                for resource in self.resources() + replacement.resources()
+                if resource.resource.kind == resource_kind
             }
+            if result & owners:
+                result |= {
+                    graph.providers[kind]
+                    for graph in (self, replacement)
+                    if kind in graph.providers
+                }
         if self.descriptor_digest("mcp.tool") != replacement.descriptor_digest(
             "mcp.tool"
         ):

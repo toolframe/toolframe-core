@@ -50,7 +50,7 @@ rather than rely on ordering of stores or environment locks.
 | `stores` | Array of `{path, owner, provider}`. Core uses `owner: null, provider: "core"`; supported business stores identify their plugin owner and `"sql-sqlite"` provider. |
 | `retained_keys` | Array of `{path, owner, name}` identifying credential files to retain. `owner` is `null` for the management token and undeclared retained key files. No key contents or key hashes are returned. |
 | `dependency_wheels` | Array of `{environment_id, distribution, version, filename, sha256, path}` for recorded dependency wheels. A local `path` is verified against its locked hash; `path: null` is an explicit dependency rehydration prerequisite. |
-| `environment_locks` | Array of `{candidate_id, purpose, environment_id, sha256, python_version, python_implementation, platform_system, platform_machine, requires_python}`. `purpose` is `"backend"` or `"ui"`; the digest identifies the recorded lock text. Interpreter metadata comes from the source environment's regular `pyvenv.cfg`. `python_version` preserves its known precision: `"3.14"` means the source patch version is unknown, while `"3.14.7"` records a full version. Platform fields describe the local source inspection host. |
+| `environment_locks` | Array of `{candidate_id, purpose, environment_id, sha256, python_version, python_implementation, platform_system, platform_machine, requires_python}`. `purpose` is `"backend"`, `"ui"`, or `"web"`; the digest identifies the recorded lock text. Interpreter metadata comes from the source environment's regular `pyvenv.cfg`. `python_version` preserves its known precision: `"3.14"` means the source patch version is unknown, while `"3.14.7"` records a full version. Platform fields describe the local source inspection host. |
 
 The corresponding public record classes are `InventoryFile`, `SQLiteStore`,
 `RetainedKey`, `DependencyWheel`, and `EnvironmentLock`. Inventory attributes use
@@ -60,7 +60,10 @@ File roles are `composition`, `lock`, `artifact`, `core_store`, `business_store`
 `retained_key`, and `home_file`. `home_file` preserves other regular in-home files,
 including local attachments, plugin sources, and migration backups. Current,
 previous, and last retained candidates are checked, including plugin rows removed
-from the current composition. Backend and UI environment locks are both checked.
+from the current composition. Backend, UI, and Web environment locks are checked.
+Web environments require a consumer that accepts the `web` purpose, such as
+Toolframe Backup 0.2.1 or newer. Sealed Web assets are ordinary retained files;
+restoration does not require asset preparation.
 Captured plugin wheels and locally referenced dependency wheels must exist and
 match their recorded SHA256 digests.
 
@@ -129,6 +132,8 @@ The context refuses:
 - Symlinks in snapshot state, paths escaping the home, nonregular state files,
   missing captured wheels, and modified immutable artifacts. Known regenerable
   worker environments are excluded, including their normal Python symlinks.
+  The regenerable `.toolframe/web-build-cache` is also excluded; sealed runtime
+  assets and captured wheels remain in the inventory.
 - Missing/malformed source `pyvenv.cfg`, an operator interpreter major/minor or
   implementation different from the recorded source environment, a different
   full version when the source records one, or lock markers incompatible with the

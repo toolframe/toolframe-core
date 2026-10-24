@@ -1,1 +1,0 @@
-"""Sample Notes business plugin."""

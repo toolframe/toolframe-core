@@ -69,15 +69,19 @@ def main():
     home = root / "app"
     created = run("--home", home, "plugin", "new", "customer-notes", "--json")
     source = home / "plugins/customer-notes"
-    assert created == {
+    assert {
+        key: created[key]
+        for key in ("plugin_id", "package_name", "python_module", "path", "status")
+    } == {
         "plugin_id": "customer-notes",
         "package_name": "toolframe-customer-notes",
         "python_module": "toolframe_customer_notes",
         "path": str(source),
         "status": "created",
     }
-    assert sorted(path.name for path in home.iterdir()) == ["plugins"]
-    assert len(inventory(source)) == 8
+    assert created["template"]["id"] == "toolframe-core/basic"
+    assert not (home / "toolframe.toml").exists()
+    assert (source / "tests/test_service.py").is_file()
     assert (source / "LICENSE").read_text().startswith("MIT License\n")
     custom = root / "custom/source"
     text = run(
@@ -96,7 +100,7 @@ def main():
     edge = run("--home", home, "plugin", "new", "a--b-", "--json")
     assert edge["package_name"] == "toolframe-a--b-plugin"
     assert not (home / "toolframe.toml").exists()
-    assert not (home / ".toolframe").exists()
+    assert not (home / ".toolframe/management.token").exists()
     assert not (home / ".agents").exists()
 
     for identifier in ("Bad_ID", "../escape", "a" * 65):
@@ -182,8 +186,10 @@ def main():
             "toolframe_customer_notes-0.1.0.dist-info/entry_points.txt"
         ).decode()
         assert "customer-notes = toolframe_customer_notes.plugin:plugin" in entries
-        assert "toolframe_customer_notes/migrations/0001_init.sql" in archive.namelist()
-        assert "toolframe_customer_notes/docs/usage.md" in archive.namelist()
+        assert "toolframe_customer_notes/service.py" in archive.namelist()
+        assert not any(
+            "migrations/" in name or "page.py" in name for name in archive.namelist()
+        )
 
     # Only now create a composition and start core for the separate add/validate step.
     with socket.socket() as listener:
@@ -194,7 +200,7 @@ def main():
     assert inventory(source) == before
     local_wheels = root / "wheelhouse"
     local_wheels.mkdir()
-    for name in ("toolframe_core", "toolframe_sdk", "toolframe_sql_sqlite"):
+    for name in ("toolframe_core", "toolframe_sdk"):
         for wheel in wheels.glob(f"{name}-*.whl"):
             shutil.copy2(wheel, local_wheels / wheel.name)
     configuration = home / "toolframe.toml"
@@ -237,8 +243,6 @@ def main():
                 after["plugins"] == [] and after["operations"] == status["operations"]
             )
             assert configuration.read_bytes() == composition_before
-            storage = next(local_wheels.glob("toolframe_sql_sqlite-*.whl"))
-            run("--home", home, "plugin", "add", storage, "--enable", "--json")
             added = run("--home", home, "plugin", "add", plugin_wheel, "--json")
             assert added["status"] == "succeeded"
             validation = run(
@@ -284,7 +288,7 @@ def main():
             "default_output_json_and_explicit_output_text": True,
             "invalid_ids_and_all_existing_target_types_preserved": True,
             "non_sample_and_trailing_hyphen_ids_build_wheels": True,
-            "wheel_contains_entry_point_migration_and_document": True,
+            "wheel_contains_basic_service_without_optional_resources": True,
             "generated_wheel_passes_cli_preflight_and_scratch_runtime": True,
             "scaffold_does_not_modify_composition_register_or_activate": True,
             "skill_install_leaves_customized_plugin_source_untouched": True,

@@ -69,11 +69,17 @@ contract in [runtime preparation](runtime.md).
 
 [`scripts/ci/dependencies.json`](../scripts/ci/dependencies.json) pins the SDK,
 Cordis and the providers needed by integration tests. CI fetches each exact
-commit from the trusted owner in `TOOLFRAME_REPOSITORY_OWNER`, defaulting to
+Git commit from the trusted owner in `TOOLFRAME_REPOSITORY_OWNER`, defaulting to
 `github.repository_owner`. For private siblings, supply a read-only
 `TOOLFRAME_READ_TOKEN` secret with access to those repositories. The ordinary
 repository token cannot read private siblings; fork PRs also do not receive
 repository secrets. Public repositories need no extra token.
+
+Web source is supplied by its versioned PyPI sdist, pinned by SHA-256 in the same
+manifest. Validation verifies the index hash, downloaded bytes, package identity,
+and archive layout before use. This does not require access to the Web source
+repository. For prepublication local checks, `TOOLFRAME_CI_SDIST_DIR` may point to
+the directory containing that exact validated sdist; the same hash is required.
 
 Local validation uses the pinned Git objects from sibling checkouts. It archives
 those revisions into a temporary workspace, preserving the original working
@@ -96,10 +102,12 @@ or ignored local directories.
 
 ## Artifacts and consumer checks
 
-Python validation runs Ruff, the full pytest suite, wheel/sdist builds with
+Python validation installs the locked workspace without editable packages so
+authoring tests exercise the installed wheel protocol. It runs Ruff, the full
+pytest suite, wheel/sdist builds with
 `--no-sources`, strict Twine checks, license verification and fresh wheel
 installation with real dependencies. Skill evaluation inputs must stay outside
-the installed Core wheel; the authoring skill, templates and licenses remain
+the installed Core wheel; the authoring skill, basic template and licenses remain
 shipped product assets.
 
 Native validation runs Rust formatting and tests. `prepare-launcher.py` creates
@@ -129,3 +137,8 @@ that remote uploads or index resolution have succeeded.
 Artifacts include Core's wheel/sdist, four native wheels, four executable archives,
 release manifests/checksums, the Intel companion and JSON/XML diagnostics. Actions
 retains them for 14 days. Binaries are unsigned and are not Apple-notarized.
+
+Authoring changes also run `scripts/check-authoring-catalog.py --wheelhouse PATH`
+with matching Core, Web and Dashboard wheels. Metadata-only discovery tests must
+not import providers or execute generators. Installed acceptance generates all
+three templates through CLI and runs optional presentations in a separate app.

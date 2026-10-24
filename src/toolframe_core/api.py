@@ -28,6 +28,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from .access import CONTEXT_HEADER, PASSWORD_COOKIE, operation_scopes
+from .gateway import return_path
 from .network import trusted
 from .oidc_access import BROWSER_COOKIE, PUBLIC_PATHS, cross_site_route, install_routes
 from .redaction import redact_toml
@@ -69,11 +70,12 @@ def error_status(error):
         "idempotency_conflict",
         "already_installed",
         "mutation_conflict",
+        "web_revision_stale",
     }:
         return 409
     if code in {"plugin_missing", "operation_missing", "candidate_missing"}:
         return 404
-    if code == "forbidden":
+    if code in {"forbidden", "csrf_failed"}:
         return 403
     if code in {"authentication_required", "invalid_credentials", "session_invalid"}:
         return 401
@@ -103,7 +105,14 @@ def error_status(error):
 
 
 def provider_for(host, path):
+    mount = host.gateway.match("/" + path)
     kind = (
+        "web"
+        if mount and mount.target.startswith("web.")
+        else mount.target.removeprefix("provider.")
+        if mount
+        else None
+    ) or (
         "mcp"
         if path == "mcp" or path.startswith("mcp/")
         else "llms"
@@ -151,15 +160,23 @@ def create_app(host, *, manage_lifespan=True):
 
     @app.middleware("http")
     async def application_operator(request, call_next):
-        path = request.url.path
+        path = request.scope["path"]
         identity = host.access.identity(request)
+        selected = host.gateway.match(path)
         if not trusted(
             request.headers,
             host.listen_host,
             public_url=host.composition.application.public_url,
             cross_site=cross_site_route(path, request.method),
             navigation=request.method == "GET"
-            and path in {"/", "/_toolframe/auth/login"}
+            and (
+                path == "/_toolframe/auth/login"
+                or (
+                    selected is not None
+                    and selected.target.startswith(("web.", "provider.dashboard"))
+                )
+                or path == "/"
+            )
             and not identity.local,
         ):
             return JSONResponse(
@@ -183,7 +200,16 @@ def create_app(host, *, manage_lifespan=True):
                 response.headers["cache-control"] = "no-store"
             if path.startswith("/_toolframe/"):
                 response.headers["cache-control"] = "no-store"
-                response.headers["referrer-policy"] = "no-referrer"
+                # no-referrer masks Origin on native browser form POSTs.
+                # Only credential-free form documents retain same-origin referrers;
+                # token redirects and every other Core response stay no-referrer.
+                response.headers["referrer-policy"] = (
+                    "same-origin"
+                    if request.method == "GET"
+                    and response.status_code == 200
+                    and path in {"/_toolframe/auth/login", "/_toolframe/session"}
+                    else "no-referrer"
+                )
             return response
         except PluginError as error:
             return JSONResponse(
@@ -242,7 +268,13 @@ def create_app(host, *, manage_lifespan=True):
             response = (
                 JSONResponse({"status": "signed_in"})
                 if "application/json" in request.headers.get("accept", "")
-                else RedirectResponse("/", status_code=303)
+                else RedirectResponse(
+                    return_path(
+                        data.get("return_to", request.query_params.get("return_to")),
+                        host.gateway,
+                    ),
+                    status_code=303,
+                )
             )
             response.set_cookie(
                 PASSWORD_COOKIE,
@@ -257,16 +289,29 @@ def create_app(host, *, manage_lifespan=True):
         name = host.composition.access.dashboard_auth
         try:
             result = await host.call_service(
-                name, "dashboard-auth.presentation", "login", {}
+                name,
+                "dashboard-auth.presentation",
+                "login",
+                {
+                    "return_to": return_path(
+                        request.query_params.get("return_to"), host.gateway
+                    ),
+                    "endpoints": {
+                        "landing_url": host.gateway.landing_url,
+                        "login_url": "/_toolframe/auth/login",
+                        "session_url": "/_toolframe/session",
+                        "oidc_providers_url": "/_toolframe/oidc/providers",
+                    },
+                },
             )
             if not isinstance(result.get("html"), str):
                 raise TypeError("Invalid login presentation")
             return HTMLResponse(result["html"])
         except Exception:  # noqa: BLE001 - an unavailable login integration selects fallback
             if name not in host.transitioning and not host.starting:
-                host.access.mark_failed(name)
+                await host.access.mark_failed(name)
             return HTMLResponse(
-                '<!doctype html><title>Toolframe</title><p>Login is unavailable.</p><a href="/">Open Dashboard</a>',
+                '<!doctype html><title>Toolframe</title><p>Login is unavailable.</p><a href="/">Open application</a>',
                 status_code=503,
             )
 
@@ -276,7 +321,7 @@ def create_app(host, *, manage_lifespan=True):
         if token:
             with suppress(PluginError):
                 await host.access.auth("logout", {"token": token})
-        response = RedirectResponse("/", status_code=303)
+        response = RedirectResponse(host.gateway.landing_url, status_code=303)
         response.delete_cookie(PASSWORD_COOKIE)
         response.delete_cookie(COOKIE)
         return response
@@ -311,7 +356,7 @@ def create_app(host, *, manage_lifespan=True):
                 return JSONResponse(
                     {"error": "Invalid management token"}, status_code=401
                 )
-            response = RedirectResponse("/", status_code=303)
+            response = RedirectResponse(host.gateway.landing_url, status_code=303)
             response.set_cookie(
                 COOKIE,
                 token,
@@ -326,7 +371,7 @@ def create_app(host, *, manage_lifespan=True):
         return HTMLResponse(
             '<!doctype html><title>Toolframe sign in</title><h1>Toolframe</h1><form method="post">'
             '<label>Management token <input type="password" name="token" required></label>'
-            "<button>Open Dashboard</button></form><p>On the server, run <code>toolframe open</code> for a local sign-in link. "
+            "<button>Open application</button></form><p>On the server, run <code>toolframe open</code> for a local sign-in link. "
             "For LAN access, enter the token from <code>APP/.toolframe/management.token</code>.</p>"
         )
 
@@ -473,9 +518,20 @@ def create_app(host, *, manage_lifespan=True):
         methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
     )
     async def gateway(path: str, request: Request):
-        if path.startswith("_toolframe/"):
+        if path == "_toolframe" or path.startswith("_toolframe/"):
             return JSONResponse({"error": "Unknown management route"}, status_code=404)
-        if not path and "dashboard" not in host.graph.providers:
+        mount = host.gateway.match("/" + path)
+        if host.gateway.profile != "legacy-v1" and mount is None:
+            if not path:
+                from .web_gateway import entrance
+
+                return await entrance(host, request)
+            return JSONResponse({"error": "Unknown route"}, status_code=404)
+        if (
+            not path
+            and "dashboard" not in host.graph.providers
+            and host.gateway.profile == "legacy-v1"
+        ):
             return JSONResponse(
                 {
                     "name": host.composition.application.name,
@@ -492,6 +548,10 @@ def create_app(host, *, manage_lifespan=True):
                 status_code=503,
                 headers={"Retry-After": "1"},
             )
+        if kind == "web":
+            from .web_gateway import forward
+
+            return await forward(host, request, mount, runtime, address)
         if kind == "dashboard":
             try:
                 await host.access.admit(request.state.identity)
@@ -599,6 +659,10 @@ def create_app(host, *, manage_lifespan=True):
             await downstream.close(code=1008)
             return
         try:
+            mount = host.gateway.match("/" + path)
+            if mount is None or mount.target != "provider.dashboard":
+                await downstream.close(code=1008)
+                return
             kind, runtime, address = provider_for(host, path)
         except PluginError:
             await downstream.close(code=1013)

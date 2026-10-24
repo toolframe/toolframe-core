@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from dependencies import wheelhouse
 from toolframe_sdk import PluginError
 
 from toolframe_core.config import ConfigFile, HostLock, PackageSettings, PluginRequest
@@ -115,10 +116,8 @@ def test_operation_journal_recovers_interruption_and_idempotency(tmp_path):
 
 @pytest.mark.asyncio
 async def test_build_and_validate_immutable_local_plugin(tmp_path):
-    workspace = Path(__file__).resolve().parents[2]
-    package = Packages(
-        tmp_path, PackageSettings(find_links=[str(workspace / "toolframe-sdk/dist")])
-    )
+    Path(__file__).resolve().parents[2]
+    package = Packages(tmp_path, PackageSettings(find_links=[str(wheelhouse())]))
     source = tmp_path / "sample"
     source.mkdir()
     (source / "pyproject.toml").write_text("""[build-system]
@@ -128,7 +127,7 @@ build-backend = "hatchling.build"
 name = "toolframe-fixture"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = ["toolframe-sdk==0.4.0"]
+dependencies = ["toolframe-sdk==0.4.1"]
 [project.entry-points."toolframe.plugins"]
 fixture = "fixture:plugin"
 [tool.hatch.build.targets.wheel]
@@ -165,7 +164,7 @@ async def test_git_branch_wheel_index_and_offline_cached_resolution(tmp_path):
 
     from test_host import fixture_source
 
-    workspace = Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[2]
     source = fixture_source(tmp_path, "sources")
     for arguments in (
         ["git", "init", "-q", "-b", "main"],
@@ -187,7 +186,7 @@ async def test_git_branch_wheel_index_and_offline_cached_resolution(tmp_path):
         )
     package = Packages(
         tmp_path / "home",
-        PackageSettings(find_links=[str(workspace / "toolframe-sdk/dist")]),
+        PackageSettings(find_links=[str(wheelhouse())]),
     )
     git_source = f"git+{source.as_uri()}@feature/plugin"
     captured = await package.capture(git_source)

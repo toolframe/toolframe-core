@@ -1,3 +1,3 @@
 """Toolframe's provider-independent control host."""
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

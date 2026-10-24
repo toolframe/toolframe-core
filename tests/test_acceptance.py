@@ -3,11 +3,12 @@
 # ruff: noqa: F811 -- shared pytest fixture imported from test_host.
 import asyncio
 import sqlite3
-from pathlib import Path
 
 import httpx
 import pytest
 import tomlkit
+from dependencies import source as dependency_source
+from dependencies import wheelhouse
 from test_host import fixture_source, host, operate  # noqa: F401
 from toolframe_sdk import PluginError
 
@@ -57,7 +58,7 @@ class Example(Plugin):
 
 
 async def install_storage(host):
-    source = Path(__file__).resolve().parents[2] / "toolframe-sql-sqlite"
+    source = dependency_source("toolframe-sql-sqlite")
     result = await operate(
         host, "add", source=str(source), id="sql-sqlite", enable=True
     )
@@ -605,9 +606,7 @@ async def test_core_crash_reconciles_surviving_worker_before_reactivation(tmp_pa
         composition.application.port = reservation.getsockname()[1]
     composition.runtime.disposal_timeout = 0.1
     composition.plugins["survivor"] = PluginRequest(source=str(source), enabled=True)
-    composition.packages.find_links = [
-        str(Path(__file__).resolve().parents[2] / "toolframe-sdk/dist")
-    ]
+    composition.packages.find_links = [str(wheelhouse())]
     atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
     process = await asyncio.create_subprocess_exec(
         sys.executable,
