@@ -180,7 +180,7 @@ toolframe --home APP skill install --output ./toolframe-plugin-design --json
 
 `--output` names the exact skill directory. Installation needs no running server,
 application configuration or management token. The skill has its own semantic
-version in the `SKILL.md` YAML frontmatter, currently `version: "0.4.0"`.
+version in the `SKILL.md` YAML frontmatter, currently `version: "0.4.1"`.
 An installation receipt records that version and every shipped file's SHA-256.
 The skill's top-level `evals/` directory is development-only: it stays in the
 source repository and is excluded from the core wheel, installed copies and
