@@ -54,6 +54,7 @@ def _local_schema(value):
 
 
 def parse_manifest(raw, *, distribution, version, requires_python=None):
+    """Validate static metadata, including requirement syntax, without executing it."""
     try:
         Version(version)
     except (InvalidVersion, TypeError) as error:
@@ -71,18 +72,10 @@ def parse_manifest(raw, *, distribution, version, requires_python=None):
             "Unsupported authoring schema_version; expected 1",
         )
     try:
-        core_range = SpecifierSet(document["requires_core"])
-        python_range = SpecifierSet(requires_python or "")
+        SpecifierSet(document["requires_core"])
+        SpecifierSet(requires_python or "")
     except (InvalidSpecifier, TypeError) as error:
         raise invalid("Invalid Core or Python version requirement") from error
-    if (
-        __version__ not in core_range
-        or ".".join(map(str, sys.version_info[:3])) not in python_range
-    ):
-        raise PluginError(
-            "authoring_version_incompatible",
-            f"{distribution}=={version} requires Core {core_range} and Python {python_range}",
-        )
     if not isinstance(document["templates"], list):
         raise invalid("templates must be a list")
     seen = set()
@@ -132,6 +125,40 @@ class AuthoringDistribution:
     source: dict
     wheel: Path | None = None
     installed: object | None = None
+    requires_python: str | None = None
+
+    def compatibility(self):
+        python = ".".join(map(str, sys.version_info[:3]))
+        reasons = [
+            f"Requires {runtime} {requirement}; current {runtime} is {current}"
+            for runtime, requirement, current in (
+                ("Core", self.manifest["requires_core"], __version__),
+                ("Python", self.requires_python or "", python),
+            )
+            if current not in SpecifierSet(requirement)
+        ]
+        return {
+            "compatible": not reasons,
+            "core_version": __version__,
+            "python_version": python,
+            "reasons": reasons,
+        }
+
+    def require_compatible(self):
+        compatibility = self.compatibility()
+        if not compatibility["compatible"]:
+            raise PluginError(
+                "authoring_version_incompatible",
+                f"Cannot execute {self.distribution}=={self.version}: "
+                + "; ".join(compatibility["reasons"]),
+                {
+                    "distribution": self.distribution,
+                    "version": self.version,
+                    "requires_core": self.manifest["requires_core"],
+                    "requires_python": self.requires_python,
+                    "compatibility": compatibility,
+                },
+            )
 
     def templates(self):
         return [
@@ -143,6 +170,8 @@ class AuthoringDistribution:
                 "source": self.source,
                 "schema_version": self.manifest["schema_version"],
                 "requires_core": self.manifest["requires_core"],
+                "requires_python": self.requires_python,
+                "compatibility": self.compatibility(),
             }
             for template in self.manifest["templates"]
         ]
@@ -195,6 +224,7 @@ def from_wheel(path, *, source=None, required=True):
         manifest,
         source or {"kind": "wheel", "path": str(path)},
         wheel=path,
+        requires_python=meta["Requires-Python"],
     )
 
 
@@ -216,4 +246,5 @@ def installed_distributions():
             manifest,
             {"kind": "installed", "location": str(dist.locate_file(""))},
             installed=dist,
+            requires_python=dist.metadata.get("Requires-Python"),
         )

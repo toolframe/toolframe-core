@@ -51,15 +51,32 @@ These commands require that wheel to be available; the catalog does not promise
 its publication. Source trees, Git repositories and source archives are not
 accepted for metadata discovery. Build their wheels separately first. HTTPS wheel
 sources are also supported, with the existing optional SHA-256 URL fragment.
-An unsupported manifest version, incompatible Core/Python range, invalid schema,
-duplicate template ID, or ambiguous locally available versions produces an explicit
-error. Use `--from` to select an exact artifact when versions conflict.
+An unsupported manifest version, malformed version requirement, invalid schema,
+duplicate template ID, conflicting metadata or ambiguous locally available versions
+produces an explicit error. Use `--from` to select an exact artifact when versions
+conflict; compatibility does not silently select among ambiguous versions.
+
+Well-formed distributions with incompatible Core or Python requirements remain
+visible in `list` and `show`. They do not prevent selecting or generating another
+compatible template. Both text and JSON report the requirements, current versions,
+compatibility status and reasons. Discovery remains metadata-only and local queries
+remain offline, including when an incompatible distribution is present.
 
 Text and JSON use the same manifest. Each JSON template includes `distribution`,
 `version`, full `id`, English `title` and `description`, `parameters` JSON Schema,
-`generator`, `source`, `schema_version` and `requires_core`. The positional `NAME`
-is passed as the `name` parameter. Additional parameters use `--parameters '{...}'`;
+`generator`, `source`, `schema_version`, `requires_core` and `requires_python`
+(from wheel `Requires-Python`, or `null` when unconstrained). `compatibility`
+contains `compatible`, `core_version`, `python_version` and an English `reasons`
+array, empty when compatible. The positional `NAME` is passed as the `name`
+parameter. Additional parameters use `--parameters '{...}'`;
 JSON Schema defaults are documentation, not automatic values.
+
+Generating an incompatible selected template, including one selected with `--from`,
+fails with `authoring_version_incompatible` (exit 3). Its structured error includes
+the distribution, version, requirements and compatibility report. The check occurs
+before creating a generation staging/output directory, preparing an execution
+environment or running package code. The common execution gate also checks
+compatibility for source preparation.
 
 `plugin new` returns the existing identity/path/status fields plus `template`,
 containing the selected metadata. It works without an initialized or running

@@ -83,10 +83,13 @@ def available(config):
     unique = {}
     for item in result:
         key = (item.distribution, item.version)
-        if key in unique and unique[key].manifest != item.manifest:
+        if key in unique and (
+            unique[key].manifest,
+            unique[key].requires_python,
+        ) != (item.manifest, item.requires_python):
             raise PluginError(
                 "template_conflict",
-                f"Conflicting authoring manifests for {item.distribution}=={item.version}; select an explicit --from wheel",
+                f"Conflicting authoring metadata for {item.distribution}=={item.version}; select an explicit --from wheel",
             )
         if key not in unique or item.wheel is not None:
             unique[key] = item
@@ -238,6 +241,7 @@ def snapshot_installed(dist, destination):
 
 
 async def execute(packages, dist, request):
+    dist.require_compatible()
     with tempfile.TemporaryDirectory(
         dir=packages.root / "tmp", prefix="authoring-"
     ) as directory:
@@ -249,10 +253,16 @@ async def execute(packages, dist, request):
                 "artifact_hash_mismatch", "Selected authoring wheel was modified"
             )
         captured = from_wheel(wheel)
-        if (captured.distribution, captured.version, captured.manifest) != (
+        if (
+            captured.distribution,
+            captured.version,
+            captured.manifest,
+            captured.requires_python,
+        ) != (
             dist.distribution,
             dist.version,
             dist.manifest,
+            dist.requires_python,
         ):
             raise PluginError(
                 "authoring_changed",
@@ -344,6 +354,7 @@ async def new_plugin(
     ).absolute()
     check_destination(destination)
     dist, selected = await select(config, template, source=source)
+    dist.require_compatible()
     parameters = {} if parameters is None else parameters
     if not isinstance(parameters, dict) or "name" in parameters:
         raise PluginError(

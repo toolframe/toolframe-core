@@ -64,12 +64,18 @@ def describe_templates(result):
         else []
     )
     for item in templates:
+        compatibility = item["compatibility"]
+        status = "compatible" if compatibility["compatible"] else "incompatible"
         lines.extend(
             [
                 f"{item['id']} ({item['distribution']}=={item['version']})",
                 item["title"],
                 item["description"],
                 "Source: " + json.dumps(item["source"], sort_keys=True),
+                "Requires Core: " + item["requires_core"],
+                "Requires Python: " + (item["requires_python"] or "any"),
+                f"Compatibility: {status} (Core {compatibility['core_version']}, Python {compatibility['python_version']})",
+                *compatibility["reasons"],
                 "Parameters: " + json.dumps(item["parameters"], sort_keys=True),
             ]
         )

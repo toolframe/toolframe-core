@@ -7,7 +7,10 @@ Web and Dashboard own their Notes source, generators, assets and licenses.
 Static discovery can explain parameters without importing a plugin, constructing
 a host or running package code. Distribution metadata supplies identity/version;
 the manifest supplies authoring contracts. Runtime entry points and enabled
-providers do not determine which authoring capabilities exist.
+providers do not determine which authoring capabilities exist. Discovery validates
+metadata structure and requirement syntax, and reports Core/Python compatibility
+without rejecting well-formed incompatible distributions. Execution validates the
+selected distribution before preparing its dependency environment or output.
 
 Generation executes only the selected wheel in a separate dependency environment,
 then publishes into an exclusively created directory. Installed RECORD files can
