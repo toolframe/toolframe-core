@@ -11,7 +11,7 @@ access, described in [ADR 0003](0003-public-fallback-on-auth-error-or-disablemen
 It does not turn invalid passwords or permission denials into auth-plugin failures.
 
 Direct loopback access is a configurable, enabled-by-default operator exception;
-the Dashboard labels it "本機控制". Requests through the host's LAN address are
+the Dashboard labels it "Local control". Requests through the host's LAN address are
 treated as remote. The management token remains an independent recovery path.
 This release verifies direct localhost/LAN HTTP only; proxy/TLS deployment is
 outside this release. See [authentication](../authentication.md) for configuration.
