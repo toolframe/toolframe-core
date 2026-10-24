@@ -19,7 +19,13 @@ editable installs require an explicit wheel, so discovery never needs a build
 backend or source pyproject. This adds environment preparation to generation but
 keeps optional dependencies out of Core and makes the selected version explicit.
 
-The basic default provides a small provider-free service. Presentation and storage
+The basic default provides a small provider-free internal echo service with an
+explicit `AuthorizationSpec(scopes={})`. This supersedes the default-template
+read/write scope requirement in
+[explicit plugin authorization contracts](0006-require-explicit-plugin-authorization-contracts.md).
+Business plugins continue to declare their authorization contracts explicitly;
+optional business templates demonstrate their owned read/write scopes.
+Presentation and storage
 examples require explicit template selection. Compatibility presentation aliases
 resolve through the same distribution metadata. A single source-preparation entry
 supports packaged asset builds; it does not create a general command extension
