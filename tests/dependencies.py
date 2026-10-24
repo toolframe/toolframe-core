@@ -20,19 +20,19 @@ import tomlkit
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = Path(__file__).resolve().parents[1] / "build/package-fixtures"
 VERSIONS = {
-    "toolframe-sdk": "0.4.0+web.1",
+    "toolframe-sdk": "0.4.1",
     "toolframe-core": "0.8.0",
     "toolframe-web": "0.1.0",
     "toolframe-streamlit-dashboard": "0.5.1",
     "toolframe-dashboard-auth": "0.2.1",
-    "toolframe-sql-sqlite": "0.4.0",
-    "toolframe-sql-postgres": "0.2.0",
+    "toolframe-sql-sqlite": "0.4.1",
+    "toolframe-sql-postgres": "0.2.1",
     "toolframe-fastmcp": "0.3.0",
     "toolframe-llms-txt": "0.3.0",
-    "toolframe-demo-entry-register": "0.4.0",
-    "toolframe-auth": "0.3.0",
-    "toolframe-mcp-auth": "0.3.0",
-    "toolframe-oidc-auth": "0.3.0",
+    "toolframe-demo-entry-register": "0.4.1",
+    "toolframe-auth": "0.3.1",
+    "toolframe-mcp-auth": "0.3.1",
+    "toolframe-oidc-auth": "0.3.1",
 }
 
 

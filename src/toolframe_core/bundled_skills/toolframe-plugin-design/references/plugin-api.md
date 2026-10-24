@@ -1,6 +1,6 @@
 # Public plugin contract
 
-Target: `toolframe-sdk==0.4.0+web.1`, Core 0.8.0, Web 0.1.0, Python 3.14. Use this packaged reference
+Target: `toolframe-sdk==0.4.1`, Core 0.8.0, Web 0.1.0, Python 3.14. Use this packaged reference
 and the starter when the source workspace is unavailable. If the installed SDK
 version differs, inspect its public definitions before adapting these examples.
 

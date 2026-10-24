@@ -3,7 +3,7 @@
 Use the application's actual executable and home. The examples use `toolframe`
 on PATH; `--home APP` goes before the subcommand. Consult `--help` for the installed
 version rather than assuming commands from another Toolframe generation.
-These examples target Core 0.8.0, SDK 0.4.0+web.1 and Web 0.1.0.
+These examples target Core 0.8.0, SDK 0.4.1 and Web 0.1.0.
 
 ## New source and application
 

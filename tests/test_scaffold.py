@@ -203,7 +203,7 @@ def test_basic_has_only_sdk_service_and_tests(
     module = result["python_module"]
     project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
     assert project["name"] == result["package_name"]
-    assert project["dependencies"] == ["toolframe-sdk==0.4.0+web.1"]
+    assert project["dependencies"] == ["toolframe-sdk==0.4.1"]
     assert not project.get("optional-dependencies")
     assert project["license"] == "MIT" and (root / "LICENSE").read_text().startswith(
         "MIT License"

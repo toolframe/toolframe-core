@@ -3,7 +3,7 @@
 Use this reference for a Toolframe business plugin whose presentation is a full
 HTML document, forms, JSON or fragments. Core 0.8 and SDK Web contract v1 provide
 this entrance through the separately installed `toolframe-web` provider. The
-local SDK build is `0.4.0+web.1`; install matching wheels from a supplied wheelhouse.
+Web contract requires SDK `0.4.1`; install the matching released package.
 It is compatible with existing plugins that require SDK's public version 0.4.0.
 
 ## Choose the presentation

@@ -8,7 +8,7 @@ The Web cohort is independent of business workers and the Dashboard UI cohort.
 ## Create a notes application
 
 Use a Core 0.8 executable or `toolframe-core` Python entry point. Supply matching
-Core, SDK `0.4.0+web.1` and Web wheels in a local wheelhouse for this combination.
+Core, SDK `0.4.1` and Web wheels in a local wheelhouse for this combination.
 Set `TOOLFRAME_WHEELHOUSE` for launcher/authoring preparation and set
 `packages.find_links` in the application's composition for plugin resolution.
 
@@ -31,7 +31,7 @@ Configure the initial application while it is stopped. Keep its generated
 
 ```toml
 [plugins.sql-sqlite]
-source = "pypi:toolframe-sql-sqlite==0.4.0"
+source = "pypi:toolframe-sql-sqlite==0.4.1"
 enabled = true
 
 [plugins.web]

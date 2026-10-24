@@ -16,7 +16,7 @@ license-files = [
 authors = [{ name = "byfb", email = "62798989+byfb@users.noreply.github.com" }]
 requires-python = ">=3.14"
 dependencies = [
-  "toolframe-sdk==0.4.0+web.1", "fastapi-cordis==0.2.2", "fastapi==0.135.2",
+  "toolframe-sdk==0.4.1", "fastapi-cordis==0.2.2", "fastapi==0.135.2",
   "uvicorn==0.42.0", "httpx>=0.28,<1", "websockets>=15,<17",
   "tomlkit>=0.13,<1", "packaging>=25", "watchfiles>=1,<2", "pyyaml>=6,<7",
 ]
@@ -29,7 +29,7 @@ Issues = "https://github.com/toolframe/toolframe-core/issues"
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.3,<4"]
-tracing = ["toolframe-sdk[tracing]==0.4.0+web.1"]
+tracing = ["toolframe-sdk[tracing]==0.4.1"]
 
 [project.scripts]
 toolframe-core = "toolframe_core.cli:main"

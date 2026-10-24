@@ -6,20 +6,24 @@ platform wheels for the PyPI project `toolframe`, and executable archives in
 `toolframe-core` remains the separate Python runtime distribution. The launcher
 contains no Python wheels; it resolves Core and selected plugins from PyPI.
 
-## Coordinated first release
+## Coordinated release
 
-Publish SDK 0.4.0 first. Cordis 0.2.2 must be available before Core. Then publish
-the template packages: sql-sqlite 0.3.1, auth 0.2.0, dashboard-auth 0.1.3,
-streamlit-dashboard 0.4.2, fastmcp 0.2.1, llms-txt 0.2.1 and
-demo-entry-register 0.3.1. Each repository owns its own tag, validation and
-`publish.yml`. Core's source-validation pins must point to the coordinated
-commits available under the trusted GitHub owner.
+Publish SDK 0.4.1 first. Core requires Cordis 0.2.2. The Core 0.8 application
+combination uses SQLite 0.4.1, auth 0.3.1, dashboard-auth 0.2.1, Dashboard 0.5.1,
+Web 0.1.0, FastMCP 0.3.0, llms-txt 0.3.0 and Entry Register 0.4.1. Optional
+PostgreSQL 0.2.1, MCP Auth 0.3.1 and OIDC Auth 0.3.1 accept compatible SDK 0.4
+patches. Backup 0.2.1 supports the Core 0.8 operator extra and gateway mounts.
 
-Publish `toolframe-core==0.7.0` and `toolframe==0.6.4` together through Core's
-workflow after those packages are available. Optional packages can follow:
-object-store-local 0.1.0, object-store-s3 0.1.0, mcp-auth 0.2.0, oidc-auth 0.2.0,
-sql-postgres 0.1.0, jobs 0.1.0, audit 0.1.0, backup 0.1.0 and testkit 0.1.0.
-Backup's operator extra requires Core. Testkit's pytest integration is an extra.
+Each repository owns its tag, validation and `publish.yml`. Publish dependencies
+before Core, update the CI source pins to the verified release commits, and pin
+the public Web sdist by hash. The Web repository may remain private; its PyPI
+wheel and sdist are public. See [CI](ci.md) for source acquisition and local
+prepublication artifacts.
+
+Publish `toolframe-core==0.8.0` and `toolframe==0.8.0` together through Core's
+workflow after the dependency combination is available. Core and launcher versions
+must match. The launcher resolves the package versions selected by the template;
+its native wheel does not bundle Python distributions.
 
 ## Publisher setup
 
@@ -51,7 +55,7 @@ credentials; see [CI](ci.md).
 ## Validate and publish
 
 `ci.yml` validates Core's wheel/sdist, real PostgreSQL integration and native
-launcher wheels on four platforms. Publication is manual: select tag `v0.6.4`
+launcher wheels on four platforms. Publication is manual: select tag `v0.8.0`
 for `publish.yml`, choose `testpypi`, inspect that run, then select `pypi`.
 The tag must match both Python and Cargo versions. Branches and mismatched tags
 fail before validation.
@@ -99,10 +103,10 @@ included.
 ## Verify public installations
 
 Prepublication acceptance supplies matching local wheels explicitly. After all
-uploads and repository visibility changes, run in a fresh environment:
+uploads, run in a fresh environment:
 
 ```sh
-uv tool install toolframe==0.6.4
+uv tool install toolframe==0.8.0
 toolframe --version
 toolframe --home ./release-check init --template entry-register
 toolframe --home ./release-check serve
@@ -110,7 +114,7 @@ toolframe --home ./release-check serve
 toolframe --home ./release-check open
 ```
 
-Repeat with `uvx --from toolframe==0.6.4 toolframe ...` and with the downloaded
+Repeat with `uvx --from toolframe==0.8.0 toolframe ...` and with the downloaded
 native archive. Compare the archive SHA-256 with `SHA256SUMS`. The automated
 consumer probe can be repeated without a test wheelhouse:
 

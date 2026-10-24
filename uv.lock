@@ -1424,7 +1424,7 @@ dev = [
 
 [[package]]
 name = "toolframe-sdk"
-version = "0.4.0+web.1"
+version = "0.4.1"
 source = { editable = "../toolframe-sdk" }
 dependencies = [
     { name = "jsonschema" },

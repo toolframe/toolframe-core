@@ -127,7 +127,7 @@ build-backend = "hatchling.build"
 name = "toolframe-fixture"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = ["toolframe-sdk==0.4.0+web.1"]
+dependencies = ["toolframe-sdk==0.4.1"]
 [project.entry-points."toolframe.plugins"]
 fixture = "fixture:plugin"
 [tool.hatch.build.targets.wheel]

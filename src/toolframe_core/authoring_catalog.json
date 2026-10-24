@@ -44,8 +44,9 @@
       "source": {
         "kind": "pypi",
         "project": "toolframe-streamlit-dashboard",
-        "availability": "unpublished-authoring",
-        "note": "Authoring metadata has not been published; use a matching local wheel for this interface."
+        "availability": "published",
+        "note": "Authoring metadata is available in toolframe-streamlit-dashboard==0.5.1.",
+        "version": "0.5.1"
       },
       "templates": [
         {
