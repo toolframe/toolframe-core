@@ -1,0 +1,194 @@
+# Distribution-provided plugin templates
+
+`toolframe plugin new NAME` creates `toolframe-core/basic`: a minimal package,
+plugin definition, bounded echo service and test. It requires only the SDK, with
+no SQL, Web, Dashboard or MCP resources. Generate into a new directory:
+
+```sh
+toolframe --home APP plugin new greeting --json
+toolframe --home APP plugin new greeting --output ./greeting
+```
+
+Choose one destination. Existing files, directories and symlinks, including
+empty directories and dangling links, are rejected. A failed generation does not
+publish a partial project. Generated projects belong to their authors: changing
+or upgrading a template package never rewrites previous output.
+
+## Discover and select
+
+```sh
+toolframe --home APP template list
+toolframe --home APP template list --catalog
+toolframe --home APP template show toolframe-core/basic --json
+```
+
+The local list reads installed distribution metadata and wheels already captured
+for the application or explicit authoring requests. Captured wheels are identified
+as cached, not as enabled plugins. It does not contact an index. The separate
+`--catalog` list is a small offline directory of official packages. Its availability
+field distinguishes published authoring packages from packages that require a
+matching local wheel. A catalog entry never installs anything or claims that an
+unpublished authoring version can be downloaded.
+
+An explicit source reads and caches one wheel, without installing its dependencies:
+
+```sh
+toolframe --home APP template list --from wheel:/path/to/toolframe_web-0.1.0-py3-none-any.whl
+toolframe --home APP template show toolframe-web/notes --from wheel:/path/to/toolframe_web-0.1.0-py3-none-any.whl --json
+toolframe --home APP plugin new notes --from wheel:/path/to/toolframe_web-0.1.0-py3-none-any.whl --template toolframe-web/notes
+```
+
+For a version published with authoring metadata, or a matching version supplied
+through package `find_links` / the launcher's `--wheelhouse`, the equivalent index
+source is:
+
+```sh
+toolframe template list --from pypi:toolframe-web==0.1.0
+toolframe --home APP plugin new notes --from pypi:toolframe-web==0.1.0 --template toolframe-web/notes
+```
+
+These commands require that wheel to be available; the catalog does not promise
+its publication. Source trees, Git repositories and source archives are not
+accepted for metadata discovery. Build their wheels separately first. HTTPS wheel
+sources are also supported, with the existing optional SHA-256 URL fragment.
+An unsupported manifest version, incompatible Core/Python range, invalid schema,
+duplicate template ID, or ambiguous locally available versions produces an explicit
+error. Use `--from` to select an exact artifact when versions conflict.
+
+Text and JSON use the same manifest. Each JSON template includes `distribution`,
+`version`, full `id`, English `title` and `description`, `parameters` JSON Schema,
+`generator`, `source`, `schema_version` and `requires_core`. The positional `NAME`
+is passed as the `name` parameter. Additional parameters use `--parameters '{...}'`;
+JSON Schema defaults are documentation, not automatic values.
+
+`plugin new` returns the existing identity/path/status fields plus `template`,
+containing the selected metadata. It works without an initialized or running
+application. Only execution creates an isolated environment for the selected
+wheel and its declared dependencies/optional `authoring` extra. Optional packages
+are never installed into Core's Python environment. Fetching a template does not
+register, enable, mount or start its runtime plugin. Normal Core installation,
+help, local listing and basic generation do not acquire optional Web/Dashboard
+packages.
+
+## Package ownership and compatibility
+
+| Template | Owner | Generated behavior |
+| --- | --- | --- |
+| `toolframe-core/basic` | Core | Provider-free internal service and test |
+| `toolframe-web/notes` | Web | FSD HTML Notes, managed SQL, scopes, idempotent create and revision-checked update |
+| `toolframe-streamlit-dashboard/notes` | Streamlit Dashboard | Managed SQL Notes, Dashboard page, read-only MCP resource and llms document |
+
+The previous implicit Dashboard Notes default has changed to basic. Select the
+Dashboard template explicitly when that example is wanted. `--presentation web`
+and `--presentation dashboard` remain aliases for their corresponding optional
+Notes templates; the providing wheel must be locally available or supplied with
+`--from`. The aliases cannot be combined with `--template`.
+
+Core ships the basic template and agent guidance. Web/Dashboard boilerplate and
+its MIT licenses ship only in the owning distributions. The skill does not install
+copies of those templates. Refreshing a skill removes clean obsolete sample assets
+from the skill installation while preserving customized skills and all generated
+projects.
+
+After generation, build and install the business plugin separately. Basic and
+Dashboard sources use `uv build --wheel`. Web sources use `toolframe --home APP
+web prepare SOURCE`, or the same preparation through source `plugin add`/reload.
+Install/enable the required SQL and presentation providers explicitly. See
+[Web applications](web.md) and the selected package's documentation.
+
+## Publish an authoring distribution
+
+Package a UTF-8 JSON manifest at the fixed wheel path
+`<distribution>.dist-info/extra_metadata/toolframe-authoring.json`. The distribution
+name and version come from `METADATA`; do not repeat them in the manifest. A
+runtime `toolframe.plugins` entry point is not required. Core uses this same
+interface for its own basic template.
+
+For Hatchling, include the source file as extra metadata:
+
+```toml
+[tool.hatch.build.targets.wheel.extra-metadata]
+"authoring.json" = "toolframe-authoring.json"
+```
+
+The installed wheel does not need the source project's `pyproject.toml`.
+
+```json
+{
+  "schema_version": 1,
+  "requires_core": ">=0.8,<0.9",
+  "templates": [{
+    "id": "example",
+    "title": "Example plugin",
+    "description": "Create a small service plugin.",
+    "parameters": {
+      "type": "object",
+      "properties": {"name": {"type": "string"}},
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "generator": "example_authoring:generate"
+  }]
+}
+```
+
+IDs use lowercase letters, digits and single hyphens. The full ID is the canonical
+Python distribution name followed by `/` and the template ID. Manifests are bounded
+to 1 MiB; unknown fields and duplicate IDs are rejected. Parameter schemas use
+JSON Schema 2020-12 and only local references. Keep descriptions in English.
+The manifest is authoritative for the selected version, including when the
+catalog summary was produced from another version.
+
+The generator is a synchronous function:
+
+```python
+def generate(*, destination, parameters):
+    # destination is a Path to a new empty staging directory.
+    (destination / "README.md").write_text(parameters["name"] + "\n")
+```
+
+It runs in a separate interpreter with the exact selected distribution and its
+dependencies. Output must contain regular project files, with no symlinks. Core
+publishes them exclusively into the requested new destination after successful
+execution. Preserve the template's license in the output. Generators are installed
+Python code, with the privileges of the invoking user; environment isolation is
+dependency separation, not an operating-system sandbox.
+
+Installed distributions can be selected without retaining their original wheel:
+execution snapshots their installed `RECORD` files into a wheel before resolving
+the isolated environment. Editable installs or distributions without `WHEEL` and
+`RECORD` require an explicit wheel. Discovery never performs this snapshot or
+imports a generator.
+
+`toolframe_sdk.authoring` supplies optional `render_plugin`, `plugin_names` and
+`write_template` helpers. `render_plugin` needs `tomlkit`, which the distribution
+can declare in its `authoring` extra. A third-party generator can use only the
+standard library and need not depend on SDK or Core.
+
+## Source preparation
+
+A distribution may additionally declare one fixed-purpose source preparation
+entry, used by the wheel build pipeline:
+
+```json
+"prepare": {"entrypoint": "example_authoring:prepare"}
+```
+
+A generated source project selects the owner with:
+
+```toml
+[tool.toolframe.authoring]
+source = "pypi:toolframe-web==0.1.0"
+```
+
+Core reads the owner's manifest, prepares its isolated environment and calls
+`prepare(*, source, destination, cache, offline)`. `destination` is a new path
+outside the source tree. The owner stages source and prepared assets there; Core
+then runs the ordinary wheel build. This interface has no arbitrary command
+registry. `web prepare` is a compatibility front door to this pipeline. Older Web
+recipes can obtain their owner requirement from the project's `web` extra.
+
+Official catalog updates must pass `scripts/check-authoring-catalog.py --wheelhouse
+PATH` with matching wheels for all listed packages. It compares IDs, titles and
+descriptions with their manifests; parameters and executable entries are never
+copied into the catalog.

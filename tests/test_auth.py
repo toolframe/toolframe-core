@@ -9,15 +9,15 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import tomlkit
+from dependencies import authoring_source, wheelhouse
 from dependencies import source as dependency_source
-from dependencies import wheelhouse
 from toolframe_sdk import PluginError, Principal
 
 from toolframe_core.access import Identity
 from toolframe_core.api import create_app
+from toolframe_core.authoring import new_plugin
 from toolframe_core.config import ConfigFile, atomic_write
 from toolframe_core.host import Host
-from toolframe_core.scaffold import new_plugin
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -483,7 +483,12 @@ async def test_dynamic_grant_includes_newly_installed_business_scopes(app_host):
     dynamic = Identity(
         session=(await host.access.login("dynamic-business-secret", "dynamic"))["token"]
     )
-    created = new_plugin(host.home, "future-notes")
+    created = await new_plugin(
+        ConfigFile(host.home),
+        "future-notes",
+        template="toolframe-streamlit-dashboard/notes",
+        source=authoring_source("toolframe-streamlit-dashboard"),
+    )
     await operate(host, "add", source=created["path"], enable=True)
     actor = await host.access.admit(dynamic, ["future-notes.write"])
     row = await host.call_service(

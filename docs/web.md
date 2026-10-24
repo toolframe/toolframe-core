@@ -14,7 +14,7 @@ Set `TOOLFRAME_WHEELHOUSE` for launcher/authoring preparation and set
 
 ```sh
 toolframe --home ./notes-app init
-toolframe --home ./notes-app plugin new notes --presentation web
+toolframe --home ./notes-app plugin new notes --from wheel:/path/to/toolframe_web-0.1.0-py3-none-any.whl --template toolframe-web/notes
 toolframe --home ./notes-app web prepare ./notes-app/plugins/notes
 ```
 
@@ -22,8 +22,9 @@ Preparation prints a wheel path and SHA-256. It captures source, prepares explic
 browser assets in a separate staging tree and builds that wheel. The source tree
 stays editable. First preparation can download pinned htmx/Tailwind artifacts;
 `--offline` uses previously verified cached inputs. No Node/npm installation is
-required. The default Dashboard starter is still selected when `--presentation`
-is omitted.
+required. The default `plugin new` template is provider-free basic. Web Notes is supplied
+by the optional Web wheel; acquiring it does not enable its runtime provider.
+See [distribution authoring](authoring.md) for discovery and source selection.
 
 Configure the initial application while it is stopped. Keep its generated
 `application` section and set top-level `schema_version = 2`:

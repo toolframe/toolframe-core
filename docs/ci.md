@@ -99,7 +99,7 @@ or ignored local directories.
 Python validation runs Ruff, the full pytest suite, wheel/sdist builds with
 `--no-sources`, strict Twine checks, license verification and fresh wheel
 installation with real dependencies. Skill evaluation inputs must stay outside
-the installed Core wheel; the authoring skill, templates and licenses remain
+the installed Core wheel; the authoring skill, basic template and licenses remain
 shipped product assets.
 
 Native validation runs Rust formatting and tests. `prepare-launcher.py` creates
@@ -129,3 +129,8 @@ that remote uploads or index resolution have succeeded.
 Artifacts include Core's wheel/sdist, four native wheels, four executable archives,
 release manifests/checksums, the Intel companion and JSON/XML diagnostics. Actions
 retains them for 14 days. Binaries are unsigned and are not Apple-notarized.
+
+Authoring changes also run `scripts/check-authoring-catalog.py --wheelhouse PATH`
+with matching Core, Web and Dashboard wheels. Metadata-only discovery tests must
+not import providers or execute generators. Installed acceptance generates all
+three templates through CLI and runs optional presentations in a separate app.

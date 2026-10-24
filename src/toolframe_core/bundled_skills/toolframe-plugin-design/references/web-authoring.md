@@ -14,8 +14,11 @@ choices: ordinary CSS, custom JavaScript, Alpine's CSP build or a prebuilt clien
 application can use the same SDK contract. Each app owns its document and library
 versions. Preserve existing choices when extending a plugin.
 
-Generate new source with `toolframe --home APP plugin new NAME --presentation web`.
-The included Notes example has managed SQL, business read/write scopes,
+Inspect `template show toolframe-web/notes --json` and generate with
+`toolframe --home APP plugin new NAME --template toolframe-web/notes`. Supply
+`--from wheel:PATH` or an available pinned index source if the package is not local.
+This retrieves authoring capability without enabling the runtime provider.
+The Web package's Notes example has managed SQL, business read/write scopes,
 idempotent creation, row revisions, complete pages, fragments, JSON, and a dynamic
 ESM import. Edit its business services and invariants first. Existing plugin source
 is edited directly. A Web resource uses `kind="web.app"`, contract `1`, a stable
@@ -78,7 +81,7 @@ Use the private MCP recipe in [plugin-api.md](plugin-api.md) when requested.
 ## Prepare the wheel
 
 Run `toolframe --home APP web prepare SOURCE` and install the printed wheel path.
-Core captures source, invokes the Web preparation CLI and builds the wheel from
+Core captures source, invokes the Web distribution's manifest-declared preparation entry and builds the wheel from
 that staging tree. The author's package is not filled with generated assets.
 A source install performs the same staging. `uv build` alone does not prepare a
 source recipe. Installed wheels use sealed bytes and need no compiler or CDN.

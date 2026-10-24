@@ -173,3 +173,32 @@ def source_tree(name):
         )
     )
     return target
+
+
+def authoring_source(name):
+    """Authoring discovery only accepts wheels, including in source-based CI."""
+    if isolated():
+        return source(name)
+    import subprocess
+
+    checkout = (
+        Path(__file__).resolve().parents[1] if name == "toolframe-core" else ROOT / name
+    )
+    destination = BUILD / "authoring" / name
+    destination.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "uv",
+            "build",
+            "--no-sources",
+            "--wheel",
+            "--out-dir",
+            str(destination),
+            str(checkout),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    choices = list(destination.glob("*.whl"))
+    assert len(choices) == 1, f"Ambiguous authoring wheel for {name}"
+    return str(choices[0])

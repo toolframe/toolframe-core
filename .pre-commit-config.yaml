@@ -17,11 +17,11 @@ repos:
     hooks:
       - id: ruff-check
         types_or: [python, pyi]
-        files: '^(src/|tests/|scripts/(build-launcher\.py$|verify-release\.py$|verify-skill\.py$|check_branch_name\.py$|ci/))'
+        files: '^(src/|tests/|scripts/(build-launcher\.py$|verify-release\.py$|verify-skill\.py$|verify-scaffold\.py$|check-authoring-catalog\.py$|check_branch_name\.py$|ci/))'
       - id: ruff-format
         types_or: [python, pyi]
         args: [--check]
-        files: '^(src/|tests/|scripts/(build-launcher\.py$|verify-release\.py$|verify-skill\.py$|check_branch_name\.py$|ci/))'
+        files: '^(src/|tests/|scripts/(build-launcher\.py$|verify-release\.py$|verify-skill\.py$|verify-scaffold\.py$|check-authoring-catalog\.py$|check_branch_name\.py$|ci/))'
   - repo: https://github.com/commit-check/commit-check
     rev: v2.18.3
     hooks:

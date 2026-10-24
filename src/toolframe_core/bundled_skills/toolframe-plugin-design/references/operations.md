@@ -7,38 +7,50 @@ These examples target Core 0.8.0, SDK 0.4.0+web.1 and Web 0.1.0.
 
 ## New source and application
 
-For a new plugin, generate the source with the installed CLI:
+For a new plugin, discover the local templates and inspect the selected version:
 
 ```sh
-toolframe --home APP plugin new customer-notes --json
-# For a new HTML Web app (recommended for unspecified forms/lists):
-toolframe --home APP plugin new customer-notes --presentation web --json
-# Alternative: the exact destination directory, relative to the current directory.
-toolframe --home APP plugin new customer-notes --output ./custom/customer-notes
+toolframe --home APP template list
+toolframe --home APP template list --catalog
+toolframe --home APP template show toolframe-core/basic --json
+toolframe --home APP plugin new greeting --json
 ```
 
-Choose one of these destinations. The default is `APP/plugins/customer-notes/`.
-The CLI sets distribution `toolframe-customer-notes`, module
-`toolframe_customer_notes`, plugin ID `customer-notes` and service namespace
-`customer-notes.*`. JSON returns `plugin_id`, `package_name`, `python_module`,
-`path` and `status: "created"`. An existing file, directory or symlink is refused.
-IDs ending in `-` keep their plugin ID but add `plugin` to the distribution's end
-to form a valid package name; the module uses its underscores form. Read the
-returned names when editing references.
-An existing plugin is edited directly, never regenerated or overwritten.
+`plugin new NAME` defaults to basic: package settings, a bounded internal service
+and a test, with no provider requirements. Web and Dashboard examples are optional
+`toolframe-web/notes` and `toolframe-streamlit-dashboard/notes`. For a matching local
+wheel, discover and generate without starting an application:
 
-Generation uses the template bundled inside core, without needing this skill to
-be installed or a Toolframe source checkout. It does not build, install, register,
-enable or start a plugin, read application configuration, or request a management
-token. The launcher may prepare its own core runtime on first use as usual.
-Generated plugins are independent source trees; skill/binary updates leave them
-alone. `plugins/` is an authoring location, not an auto-discovery mechanism.
+```sh
+toolframe --home APP template show toolframe-web/notes --from wheel:/path/to/toolframe_web-0.1.0-py3-none-any.whl --json
+toolframe --home APP plugin new customer-notes --from wheel:/path/to/toolframe_web-0.1.0-py3-none-any.whl --template toolframe-web/notes --json
+```
 
-Customize the generated files for the agreed design. The Dashboard Notes example provides
-managed SQLite, capture/list services, a Streamlit page, a read-only MCP list tool
-and llms documentation. A headless service can omit the page, tools, docs, `ui`
-extra and storage when not needed. Keep its package and resource references
-consistent when intentionally changing identity.
+Use `pypi:PACKAGE==VERSION` only when that authoring wheel is published or available
+through configured `find_links` / `--wheelhouse`. The offline official catalog
+labels unpublished authoring capabilities; it does not automatically install them.
+List/show read only wheel metadata, without importing provider/generator code or
+installing dependencies. Generation alone prepares the selected wheel's isolated
+authoring environment. A runtime entry point or enabled provider is not required.
+
+The default destination is `APP/plugins/NAME/`; `--output PATH` is an exact path
+relative to the current directory. Existing files, directories and symlinks are
+refused. JSON returns `plugin_id`, `package_name`, `python_module`, `path`, `status`
+and the selected `template` metadata. Extra template parameters use `--parameters`
+with a JSON object matching the manifest schema; `name` comes from positional NAME.
+IDs ending in `-` retain that ID but add `plugin` to the distribution's end. Read
+returned identities rather than guessing them.
+
+Generation does not build or install the generated project, edit the composition,
+register/enable/mount a runtime plugin, or request a management token. Templates
+and installed skills can be upgraded without changing generated source. Edit an
+existing project directly; `plugins/` is not an automatic runtime discovery path.
+
+The Dashboard Notes template includes managed SQL, capture/list services, a
+Streamlit page, a read-only MCP resource and llms documentation. Select only the
+entrances required by the design and apply the appropriate access policy. Basic
+is the smaller starting point for a headless service. `--presentation web` and
+`--presentation dashboard` are compatibility aliases for the optional templates.
 
 Choose the build path by the plugin's presentation:
 
@@ -52,7 +64,7 @@ The Web Notes starter has bounded list/create/update contracts and a pages-first
 FSD presentation. It does not publish MCP tools or public HTTP methods. Read
 [web-authoring.md](web-authoring.md) for its mounts, library choices and asset
 allowlist; read [plugin-api.md](plugin-api.md) for optional private MCP resources.
-Neither starter contains sibling path dependencies. Where Toolframe packages are not in the configured
+No template contains sibling path dependencies. Where Toolframe packages are not in the configured
 index, use an existing wheelhouse for dependency resolution. For a new local
 application:
 

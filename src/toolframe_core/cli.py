@@ -123,10 +123,48 @@ def parser():
         "new", help="Generate a new plugin's source locally"
     )
     _add_json_option(new)
-    new.add_argument("id")
+    new.add_argument("id", metavar="NAME")
     new.add_argument(
-        "--presentation", choices=("dashboard", "web"), default="dashboard"
+        "--template", help="Complete template ID; defaults to toolframe-core/basic"
     )
+    new.add_argument(
+        "--from",
+        dest="template_source",
+        help="Authoring wheel or pypi:PACKAGE==VERSION; does not install a runtime plugin",
+    )
+    new.add_argument(
+        "--parameters",
+        type=json.loads,
+        help="Additional generator parameters as a JSON object; see template show",
+    )
+    new.add_argument(
+        "--presentation",
+        choices=("dashboard", "web"),
+        help="Compatibility alias for the corresponding optional Notes template",
+    )
+
+    template = commands.add_parser(
+        "template",
+        help="Discover distribution-provided plugin templates without executing package code",
+    )
+    _add_json_option(template)
+    template_commands = template.add_subparsers(dest="action", required=True)
+    for action in ("list", "show"):
+        command = template_commands.add_parser(action)
+        _add_json_option(command)
+        command.add_argument(
+            "--from",
+            dest="template_source",
+            help="Read and cache a wheel or pypi:PACKAGE==VERSION without installing dependencies",
+        )
+        if action == "show":
+            command.add_argument("template", help="Complete distribution/template ID")
+        else:
+            command.add_argument(
+                "--catalog",
+                action="store_true",
+                help="Show the offline official package directory, separately from local templates",
+            )
     new.add_argument(
         "--output",
         type=Path,
@@ -290,6 +328,9 @@ def _exit_code(code):
         "malformed_input",
         "invalid_input",
         "invalid_request",
+        "template_parameters_invalid",
+        "template_id_invalid",
+        "authoring_source_invalid",
     }:
         return 2
     if code in {
@@ -308,7 +349,16 @@ def _exit_code(code):
         "provider_conflict",
         "service_ambiguous",
         "resource_target_invalid",
-    } or code.startswith(("validation_", "eligibility_", "dependency_", "schema_")):
+    } or code.startswith(
+        (
+            "validation_",
+            "eligibility_",
+            "dependency_",
+            "schema_",
+            "authoring_",
+            "template_missing",
+        )
+    ):
         return 3
     if code in {
         "runtime",
@@ -326,6 +376,7 @@ def _exit_code(code):
         "already_installed",
         "skill_conflict",
         "scaffold_conflict",
+        "template_conflict",
     }:
         return 5
     if code == "cancelled":
@@ -509,19 +560,58 @@ def run(arguments):
         _emit_json(state_run(arguments))
         return 0
     config = ConfigFile(arguments.home)
-    if arguments.command == "plugin" and arguments.action == "new":
-        from .scaffold import new_plugin
+    if arguments.command == "template":
+        from .authoring import listing, select
 
-        result = new_plugin(
-            config.home,
-            arguments.id,
-            output=arguments.output,
-            presentation=arguments.presentation,
+        if arguments.action == "list":
+            result = asyncio.run(
+                listing(
+                    config,
+                    source=_normalize_source(arguments.template_source)
+                    if arguments.template_source
+                    else None,
+                    catalog=arguments.catalog,
+                )
+            )
+        else:
+            result = asyncio.run(
+                select(
+                    config,
+                    arguments.template,
+                    source=_normalize_source(arguments.template_source)
+                    if arguments.template_source
+                    else None,
+                )
+            )[1]
+        if getattr(arguments, "json", False):
+            _emit_json(result)
+        else:
+            from .scaffold import describe_templates
+
+            print(describe_templates(result))
+        return 0
+    if arguments.command == "plugin" and arguments.action == "new":
+        from .authoring import new_plugin
+        from .scaffold import select_template
+
+        result = asyncio.run(
+            new_plugin(
+                config,
+                arguments.id,
+                output=arguments.output,
+                template=select_template(arguments.template, arguments.presentation),
+                source=_normalize_source(arguments.template_source)
+                if arguments.template_source
+                else None,
+                parameters=arguments.parameters,
+            )
         )
         if getattr(arguments, "json", False):
             _emit_json(result)
         else:
-            print(f"Created plugin {result['plugin_id']} at {result['path']}")
+            print(
+                f"Created plugin {result['plugin_id']} at {result['path']} using {result['template']['id']} ({result['template']['version']})"
+            )
         return 0
     if arguments.command == "web":
         from .web_build import prepare

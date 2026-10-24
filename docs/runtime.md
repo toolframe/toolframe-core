@@ -84,7 +84,9 @@ The internal `TOOLFRAME_COMPANION_WHEELHOUSE` handoff makes this dependency
 available to plugin resolution without recording cache paths in application
 configuration. Old launchers' bundled-wheel handoff remains readable for
 compatibility; new launchers clear inherited bundle paths. The authoring skill
-and templates still ship in the Python Core wheel with their original licenses.
+and the basic template ship in the Python Core wheel with their original licenses.
+Optional Web/Dashboard templates ship only in their owning distributions; see
+[distribution authoring](authoring.md).
 
 ## Background task policy
 

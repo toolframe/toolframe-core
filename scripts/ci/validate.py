@@ -154,6 +154,8 @@ def python_checks(root, core, output, env):
         "scripts/build-launcher.py",
         "scripts/verify-release.py",
         "scripts/verify-skill.py",
+        "scripts/verify-scaffold.py",
+        "scripts/check-authoring-catalog.py",
         "scripts/ci",
         cwd=core,
         env=env,
@@ -170,6 +172,33 @@ def python_checks(root, core, output, env):
     )
     distribution = output / "python-dist"
     run("uv", "build", "--no-sources", "--out-dir", distribution, cwd=core, env=env)
+    authoring_wheels = root / "authoring-wheels"
+    authoring_wheels.mkdir()
+    for wheel in distribution.glob("*.whl"):
+        shutil.copy2(wheel, authoring_wheels / wheel.name)
+    for name in ("toolframe-web", "toolframe-streamlit-dashboard"):
+        run(
+            "uv",
+            "build",
+            "--no-sources",
+            "--wheel",
+            "--out-dir",
+            authoring_wheels,
+            root / "workspace" / name,
+            cwd=core,
+            env=env,
+        )
+    run(
+        "uv",
+        "run",
+        "--no-sync",
+        "python",
+        "scripts/check-authoring-catalog.py",
+        "--wheelhouse",
+        authoring_wheels,
+        cwd=core,
+        env=env,
+    )
     run(
         "uv",
         "tool",

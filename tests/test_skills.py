@@ -10,11 +10,14 @@ from pathlib import Path
 from shutil import copytree
 
 import pytest
+from dependencies import authoring_source
 from dependencies import source as dependency_source
+from dependencies import wheelhouse as dependency_wheelhouse
 from test_host import host, operate  # noqa: F401
 from toolframe_sdk import PluginError
 
-from toolframe_core import cli, scaffold, skills
+from toolframe_core import authoring, cli, skills
+from toolframe_core.config import ConfigFile
 from toolframe_core.skills import RECEIPT, SKILL_NAME, bundled_skill, install_skill
 
 
@@ -114,7 +117,6 @@ def mutable_bundle(tmp_path, monkeypatch):
         )
     )
     monkeypatch.setattr(skills, "bundled_skill", lambda: source)
-    monkeypatch.setattr(scaffold, "bundled_skill", lambda: source)
     return source
 
 
@@ -145,7 +147,7 @@ def test_install_excludes_development_evals_from_files_and_receipt(
         for path in destination.rglob("*")
         if path.is_file() and path.name != RECEIPT
     }
-    assert (destination / "assets/sample-plugin/pyproject.toml").is_file()
+    assert not (destination / "assets/sample-plugin").exists()
     assert (destination / "references/plugin-api.md").is_file()
     (nested / "case.json").write_text('{"development": "changed"}\n')
     assert install_skill(home, output=output)["status"] == "unchanged"
@@ -216,14 +218,29 @@ def test_skill_upgrade_and_replacement_preserve_generated_plugins(
 ):
     home = tmp_path / "app"
     external = tmp_path / "custom-plugin"
-    for arguments in (
-        ["customer-notes"],
-        ["external-notes", "--output", str(external)],
-        ["web-notes", "--presentation", "web"],
-    ):
-        assert (
-            cli.main(["--home", str(home), "plugin", "new", *arguments, "--json"]) == 0
-        )
+    with monkeypatch.context() as environment:
+        environment.setenv("TOOLFRAME_WHEELHOUSE", str(dependency_wheelhouse()))
+        for arguments in (
+            ["customer-notes", "--from", authoring_source("toolframe-core")],
+            [
+                "external-notes",
+                "--output",
+                str(external),
+                "--from",
+                authoring_source("toolframe-core"),
+            ],
+            [
+                "web-notes",
+                "--template",
+                "toolframe-web/notes",
+                "--from",
+                authoring_source("toolframe-web"),
+            ],
+        ):
+            assert (
+                cli.main(["--home", str(home), "plugin", "new", *arguments, "--json"])
+                == 0
+            )
     generated = home / "plugins/customer-notes/src/toolframe_customer_notes/service.py"
     generated.write_text(generated.read_text() + "\n# User business customization\n")
     roots = (home / "plugins", external)
@@ -232,11 +249,10 @@ def test_skill_upgrade_and_replacement_preserve_generated_plugins(
     }
     destination = Path(install_skill(home)["path"])
     bump_bundle(mutable_bundle)
-    # The next binary can even ship changed example code; generated code is owned
-    # by the project and is not an installed-skill receipt member.
-    (
-        mutable_bundle / "assets/sample-plugin/src/toolframe_sample_notes/service.py"
-    ).write_text("# A different bundled example\n")
+    # A new guide version can change its advice without touching generated source.
+    (mutable_bundle / "references/design.md").write_text(
+        "Updated template selection guidance\n"
+    )
     monkeypatch.setattr(cli, "_serve", lambda config, **kwargs: 0)
     assert cli.main(["--home", str(home), "serve"]) == 0
     (destination / "references/design.md").write_text("My custom guidance\n")
@@ -371,22 +387,17 @@ def test_failed_directory_publication_restores_previous_skill(
 
 
 async def test_generated_starter_runs_headless_and_retains_data_after_edit(
-    host, tmp_path, capsys
+    host, tmp_path, monkeypatch
 ):
-    assert (
-        cli.main(
-            [
-                "--home",
-                str(tmp_path / "authoring"),
-                "plugin",
-                "new",
-                "customer-notes",
-                "--json",
-            ]
+    with monkeypatch.context() as environment:
+        environment.setenv("TOOLFRAME_WHEELHOUSE", str(dependency_wheelhouse()))
+        created = await authoring.new_plugin(
+            ConfigFile(tmp_path / "authoring"),
+            "customer-notes",
+            template="toolframe-streamlit-dashboard/notes",
+            source=authoring_source("toolframe-streamlit-dashboard"),
         )
-        == 0
-    )
-    source = Path(json.loads(capsys.readouterr().out)["path"])
+    source = Path(created["path"])
     storage = await operate(
         host, "add", source=dependency_source("toolframe-sql-sqlite"), enable=True
     )

@@ -9,6 +9,7 @@ from packaging.requirements import Requirement
 
 REPOSITORIES = (
     "toolframe-core",
+    "toolframe-web",
     "toolframe-sdk",
     "toolframe-sql-sqlite",
     "toolframe-sql-postgres",
@@ -24,22 +25,20 @@ REPOSITORIES = (
 
 
 @pytest.mark.parametrize(
-    "repository", (*REPOSITORIES, "toolframe-sample-notes", "toolframe-web-notes")
+    "repository",
+    (*REPOSITORIES, "toolframe-sample-notes", "toolframe-web-notes", "toolframe-basic"),
 )
 def test_repository_uses_only_its_implementation_and_public_sdk(repository):
-    root = (
-        source_tree(repository)
-        if repository not in {"toolframe-sample-notes", "toolframe-web-notes"}
-        else source_tree("toolframe-core")
-    )
-    if repository == "toolframe-sample-notes":
-        root = (
-            root
-            / "src/toolframe_core/bundled_skills"
-            / "toolframe-plugin-design/assets/sample-plugin"
-        )
-    if repository == "toolframe-web-notes":
-        root = root / "src/toolframe_core/web_template"
+    templates = {
+        "toolframe-sample-notes": (
+            "toolframe-streamlit-dashboard",
+            "src/toolframe_streamlit_dashboard/templates/notes",
+        ),
+        "toolframe-web-notes": ("toolframe-web", "src/toolframe_web/templates/notes"),
+        "toolframe-basic": ("toolframe-core", "src/toolframe_core/basic_template"),
+    }
+    owner, relative = templates.get(repository, (repository, ""))
+    root = source_tree(owner) / relative
     assert root.is_dir(), f"Integration workspace is missing {repository}"
     own = repository.replace("-", "_")
     allowed = {own, "toolframe_sdk"}
@@ -63,9 +62,11 @@ def test_repository_uses_only_its_implementation_and_public_sdk(repository):
         forbidden_libraries.add("sqlite3")
     for file in (root / "src").rglob("*.py"):
         # Shipped authoring assets are a separate plugin, checked in their own case.
-        if repository == "toolframe-core" and {"bundled_skills", "web_template"} & set(
-            file.parts
-        ):
+        if repository in REPOSITORIES and {
+            "bundled_skills",
+            "basic_template",
+            "templates",
+        } & set(file.parts):
             continue
         for node in ast.walk(ast.parse(file.read_text(), filename=str(file))):
             imports = []

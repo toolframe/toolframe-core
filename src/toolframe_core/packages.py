@@ -161,7 +161,7 @@ def snapshot(root, destination):
     return target, identifier
 
 
-def wheel_metadata(path):
+def wheel_metadata(path, *, runtime=True):
     with zipfile.ZipFile(path) as wheel:
         metadata = [
             name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")
@@ -169,6 +169,13 @@ def wheel_metadata(path):
         if len(metadata) != 1:
             raise PluginError("wheel_invalid", "Wheel must contain one distribution")
         message = email.message_from_bytes(wheel.read(metadata[0]))
+        identity = {
+            "distribution": canonicalize_name(message["Name"]),
+            "version": message["Version"],
+            "extras": message.get_all("Provides-Extra", []),
+        }
+        if not runtime:
+            return identity
         entryfile = metadata[0].removesuffix("METADATA") + "entry_points.txt"
         entries = configparser.ConfigParser(interpolation=None)
         entries.optionxform = str
@@ -328,29 +335,15 @@ class Packages:
         source = Path(source)
         if source.is_dir():
             project = tomllib.loads((source / "pyproject.toml").read_text())
-            if (source / "web-assets.toml").is_file() or project.get("tool", {}).get(
-                "toolframe", {}
-            ).get("web", {}).get("manifests"):
-                staged = destination.parent / "web-source"
-                await command(
-                    self.uv,
-                    "--no-config",
-                    "run",
-                    "--no-project",
-                    "--no-sources",
-                    "--python",
-                    sys.executable,
-                    "--with",
-                    "toolframe-web==0.1.0",
-                    *self.flags(),
-                    "toolframe-web",
-                    "stage",
-                    source,
-                    staged,
-                    "--cache",
-                    self.root / "web-build-cache",
-                    *(["--offline"] if self.settings.offline else []),
-                )
+            authoring = project.get("tool", {}).get("toolframe", {}).get("authoring")
+            legacy_web = (source / "web-assets.toml").is_file() or project.get(
+                "tool", {}
+            ).get("toolframe", {}).get("web", {}).get("manifests")
+            if authoring or legacy_web:
+                from .authoring import prepare_source
+
+                staged = destination.parent / "prepared-source"
+                await prepare_source(self, source, staged, project=project)
                 source = staged
         await command(
             self.uv,
@@ -370,8 +363,24 @@ class Packages:
             raise PluginError("build_invalid", "Build must produce exactly one wheel")
         return wheels[0]
 
-    async def capture(self, source):
-        cached = self.root / "source-resolutions" / f"{digest(source)}.json"
+    async def capture(self, source, *, authoring=False):
+        if authoring and (
+            source.startswith("git+")
+            or (
+                not source.startswith(("pypi:", "https://"))
+                and not source.endswith(".whl")
+            )
+        ):
+            raise PluginError(
+                "authoring_source_invalid",
+                "Authoring discovery requires a wheel or pypi requirement; source builds are not executed",
+            )
+        cache_dir = (
+            self.root / "authoring/resolutions"
+            if authoring
+            else self.root / "source-resolutions"
+        )
+        cached = cache_dir / f"{digest(source)}.json"
         if (
             self.settings.offline
             and cached.exists()
@@ -453,7 +462,17 @@ class Packages:
                 await self.download(url, wheel, expected)
                 provenance.update(kind="wheel")
             elif source.startswith("pypi:"):
-                requirement = str(Requirement(source.removeprefix("pypi:")))
+                parsed_requirement = Requirement(source.removeprefix("pypi:"))
+                if authoring and (
+                    parsed_requirement.url
+                    or parsed_requirement.marker
+                    or parsed_requirement.extras
+                ):
+                    raise PluginError(
+                        "authoring_source_invalid",
+                        "Use pypi:PACKAGE==VERSION without URL, extras or environment markers",
+                    )
+                requirement = str(parsed_requirement)
                 requirements = temporary / "requirements.in"
                 requirements.write_text(requirement + "\n")
                 lockfile = temporary / "pylock.toml"
@@ -463,6 +482,7 @@ class Packages:
                     "pip",
                     "compile",
                     "--no-deps",
+                    *(["--no-build"] if authoring else []),
                     "--format",
                     "pylock.toml",
                     "--python",
@@ -486,6 +506,11 @@ class Packages:
                         chosen = item
                         break
                 if chosen is None:
+                    if authoring:
+                        raise PluginError(
+                            "authoring_wheel_missing",
+                            "Authoring discovery requires a compatible wheel; source builds are not executed",
+                        )
                     chosen = package.get("sdist")
                     if not chosen:
                         raise PluginError(
@@ -512,6 +537,11 @@ class Packages:
                 raw = source.removeprefix("path:").removeprefix("wheel:")
                 path = (self.home / raw).resolve()
                 if path.is_dir():
+                    if authoring:
+                        raise PluginError(
+                            "authoring_source_invalid",
+                            "Authoring discovery requires a wheel file, not a source directory",
+                        )
                     captured, source_hash = await asyncio.to_thread(
                         snapshot, path, self.root / "sources"
                     )
@@ -525,7 +555,7 @@ class Packages:
                     provenance.update(kind="wheel", path=str(path))
                 else:
                     raise PluginError("source_missing", f"Unknown local source: {path}")
-            metadata = wheel_metadata(wheel)
+            metadata = wheel_metadata(wheel, runtime=not authoring)
             stored, wheel_hash = self.artifact(wheel)
             result = {
                 **metadata,
@@ -560,7 +590,7 @@ class Packages:
             else None,
         }
 
-    async def environment(self, artifacts, *, ui=False, extra=None):
+    async def environment(self, artifacts, *, ui=False, extra=None, authoring=False):
         extra = extra or ("ui" if ui else "backend")
         ui = extra == "ui"
         requirements = []
@@ -584,14 +614,14 @@ class Packages:
                 )
             requirements.append(f"{name}{suffix} @ {path.as_uri()}")
         # A release supplies its SDK wheel; development may provide it through a wheelhouse.
-        if "toolframe-sdk" not in names:
+        if not authoring and "toolframe-sdk" not in names:
             wheel = self.sdk_wheel()
             if wheel:
                 sdk, _ = self.artifact(wheel)
                 requirements.append(f"toolframe-sdk @ {sdk.as_uri()}")
-        if self.tracing:
+        if self.tracing and not authoring:
             requirements.append(f"toolframe-sdk[tracing]=={SDK_VERSION}")
-        profile = self.runtime_profile()
+        profile = {"authoring": True} if authoring else self.runtime_profile()
         with tempfile.TemporaryDirectory(dir=self.root / "tmp") as temporary:
             temporary = Path(temporary)
             input_file = temporary / "requirements.in"

@@ -145,7 +145,16 @@ def main():
     assert updated["bundled_version"] == version and inventory(skill) == shipped
 
     sample = root / "plugin-source"
-    shutil.copytree(exported / "assets/sample-plugin", sample)
+    run(
+        "--home",
+        authoring,
+        "plugin",
+        "new",
+        "sample-basic",
+        "--output",
+        sample,
+        "--json",
+    )
     built = subprocess.run(
         ["uv", "build", "--no-sources", "--wheel", "--out-dir", str(root / "dist")],
         cwd=sample,
@@ -157,12 +166,14 @@ def main():
     assert built.returncode == 0, built.stderr
     wheel = next((root / "dist").glob("*.whl"))
     with zipfile.ZipFile(wheel) as archive:
-        assert "toolframe_sample_notes/migrations/0001_init.sql" in archive.namelist()
-        assert "toolframe_sample_notes/docs/usage.md" in archive.namelist()
+        assert "toolframe_sample_basic/service.py" in archive.namelist()
+        assert not any(
+            "migrations/" in name or "page.py" in name for name in archive.namelist()
+        )
         entry = archive.read(
-            "toolframe_sample_notes-0.1.0.dist-info/entry_points.txt"
+            "toolframe_sample_basic-0.1.0.dist-info/entry_points.txt"
         ).decode()
-        assert "sample-notes = toolframe_sample_notes.plugin:plugin" in entry
+        assert "sample-basic = toolframe_sample_basic.plugin:plugin" in entry
 
     report = {
         "binary": str(original),
@@ -183,7 +194,7 @@ def main():
             "legacy_eval_files_and_receipt_entries_removed_on_clean_upgrade": True,
             "offline_alternate_output": True,
             "fresh_init_and_preserving_init": True,
-            "starter_builds_independently_with_sql_and_docs": True,
+            "basic_builds_independently_without_provider_resources": True,
         },
         "passed": True,
     }

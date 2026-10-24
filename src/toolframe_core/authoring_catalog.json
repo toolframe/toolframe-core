@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "packages": [
+    {
+      "distribution": "toolframe-core",
+      "title": "Toolframe Core",
+      "description": "Persistent control host for isolated Toolframe plugins",
+      "source": {
+        "kind": "pypi",
+        "project": "toolframe-core",
+        "availability": "unpublished-authoring",
+        "note": "Authoring metadata has not been published; use a matching local wheel for this interface."
+      },
+      "templates": [
+        {
+          "id": "toolframe-core/basic",
+          "title": "Basic plugin",
+          "description": "Minimal plugin with a service and tests; no storage or presentation providers."
+        }
+      ]
+    },
+    {
+      "distribution": "toolframe-web",
+      "title": "Toolframe Web",
+      "description": "HTML applications and sealed browser assets for Toolframe",
+      "source": {
+        "kind": "pypi",
+        "project": "toolframe-web",
+        "availability": "unpublished-authoring",
+        "note": "Authoring metadata has not been published; use a matching local wheel for this interface."
+      },
+      "templates": [
+        {
+          "id": "toolframe-web/notes",
+          "title": "Web Notes",
+          "description": "Persistent notes with an FSD Web presentation, bounded service schemas, scopes, idempotency and revisions."
+        }
+      ]
+    },
+    {
+      "distribution": "toolframe-streamlit-dashboard",
+      "title": "Streamlit Dashboard",
+      "description": "Native Streamlit page and management provider for Toolframe",
+      "source": {
+        "kind": "pypi",
+        "project": "toolframe-streamlit-dashboard",
+        "availability": "unpublished-authoring",
+        "note": "Authoring metadata has not been published; use a matching local wheel for this interface."
+      },
+      "templates": [
+        {
+          "id": "toolframe-streamlit-dashboard/notes",
+          "title": "Dashboard Notes",
+          "description": "Persistent notes with a Streamlit Dashboard page and optional read-only MCP and documentation resources."
+        }
+      ]
+    }
+  ]
+}
