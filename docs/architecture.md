@@ -43,6 +43,8 @@ its database directly, so a failed optional provider does not remove management.
 Required service dependencies block consumers when unavailable; optional
 presentation dependencies affect the corresponding entrance.
 
+The reasons and tradeoffs are recorded in [ADR 0016](adr/0016-plugin-compatibility.md).
+
 ## Composition, packages and identity
 
 `toolframe.toml` is the desired-state authority: sources, enabled intent,
