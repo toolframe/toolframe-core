@@ -216,6 +216,27 @@ def create_app(host, *, manage_lifespan=True):
                 {"error": host.redact(error.as_dict())}, status_code=error_status(error)
             )
 
+    @app.middleware("http")
+    async def dashboard_embedding(request, call_next):
+        response = await call_next(request)
+        path = request.scope["path"]
+        mount = host.gateway.match(path)
+        if (
+            path.startswith("/_toolframe/")
+            or (mount is not None and mount.target == "provider.dashboard")
+            or getattr(request.state, "dashboard_response", False)
+        ):
+            # Browsers enforce each CSP independently. Preserve every upstream
+            # policy and add the Core-owned restriction as a separate policy.
+            response.raw_headers[:] = [
+                (name, value)
+                for name, value in response.raw_headers
+                if name.lower() != b"x-frame-options"
+            ]
+            response.headers.append("content-security-policy", "frame-ancestors 'none'")
+            response.headers["x-frame-options"] = "DENY"
+        return response
+
     @app.exception_handler(PluginError)
     async def plugin_error(request, error):
         return JSONResponse(
@@ -281,8 +302,10 @@ def create_app(host, *, manage_lifespan=True):
                 result["token"],
                 httponly=True,
                 samesite="strict",
-                secure=host.composition.application.public_url.startswith("https://")
-                or request.url.scheme == "https",
+                secure=(
+                    urlsplit(host.composition.application.public_url).scheme == "https"
+                    or request.url.scheme == "https"
+                ),
                 max_age=max(1, int(result["expires_at"] - time.time())),
             )
             return response
@@ -362,8 +385,10 @@ def create_app(host, *, manage_lifespan=True):
                 token,
                 httponly=True,
                 samesite="strict",
-                secure=host.composition.application.public_url.startswith("https://")
-                or request.url.scheme == "https",
+                secure=(
+                    urlsplit(host.composition.application.public_url).scheme == "https"
+                    or request.url.scheme == "https"
+                ),
             )
             response.headers["referrer-policy"] = "no-referrer"
             response.headers["cache-control"] = "no-store"
@@ -390,7 +415,7 @@ def create_app(host, *, manage_lifespan=True):
     async def composition(request: Request):
         await require(request, "composition")
         try:
-            text = redact_toml(host.config.path.read_text(), host.redact)
+            text = redact_toml(host.config.path.read_text(), host.redact_composition)
         except ValueError as error:
             raise PluginError(
                 "configuration_invalid", "Repair invalid TOML before exporting"
@@ -553,6 +578,7 @@ def create_app(host, *, manage_lifespan=True):
 
             return await forward(host, request, mount, runtime, address)
         if kind == "dashboard":
+            request.state.dashboard_response = True
             try:
                 await host.access.admit(request.state.identity)
             except PluginError as error:

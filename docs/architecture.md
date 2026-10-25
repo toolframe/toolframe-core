@@ -38,6 +38,16 @@ environment locks. New features must keep older contracts usable or provide an
 explicit migration; unsupported schemas, protocols and authorization remain
 errors. This promise does not cover private Core implementation details.
 
+Offline operator tools are separate from plugin runtime dependencies. In OIDC
+Auth, only `toolframe_oidc_auth/maintenance.py` may use `sqlite3` and import the
+public `stopped_application` function from `toolframe_core.maintenance`; Core is
+an optional dependency confined to the `operator` extra. Runtime modules,
+including package initializers, must not import that operator module. This narrow
+exception does not permit other Core symbols, private journal access, or imports
+of another plugin's implementation. Operators use the
+[stopped-application maintenance contract](offline-maintenance.md); ordinary
+plugin code continues to access stores through SDK service contracts.
+
 An empty application needs no presentation or business-storage provider. Core owns
 its database directly, so a failed optional provider does not remove management.
 Required service dependencies block consumers when unavailable; optional

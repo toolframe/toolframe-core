@@ -15,6 +15,7 @@ import tomlkit
 from dependencies import wheelhouse as dependency_wheelhouse
 from toolframe_sdk import AuthorizationSpec, PluginDefinition, PluginError
 
+from toolframe_core import maintenance
 from toolframe_core._state_sqlite import SQLiteCoreState
 from toolframe_core.config import (
     ConfigFile,
@@ -370,19 +371,51 @@ def test_stale_or_malformed_owners_never_admitted_from_missing_pid(home, owners)
     expect_failure(home, "maintenance_ownership_unproven")
 
 
-def test_spawn_before_journal_worker_is_refused(home, monkeypatch):
+@pytest.mark.parametrize("pgid", [321, 0])
+def test_spawn_before_journal_worker_is_refused(home, monkeypatch, pgid):
+    command = f"python -m toolframe_sdk.worker --host-token {RUN}/notes/{'b' * 32}"
     monkeypatch.setattr(
         "toolframe_core.maintenance.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args,
             0,
-            f"321 321 python -m toolframe_sdk.worker --host-token {RUN}/notes/{'b' * 32}\n",
+            f"321 {pgid} {command}\n",
         ),
     )
+    assert maintenance._processes() == [command]
     expect_failure(home, "maintenance_ownership_unproven")
 
 
-@pytest.mark.parametrize("output", ["", "unexpected output\n", "1 x python\n"])
+def test_kernel_zero_process_group_is_preserved_and_allows_stopped_inventory(
+    home, monkeypatch
+):
+    commands = ["[kthreadd]", "[kworker/R-rcu_gp]", "python other-application.py"]
+    output = f"2 0 {commands[0]}\n4 0 {commands[1]}\n201 201 {commands[2]}\n"
+    monkeypatch.setattr(
+        "toolframe_core.maintenance.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, output),
+    )
+    assert maintenance._processes() == commands
+    with stopped_application(home) as inventory:
+        assert inventory.status == "STOPPED"
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "",
+        "unexpected output\n",
+        "1 x python\n",
+        "0 0 [invalid-pid]\n",
+        "-1 1 invalid\n",
+        "1 -1 invalid\n",
+        "1 1\n",
+        "1 0   \n",
+        "2 0 [kthreadd]\n2 2 duplicate\n",
+        "1 1 python\n1 1 duplicate\n",
+        "2 0 [kthreadd]\nmalformed\n",
+    ],
+)
 def test_process_inventory_uncertainty_is_refused(home, monkeypatch, output):
     monkeypatch.setattr(
         "toolframe_core.maintenance.subprocess.run",
@@ -394,6 +427,22 @@ def test_process_inventory_uncertainty_is_refused(home, monkeypatch, output):
 def test_failed_process_probe_is_refused(home, monkeypatch):
     def unavailable(*args, **kwargs):
         raise subprocess.CalledProcessError(1, "ps", stderr=SECRET)
+
+    monkeypatch.setattr("toolframe_core.maintenance.subprocess.run", unavailable)
+    expect_failure(home, "maintenance_ownership_unproven")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError(SECRET),
+        subprocess.TimeoutExpired("ps", 10),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, SECRET),
+    ],
+)
+def test_unreadable_process_probe_is_refused(home, monkeypatch, failure):
+    def unavailable(*args, **kwargs):
+        raise failure
 
     monkeypatch.setattr("toolframe_core.maintenance.subprocess.run", unavailable)
     expect_failure(home, "maintenance_ownership_unproven")

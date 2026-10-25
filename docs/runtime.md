@@ -114,3 +114,10 @@ bindings while they drain; an idle poller must not hold a root. Task completion,
 deadline expiry and cancellation settle the same root cleanup used by ordinary
 service calls. Read-only activation/health probes and stale-generation checks
 retain their existing admission rules.
+
+When Core starts shutting down, new and waiting `task.begin` requests fail with
+`host_closing` instead of waiting for a future resume. Already admitted roots
+retain their ownership and may settle through `task.end`, including when the
+SDK cancels a pending admission handshake during disposal. Normal reload gates
+still wait for resume while Core is running; shutdown does not shorten task
+budgets or bypass worker-cleanup checks for offline maintenance.

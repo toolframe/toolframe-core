@@ -84,6 +84,7 @@ def generate(*, destination, parameters):
     [
         ("0.7.9", False),
         ("0.8.0", True),
+        ("0.8.1", True),
         ("0.9.0", True),
         ("0.12.3", True),
         ("1.0.0", False),

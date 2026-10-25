@@ -102,6 +102,9 @@ The context refuses:
   bearing a recorded host-run token, uncertain runtime cleanup, or an unavailable
   or malformed process inventory. A missing PID or PID file does not prove that
   cleanup finished. Historical plugin `stopped` flags are not liveness evidence.
+  Positive process IDs with a zero process-group ID are valid, including Linux
+  kernel threads. Their commands remain part of the ownership scan; duplicate
+  IDs, negative group IDs, incomplete rows, and unreadable inventories are refused.
 - `unknown` or `failed` runtime observations, including observations without a
   PID. Only explicit durable `stopped` records and exact empty observations for
   disabled candidates with no current or previous selection are accepted as

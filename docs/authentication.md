@@ -62,6 +62,13 @@ not blindly retry credential creation.
 
 ## Entrances and grants
 
+Core prevents browser framing of the Dashboard and its management/sign-in
+responses with `Content-Security-Policy: frame-ancestors 'none'` and
+`X-Frame-Options: DENY`. This applies to both the legacy Dashboard root and
+explicit Dashboard mounts. The additional CSP policy preserves upstream CSP
+directives; Web applications retain their own response policies. Open the
+Dashboard as a top-level page.
+
 | Entrance | Access rule |
 | --- | --- |
 | Dashboard and `POST /_toolframe/v1/services/OWNER/SERVICE/METHOD` | Effective Dashboard policy and method scopes; internal services excluded |
@@ -137,6 +144,10 @@ database, management token and config. A missing key alongside an existing store
 fails activation; restore the original key rather than generating a replacement.
 Scratch runtime validation uses a separate temporary store/key. Password/session
 secrets never enter management operation history or exported composition.
+Composition exports apply each known plugin's secret schema to the TOML snapshot
+being exported, including manually rotated values before a Host refresh. Export
+reads do not apply those edits or rewrite the composition; ordinary non-secret
+settings and TOML comments remain visible.
 
 ## SDK and existing applications
 
