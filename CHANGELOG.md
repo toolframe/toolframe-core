@@ -5,6 +5,23 @@ imply that its distributions have been published or every target is qualified.
 
 ## Unreleased
 
+## 0.8.1
+
+- Redact schema-declared secrets from the composition snapshot being exported,
+  including manually rotated values before refresh.
+- Set Secure authentication cookies using the parsed HTTPS scheme, including
+  uppercase and mixed-case HTTPS origins.
+- Prevent Dashboard and management pages from being framed while retaining
+  upstream Content Security Policy directives.
+- Reject new and waiting managed task admission during shutdown so worker
+  disposal can settle SDK ownership handshakes promptly.
+- Accept valid Linux kernel process groups with ID zero during stopped-state
+  inspection while preserving ownership scans and malformed-inventory refusals.
+- Select FastMCP 0.3.1 when initializing the named Entry Register recipe;
+  existing applications and explicit local recipes keep their source selections.
+- Preserve documented public plugin and authoring contracts across Core 0.x,
+  and require retained-plugin wheel verification in release bundles.
+
 ## 0.7.0
 
 - Rename the SQL providers to `toolframe-sql-sqlite` and `toolframe-sql-postgres`,

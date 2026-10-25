@@ -132,7 +132,7 @@ def check_repository(root, repository):
             name = canonicalize_name(Requirement(dependency).name).replace("-", "_")
             if (
                 repository == "toolframe-oidc-auth"
-                and extra == "maintenance"
+                and extra == "operator"
                 and name == "toolframe_core"
             ):
                 continue
@@ -153,7 +153,7 @@ def oidc_repository(tmp_path):
     )
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname="toolframe-oidc-auth"\ndependencies=["toolframe-sdk>=0.4,<0.5"]\n'
-        '[project.optional-dependencies]\nmaintenance=["toolframe-core>=0.8,<0.9"]\n'
+        '[project.optional-dependencies]\noperator=["toolframe-core>=0.8.0,<1"]\n'
     )
     return tmp_path
 
@@ -243,12 +243,13 @@ def test_oidc_operator_exception_rejects_import_boundary_violations(
         (None, "toolframe-core>=0.8"),
         (None, "Toolframe.Core>=0.8"),
         ("web", "toolframe-core>=0.8"),
-        ("maintenance", "toolframe-auth>=0.3"),
-        ("maintenance", "toolframe-sql-sqlite>=0.4"),
-        ("maintenance", "sqlite3"),
+        ("maintenance", "toolframe-core>=0.8"),
+        ("operator", "toolframe-auth>=0.3"),
+        ("operator", "toolframe-sql-sqlite>=0.4"),
+        ("operator", "sqlite3"),
     ],
 )
-def test_oidc_core_dependency_is_only_for_maintenance_extra(
+def test_oidc_core_dependency_is_only_for_operator_extra(
     oidc_repository, extra, dependency
 ):
     project = oidc_repository / "pyproject.toml"
