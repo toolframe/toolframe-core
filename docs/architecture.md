@@ -41,7 +41,7 @@ errors. This promise does not cover private Core implementation details.
 Offline operator tools are separate from plugin runtime dependencies. In OIDC
 Auth, only `toolframe_oidc_auth/maintenance.py` may use `sqlite3` and import the
 public `stopped_application` function from `toolframe_core.maintenance`; Core is
-an optional dependency confined to the `maintenance` extra. Runtime modules,
+an optional dependency confined to the `operator` extra. Runtime modules,
 including package initializers, must not import that operator module. This narrow
 exception does not permit other Core symbols, private journal access, or imports
 of another plugin's implementation. Operators use the
