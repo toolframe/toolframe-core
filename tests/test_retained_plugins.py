@@ -11,8 +11,9 @@ from toolframe_core.packages import pinned_index_source
 
 
 @pytest.mark.parametrize("reviewed", [False, True])
+@pytest.mark.parametrize("specifier", ["==0.1.0", ">=0.1,<0.2"])
 async def test_pinned_plugin_survives_bundle_replacement(
-    host, tmp_path, monkeypatch, reviewed
+    host, tmp_path, monkeypatch, reviewed, specifier
 ):
     source = fixture_source(tmp_path, "retained")
     artifact = await host.packages.capture(str(source))
@@ -21,7 +22,7 @@ async def test_pinned_plugin_survives_bundle_replacement(
     bundle.mkdir(parents=True)
     copy2(wheel, bundle / wheel.name)
     monkeypatch.setenv("TOOLFRAME_BUNDLED_WHEELHOUSE", str(bundle.parent))
-    request = "pypi:fixture-retained==0.1.0"
+    request = "pypi:fixture-retained" + specifier
     added = await operate(host, "add", source=request, enable=True)
     assert added["status"] == "succeeded", added
     installed = host.runtimes["retained"].candidate["id"]
@@ -182,5 +183,5 @@ async def test_damaged_retained_wheel_does_not_enable_or_change_intent(
         ("git+https://example.org/plugin@main", False),
     ],
 )
-def test_only_exact_index_versions_use_retained_wheels_on_reload(source, pinned):
+def test_identify_explicit_index_pins(source, pinned):
     assert pinned_index_source(source) is pinned

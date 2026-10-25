@@ -62,6 +62,14 @@ configuration and bindings. `toolframe.lock` records exact resolved artifacts an
 environments. The Core journal stores candidates, observed generations, validation
 results and operations. It does not override the composition file.
 
+Named application recipes resolve stable index ranges before first serve. Each
+backend retains its own dependency solve with Core's exact SDK; only existing
+Dashboard/Web cohorts share their required extras. The chosen plugin sources
+become exact, and the original update ranges remain in source provenance in the
+same candidate journal and format-1 lock. Ordinary lifecycle operations retain
+index selections; explicit update is the selection boundary. See
+[application recipes](application-templates.md) for the operator contract.
+
 A distribution exports one `toolframe.plugins` entry point and one stable plugin
 ID. Distribution name, import namespace and plugin ID are distinct. A local
 directory, Git revision, wheel or package-index request is captured into an

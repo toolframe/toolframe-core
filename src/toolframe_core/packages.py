@@ -22,6 +22,7 @@ from pathlib import Path
 import httpx
 import tomlkit
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from toolframe_sdk import (
@@ -34,6 +35,7 @@ from toolframe_sdk import (
 from toolframe_sdk import __version__ as SDK_VERSION
 from toolframe_sdk.tracing import tracing_requested
 
+from . import __version__ as CORE_VERSION
 from .config import atomic_write
 from .process import WorkerProcess, child_environment
 
@@ -205,17 +207,47 @@ def wheel_metadata(path, *, runtime=True):
 
 
 def pinned_index_source(source):
-    """Only an exact index version can be reloaded without resolving an update."""
+    """Identify an explicit version pin, including an explicitly chosen prerelease."""
     if not source.startswith("pypi:"):
         return False
     requirement = Requirement(source.removeprefix("pypi:"))
-    versions = list(requirement.specifier)
-    return (
-        not requirement.url
-        and len(versions) == 1
-        and versions[0].operator == "=="
-        and "*" not in versions[0].version
+    return not requirement.url and any(
+        version.operator == "==" and "*" not in version.version
+        for version in requirement.specifier
     )
+
+
+def index_source(source):
+    """Index selections are retained until an explicit update, including ranges."""
+    return source.startswith("pypi:") and not Requirement(source[5:]).url
+
+
+def floating_index_source(source):
+    return index_source(source) and not pinned_index_source(source)
+
+
+def pin_candidate(candidate, requirement):
+    """Keep a recipe's update range in the existing source provenance."""
+    if not floating_index_source(requirement):
+        return candidate
+    parsed = Requirement(requirement[5:])
+    parsed.specifier = SpecifierSet("==" + candidate["version"])
+    candidate = {
+        **candidate,
+        "source": {
+            **candidate["source"],
+            "request": "pypi:" + str(parsed),
+            "requirement": requirement,
+        },
+    }
+    candidate["id"] = digest(
+        {
+            key: value
+            for key, value in candidate.items()
+            if key not in {"id", "validation"}
+        }
+    )
+    return candidate
 
 
 class Packages:
@@ -279,9 +311,118 @@ class Packages:
         identifier = hashlib.sha256(data).hexdigest()
         target = self.root / "artifacts" / identifier / path.name
         target.parent.mkdir(parents=True, exist_ok=True)
+        if (
+            target.exists()
+            and hashlib.sha256(target.read_bytes()).hexdigest() != identifier
+        ):
+            raise PluginError(
+                "artifact_hash_mismatch", "Captured artifact was modified"
+            )
         if not target.exists():
             target.write_bytes(data)
         return target, identifier
+
+    def runtime_requirements(self):
+        requirements = [f"toolframe-sdk=={SDK_VERSION}"]
+        wheel = self.sdk_wheel()
+        if wheel:
+            metadata = wheel_metadata(wheel, runtime=False)
+            if (metadata["distribution"], metadata["version"]) != (
+                "toolframe-sdk",
+                SDK_VERSION,
+            ):
+                raise PluginError(
+                    "sdk_version_mismatch",
+                    "The SDK wheel must match Core's selected SDK",
+                )
+            stored, _ = self.artifact(wheel)
+            requirements.append(f"toolframe-sdk @ {stored.as_uri()}")
+        if self.tracing:
+            requirements.append(f"toolframe-sdk[tracing]=={SDK_VERSION}")
+        return requirements
+
+    async def resolve(
+        self,
+        requirements,
+        *,
+        runtime=True,
+        no_deps=False,
+        no_build=False,
+        stable=(),
+        find_links=(),
+    ):
+        """Resolve one existing isolation boundary with Core's SDK held fixed."""
+        with tempfile.TemporaryDirectory(dir=self.root / "tmp") as temporary:
+            temporary = Path(temporary)
+            input_file = temporary / "requirements.in"
+            input_file.write_text(
+                "\n".join(
+                    [
+                        *requirements,
+                        *(self.runtime_requirements() if runtime else []),
+                    ]
+                )
+                + "\n"
+            )
+            constraints = temporary / "constraints.txt"
+            constraints.write_text(
+                f"toolframe-sdk=={SDK_VERSION}\ntoolframe-core=={CORE_VERSION}\n"
+            )
+            lockfile = temporary / "pylock.toml"
+            try:
+                await command(
+                    self.uv,
+                    "--no-config",
+                    "pip",
+                    "compile",
+                    "--no-header",
+                    "--format",
+                    "pylock.toml",
+                    "--python",
+                    sys.executable,
+                    "--output-file",
+                    lockfile,
+                    *(["--constraints", constraints] if runtime else []),
+                    *(["--no-deps"] if no_deps else []),
+                    *(["--no-build"] if no_build else []),
+                    *(["--resolution", "highest"] if stable else []),
+                    *[
+                        arg
+                        for name in stable
+                        for arg in ("--prerelease-package", f"{name}=disallow")
+                    ],
+                    *(
+                        [arg for name in stable for arg in ("--refresh-package", name)]
+                        if stable and not self.settings.offline
+                        else []
+                    ),
+                    *self.flags(),
+                    *[arg for link in find_links for arg in ("--find-links", link)],
+                    input_file,
+                )
+            except PluginError as error:
+                if not stable or error.code != "package_command_failed":
+                    raise
+                raise PluginError(
+                    "no_compatible_version",
+                    "No compatible stable plugin selection is available for "
+                    + ", ".join(requirements)
+                    + (
+                        " using verified local resources (offline)"
+                        if self.settings.offline
+                        else ""
+                    ),
+                    {
+                        "requirements": requirements,
+                        "sdk": SDK_VERSION,
+                        "core": CORE_VERSION,
+                        "python": platform.python_version(),
+                        "platform": platform.platform(),
+                        "offline": self.settings.offline,
+                        "resolver": error.message,
+                    },
+                ) from error
+            return tomlkit.parse(lockfile.read_text())
 
     async def download(self, url, target, expected=None):
         parts = urllib.parse.urlsplit(url)
@@ -381,20 +522,27 @@ class Packages:
             else self.root / "source-resolutions"
         )
         cached = cache_dir / f"{digest(source)}.json"
+        local_links = []
         if (
             self.settings.offline
             and cached.exists()
             and source.startswith(("pypi:", "git+", "https://"))
         ):
             value = json.loads(cached.read_text())
-            if (
-                hashlib.sha256((self.home / value["artifact"]).read_bytes()).hexdigest()
-                != value["artifact_hash"]
-            ):
+            path = self.home / value["artifact"]
+            if not path.is_file():
+                raise PluginError(
+                    "offline_artifact_missing", "Cached source artifact is missing"
+                )
+            if hashlib.sha256(path.read_bytes()).hexdigest() != value["artifact_hash"]:
                 raise PluginError(
                     "artifact_hash_mismatch", "Cached source artifact was modified"
                 )
-            return value
+            if authoring or not floating_index_source(source):
+                return value
+            # Recheck compatibility with this runtime and any newly supplied local
+            # wheels. An old range lookup is not an offline update decision.
+            local_links.append(str(path.parent))
         with tempfile.TemporaryDirectory(dir=self.root / "tmp") as temporary:
             temporary = Path(temporary)
             provenance = {"request": source}
@@ -472,32 +620,28 @@ class Packages:
                         "authoring_source_invalid",
                         "Use pypi:PACKAGE==VERSION without URL, extras or environment markers",
                     )
-                requirement = str(parsed_requirement)
-                requirements = temporary / "requirements.in"
-                requirements.write_text(requirement + "\n")
-                lockfile = temporary / "pylock.toml"
-                await command(
-                    self.uv,
-                    "--no-config",
-                    "pip",
-                    "compile",
-                    "--no-deps",
-                    *(["--no-build"] if authoring else []),
-                    "--format",
-                    "pylock.toml",
-                    "--python",
-                    sys.executable,
-                    "--output-file",
-                    lockfile,
-                    *self.flags(),
-                    requirements,
+                selecting = not authoring and floating_index_source(source)
+                if selecting:
+                    parsed_requirement.extras |= {"backend"}
+                document = await self.resolve(
+                    [str(parsed_requirement)],
+                    runtime=selecting,
+                    no_deps=not selecting,
+                    no_build=authoring,
+                    stable=[parsed_requirement.name] if selecting else [],
+                    find_links=local_links,
                 )
-                packages = tomllib.loads(lockfile.read_text())["packages"]
-                if len(packages) != 1:
+                matches = [
+                    item
+                    for item in document.get("packages", [])
+                    if canonicalize_name(item["name"])
+                    == canonicalize_name(parsed_requirement.name)
+                ]
+                if len(matches) != 1:
                     raise PluginError(
                         "source_invalid", "PyPI source must resolve one distribution"
                     )
-                package = packages[0]
+                package = matches[0]
                 compatible = set(sys_tags())
                 chosen = None
                 for item in package.get("wheels", []):
@@ -603,7 +747,11 @@ class Packages:
                     f"Conflicting distributions in environment: {name}",
                 )
             names.add(name)
-            suffix = f"[{extra}]" if extra in artifact.get("extras", []) else ""
+            extras = {extra} if extra in artifact.get("extras", []) else set()
+            request = artifact.get("source", {}).get("request", "")
+            if request.startswith("pypi:"):
+                extras |= Requirement(request[5:]).extras
+            suffix = "[" + ",".join(sorted(extras)) + "]" if extras else ""
             path = self.home / artifact["artifact"]
             if (
                 hashlib.sha256(path.read_bytes()).hexdigest()
@@ -613,88 +761,85 @@ class Packages:
                     "artifact_hash_mismatch", "Captured wheel was modified"
                 )
             requirements.append(f"{name}{suffix} @ {path.as_uri()}")
-        # A release supplies its SDK wheel; development may provide it through a wheelhouse.
-        if not authoring and "toolframe-sdk" not in names:
-            wheel = self.sdk_wheel()
-            if wheel:
-                sdk, _ = self.artifact(wheel)
-                requirements.append(f"toolframe-sdk @ {sdk.as_uri()}")
-        if self.tracing and not authoring:
-            requirements.append(f"toolframe-sdk[tracing]=={SDK_VERSION}")
         profile = {"authoring": True} if authoring else self.runtime_profile()
-        with tempfile.TemporaryDirectory(dir=self.root / "tmp") as temporary:
-            temporary = Path(temporary)
-            input_file = temporary / "requirements.in"
-            input_file.write_text("\n".join(requirements) + "\n")
-            lockfile = temporary / "pylock.toml"
-            await command(
-                self.uv,
-                "--no-config",
-                "pip",
-                "compile",
-                "--no-header",
-                "--format",
-                "pylock.toml",
-                "--python",
-                sys.executable,
-                "--output-file",
-                lockfile,
-                *self.flags(),
-                input_file,
-            )
-            document = tomlkit.parse(lockfile.read_text())
-            for package in document.get("packages", []):
-                for wheel in package.get("wheels", []):
-                    if wheel.get("url", "").startswith("file://"):
-                        path = Path(
-                            urllib.parse.unquote(
-                                urllib.parse.urlsplit(wheel["url"]).path
-                            )
-                        )
-                        stored, checksum = self.artifact(path)
-                        wheel["url"] = stored.as_uri()
-                        wheel["hashes"] = {"sha256": checksum}
-            lock = tomlkit.dumps(document).replace(str(self.home), "${TOOLFRAME_HOME}")
-            key = digest(
-                {
-                    "lock": lock,
-                    "python": sys.version,
-                    "platform": platform.platform(),
-                    "ui": ui,
-                    **({"extra": extra} if extra != "backend" and not ui else {}),
-                    "runtime_profile": profile,
-                }
-            )
-            target = self.root / "environments" / key
-            if not (target / ".ready").exists():
-                if target.exists():
-                    shutil.rmtree(target)
-                await command(
-                    self.uv, "--no-config", "venv", "--python", sys.executable, target
-                )
-                expanded = target / "pylock.toml"
-                expanded.write_text(lock.replace("${TOOLFRAME_HOME}", str(self.home)))
-                await command(
-                    self.uv,
-                    "--no-config",
-                    "pip",
-                    "sync",
-                    "--python",
-                    target / "bin/python",
-                    *self.flags(),
-                    expanded,
-                )
-                atomic_write(target / ".ready", key)
-            return {
-                "id": key,
-                "python": str((target / "bin/python").relative_to(self.home)),
+        document = await self.resolve(requirements, runtime=not authoring)
+        for package in document.get("packages", []):
+            for wheel in package.get("wheels", []):
+                if wheel.get("url", "").startswith("file://"):
+                    path = Path(
+                        urllib.parse.unquote(urllib.parse.urlsplit(wheel["url"]).path)
+                    )
+                    stored, checksum = self.artifact(path)
+                    wheel["url"] = stored.as_uri()
+                    wheel["hashes"] = {"sha256": checksum}
+        lock = tomlkit.dumps(document).replace(str(self.home), "${TOOLFRAME_HOME}")
+        key = digest(
+            {
                 "lock": lock,
+                "python": sys.version,
+                "platform": platform.platform(),
+                "ui": ui,
+                **({"extra": extra} if extra != "backend" and not ui else {}),
                 "runtime_profile": profile,
             }
+        )
+        environment = {
+            "id": key,
+            "python": f".toolframe/environments/{key}/bin/python",
+            "lock": lock,
+            "runtime_profile": profile,
+        }
+        await self.restore_environment(environment)
+        return environment
 
-    async def prepare(self, identifier, source, config, *, retained=None):
+    async def restore_environment(self, environment):
+        """Recreate a missing environment from its exact lock, without selection."""
+        target = self.root / "environments" / environment["id"]
+        if (
+            (target / ".ready").is_file()
+            and (target / ".ready").read_text() == environment["id"]
+            and (target / "bin/python").is_file()
+        ):
+            return
+        if target.exists():
+            shutil.rmtree(target)
+        await command(
+            self.uv, "--no-config", "venv", "--python", sys.executable, target
+        )
+        expanded = target / "pylock.toml"
+        expanded.write_text(
+            environment["lock"].replace("${TOOLFRAME_HOME}", str(self.home))
+        )
+        await command(
+            self.uv,
+            "--no-config",
+            "pip",
+            "sync",
+            "--python",
+            target / "bin/python",
+            *self.flags(),
+            expanded,
+        )
+        atomic_write(target / ".ready", environment["id"])
+
+    async def cohort_environment(self, artifacts, *, extra):
+        identities = {item["plugin_id"]: item["id"] for item in artifacts}
+        for item in artifacts:
+            environment = item.get(extra + "_environment")
+            if (
+                environment
+                and item.get(extra + "_cohort") == identities
+                and environment.get("runtime_profile") == self.runtime_profile()
+            ):
+                await self.restore_environment(environment)
+                return environment
+        return await self.environment(artifacts, extra=extra)
+
+    async def prepare(
+        self, identifier, source, config, *, retained=None, artifact=None
+    ):
         if retained is None:
-            artifact = await self.capture(source)
+            artifact = artifact or await self.capture(source)
             environment = None
         else:
             # Lifecycle operations can reuse an installed immutable wheel even
@@ -723,13 +868,10 @@ class Packages:
                 "source": retained["source"],
             }
             environment = retained["environment"]
-            python = self.home / environment["python"]
-            if (
-                not python.is_file()
-                or not (python.parent.parent / ".ready").is_file()
-                or environment.get("runtime_profile") != self.runtime_profile()
-            ):
+            if environment.get("runtime_profile") != self.runtime_profile():
                 environment = None
+            else:
+                await self.restore_environment(environment)
         if artifact["plugin_id"] != identifier:
             raise PluginError(
                 "identity_mismatch",
