@@ -5,6 +5,21 @@ imply that its distributions have been published or every target is qualified.
 
 ## Unreleased
 
+## 0.9.0
+
+- Resolve named application recipes to the latest compatible stable, non-yanked
+  plugin releases within their declared minimum and upper bounds. Backtrack over
+  incompatible metadata while preserving Core's SDK and backend isolation.
+- Freeze exact sources, artifact hashes and environment locks before first
+  serve, retaining recipe ranges in the existing candidate provenance for
+  explicit updates. Dashboard and Web extras use their existing shared cohorts.
+- Retain selected index versions through serve, restart, validate and reload;
+  only explicit update selects again. Restore missing environments from their
+  saved locks and reject missing or modified captured artifacts.
+- Use the Entry Register 0.4.2 recipe and remove the per-plugin
+  `toolframe-fastmcp` patch override. Preserve explicit pins and custom sources,
+  support verified offline resources, and leave failed initialization retryable.
+
 ## 0.8.1
 
 - Redact schema-declared secrets from the composition snapshot being exported,
