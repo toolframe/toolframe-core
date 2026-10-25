@@ -10,7 +10,7 @@
   "toolframe-auth": "b7c26f0e0681ef4f707024e21219bbcf4533e8f8",
   "toolframe-dashboard-auth": "e4e2a29ba9be18eec64158bae3a9d65d076cae68",
   "toolframe-mcp-auth": "86866e270a71e418466ff1b26f471d88b281709a",
-  "toolframe-oidc-auth": "a5c26231283b4b54026c28e2285f4f2b2caa069a",
+  "toolframe-oidc-auth": "3c7cd0d20107af83a8d3170b94af4982b963abdd",
   "toolframe-web": {
     "version": "0.1.0",
     "sha256": "22eddafdc79ff4a276f60efafb70ba0e483b97e01b64febd3088953f7c2709a1"
