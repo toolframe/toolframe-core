@@ -69,6 +69,42 @@ def main():
         env=env,
         check=True,
     )
+    baseline_env = {
+        **env,
+        "UV_TOOL_DIR": str(output / "baseline-tools"),
+        "UV_TOOL_BIN_DIR": str(output / "baseline-bin"),
+    }
+    subprocess.run(
+        ["uv", "tool", "install", "--python", args.python, "toolframe==0.8.0"],
+        env=baseline_env,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "--no-project",
+            "--python",
+            args.python,
+            "--with",
+            "httpx>=0.28,<1",
+            "--with",
+            "tomlkit>=0.13,<1",
+            "python",
+            str(root / "scripts/verify-retained-plugins.py"),
+            *links,
+            "--previous-binary",
+            str(output / "baseline-bin/toolframe"),
+            "--binary",
+            str(command),
+            "--runtime-root",
+            str(output / "retained-runtime"),
+            "--output",
+            str(output / "retained.json"),
+        ],
+        env=env,
+        check=True,
+    )
     subprocess.run(
         [
             sys.executable,

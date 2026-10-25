@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime-root", type=Path)
+    parser.add_argument("--wheelhouse", type=Path)
     args = parser.parse_args()
     directory = Path(tempfile.mkdtemp(prefix="toolframe-retained-"))
     old, new = directory / "previous", directory / "toolframe"
@@ -32,8 +33,13 @@ def main():
         for key, value in os.environ.items()
         if not key.startswith("TOOLFRAME_") and key not in {"PYTHONHOME", "PYTHONPATH"}
     }
-    if args.runtime_root:
-        env["TOOLFRAME_RUNTIME_ROOT"] = str(args.runtime_root.resolve())
+    runtime_root = (
+        args.runtime_root.resolve() if args.runtime_root else directory / "runtime"
+    )
+    previous_env = {**env, "TOOLFRAME_RUNTIME_ROOT": str(runtime_root / "previous")}
+    candidate_env = {**env, "TOOLFRAME_RUNTIME_ROOT": str(runtime_root / "candidate")}
+    if args.wheelhouse:
+        candidate_env["TOOLFRAME_WHEELHOUSE"] = str(args.wheelhouse.resolve())
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -48,7 +54,7 @@ def main():
             "--port",
             str(port),
         ],
-        env=env,
+        env=previous_env,
         cwd=directory,
         capture_output=True,
         check=True,
@@ -56,8 +62,9 @@ def main():
     )
     report = {
         "previous_binary": str(args.previous_binary.resolve()),
+        "previous_binary_sha256": hashlib.sha256(old.read_bytes()).hexdigest(),
         "binary": str(args.binary.resolve()),
-        "sha256": hashlib.sha256(new.read_bytes()).hexdigest(),
+        "binary_sha256": hashlib.sha256(new.read_bytes()).hexdigest(),
         "diagnostics": str(directory),
         "checks": [],
         "passed": False,
@@ -117,7 +124,7 @@ def main():
         log = (directory / (label + ".log")).open("wb")
         process = subprocess.Popen(
             [str(binary), "--home", str(home), "serve"],
-            env=env,
+            env=previous_env if binary == old else candidate_env,
             cwd=directory,
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -164,6 +171,9 @@ def main():
     process, log, status = start(old, "previous", 7)
     try:
         original = row(status)
+        original_package = json.loads((home / "toolframe.lock").read_text())["plugins"][
+            "entry-register"
+        ]["current_candidate"]
         response = client.post(
             "/_toolframe/v1/services/entry-register/entry-register.entries/create_entry",
             json={"label": "Retained upgrade row", "value": 42},
@@ -187,7 +197,14 @@ def main():
         operation("validate", id="entry-register")
         reviewed("apply")
         current = row(get("status"))
-        assert current["healthy"] and current["active"] == original["active"]
+        assert current["healthy"]
+        current_package = json.loads((home / "toolframe.lock").read_text())["plugins"][
+            "entry-register"
+        ]["current_candidate"]
+        # A new SDK wheel may require a new environment/candidate identity.
+        # The independently versioned plugin artifact itself must stay unchanged.
+        for key in ("artifact", "artifact_hash", "version", "source"):
+            assert current_package[key] == original_package[key], key
         assert (
             current["active_status"]["version"] == original["active_status"]["version"]
         )
@@ -215,6 +232,7 @@ def main():
             "Direct lifecycle operations also restore the disabled plugin without a package update"
         )
         report["retained_version"] = current["active_status"]["version"]
+        report["retained_plugin_sha256"] = current_package["artifact_hash"]
         report["passed"] = True
     finally:
         stop(process, log)

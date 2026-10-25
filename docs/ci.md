@@ -123,7 +123,10 @@ Maturin produces a platform wheel containing a native `toolframe` command withou
 a Python wrapper. `build-launcher.py finish` exports the identical executable,
 checks its layout, and writes its release archive, checksums and manifest.
 `check-launcher-wheel.py` installs it through `uv tool install` and `uvx`, compares
-executable hashes, then runs release and skill acceptance outside the checkout.
+executable hashes, then runs release, skill and retained-plugin acceptance outside
+the checkout. The retained-plugin probe upgrades a Toolframe 0.8.0 application
+with the candidate executable and reuses the original plugin wheel and data.
+Its successful `retained.json` is required when sealing a release bundle.
 These probes exercise the empty host, complete template and provider startup,
 llms responses, retained data, plugin reload, warm-cache offline restart and
 missing-cache errors. Browser interactions and independent MCP calls are separate

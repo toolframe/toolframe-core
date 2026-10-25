@@ -59,6 +59,13 @@ for `publish.yml` to publish to PyPI.
 The tag must match both Python and Cargo versions. Branches and mismatched tags
 fail before validation.
 
+Each platform also installs the published Toolframe 0.8.0 baseline, creates
+business data and disables its Entry Register plugin, then starts the candidate
+launcher on that application. Enabling, reloading, validating and applying must
+preserve the original plugin wheel, version, source selection and data. The
+release bundle requires the successful `retained.json` evidence for the exact
+candidate executable; skipping this check cannot produce a publishable bundle.
+
 The workflow promotes the successful main CI bundle for the exact tag commit,
 verifying its source tree, versions, provenance and all file hashes. When no
 eligible bundle is available it runs complete validation at the tag; the manual

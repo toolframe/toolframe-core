@@ -79,6 +79,37 @@ def generate(*, destination, parameters):
     return path
 
 
+@pytest.mark.parametrize(
+    ("core_version", "compatible"),
+    [
+        ("0.7.9", False),
+        ("0.8.0", True),
+        ("0.9.0", True),
+        ("0.12.3", True),
+        ("1.0.0", False),
+    ],
+)
+def test_official_authoring_contract_survives_core_minor_updates(
+    tmp_path, monkeypatch, core_version, compatible
+):
+    document = json.loads((Path(__file__).parents[1] / "authoring.json").read_text())
+    distribution = from_wheel(make_wheel(tmp_path, document=document))
+    monkeypatch.setattr(authoring_metadata, "__version__", core_version)
+    assert distribution.compatibility()["compatible"] is compatible
+    if compatible:
+        distribution.require_compatible()
+    else:
+        with pytest.raises(PluginError, match="Cannot execute"):
+            distribution.require_compatible()
+
+
+def test_third_party_explicit_upper_bound_is_still_enforced(tmp_path, monkeypatch):
+    distribution = from_wheel(make_wheel(tmp_path))
+    monkeypatch.setattr(authoring_metadata, "__version__", "0.9.0")
+    with pytest.raises(PluginError, match="Cannot execute"):
+        distribution.require_compatible()
+
+
 async def incompatible_source(tmp_path, monkeypatch, source_kind, runtime):
     document = manifest()
     if runtime == "core":

@@ -89,6 +89,14 @@ packages.
 
 ## Package ownership and compatibility
 
+Official templates require Core `>=0.8,<1` and generate plugins with SDK
+`>=0.4.1,<1`. Compatible Core minor updates do not invalidate those templates.
+`schema_version`, Python requirements and the minimum Core version remain checked;
+removing a minor-version ceiling does not bypass these gates. Authors must raise
+the minimum when a generator starts using a newer public Core capability. Keep
+explicit upper bounds for known incompatibilities or a documented migration
+boundary, rather than the last version tested.
+
 | Template | Owner | Generated behavior |
 | --- | --- | --- |
 | `toolframe-core/basic` | Core | Provider-free internal service and test |
@@ -133,7 +141,7 @@ The installed wheel does not need the source project's `pyproject.toml`.
 ```json
 {
   "schema_version": 1,
-  "requires_core": ">=0.8,<0.9",
+  "requires_core": ">=0.8,<1",
   "templates": [{
     "id": "example",
     "title": "Example plugin",

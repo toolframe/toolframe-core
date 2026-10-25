@@ -1,8 +1,14 @@
 # Public plugin contract
 
-Target: `toolframe-sdk==0.4.1`, Core 0.8.0, Web 0.1.0, Python 3.14. Use this packaged reference
+Reference baseline: SDK 0.4.1, Core 0.8.0, Web 0.1.0, Python 3.14. Use this packaged reference
 and the starter when the source workspace is unavailable. If the installed SDK
 version differs, inspect its public definitions before adapting these examples.
+
+Declare the earliest SDK that supplies the plugin's APIs, with the supported 0.x
+upper bound: `toolframe-sdk>=0.4.0,<1`, or `>=0.4.1,<1` when using Web contracts.
+The starter uses `>=0.4.1,<1`. Verify the minimum and current SDK with the same
+plugin wheel. Core's selected SDK patch is a deployment choice; keep it out of an
+independent plugin's compatibility declaration.
 
 ## Package and service
 

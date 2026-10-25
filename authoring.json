@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "requires_core": ">=0.8,<0.9",
+  "requires_core": ">=0.8,<1",
   "templates": [
     {
       "id": "basic",
