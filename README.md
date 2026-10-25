@@ -1,5 +1,10 @@
-# Toolframe core
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-banner-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme-banner-light.png">
+  <img src="docs/assets/readme-banner-light.png" alt="Toolframe Core — a persistent host for replaceable Python plugins. Python packages → managed environments → plugin workers." width="1200">
+</picture>
 
+# Toolframe core
 
 Toolframe is a persistent local control host for replaceable Python plugins.
 Core owns composition, immutable package environments, worker lifecycles,
