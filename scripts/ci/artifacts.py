@@ -171,7 +171,7 @@ def check_layout(directory, version, build_source):
             if hashes[item["filename"]]["sha256"] != item["sha256"]:
                 raise ValueError("Companion checksum mismatch")
         evidence = directory / f"launcher-evidence-{target}"
-        for name in ("acceptance.json", "skill.json"):
+        for name in ("acceptance.json", "skill.json", "retained.json"):
             if not (evidence / name).is_file():
                 raise ValueError(f"Missing installed launcher evidence: {target}")
             report = read_json(evidence / name)
@@ -179,8 +179,8 @@ def check_layout(directory, version, build_source):
                 raise ValueError(
                     f"Installed evidence is for another executable: {target}"
                 )
-            if name == "skill.json" and report.get("passed") is not True:
-                raise ValueError(f"Installed skill acceptance did not pass: {target}")
+            if name != "acceptance.json" and report.get("passed") is not True:
+                raise ValueError(f"Installed {name} acceptance did not pass: {target}")
 
 
 def seal(directory, source, current):

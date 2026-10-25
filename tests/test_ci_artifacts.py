@@ -114,7 +114,7 @@ def bundle(tmp_path):
             release / f"SHA256SUMS-{target}.txt",
             sums.encode(),
         )
-        for name in ("acceptance.json", "skill.json"):
+        for name in ("acceptance.json", "skill.json", "retained.json"):
             write(
                 directory / f"launcher-evidence-{target}" / name,
                 {"binary_sha256": digest(target.encode()), "passed": True},
@@ -269,6 +269,8 @@ def test_file_integrity_cannot_be_bypassed(bundle, change):
         "checksums",
         "target",
         "evidence",
+        "retained_missing",
+        "retained_failed",
         "stale",
         "dirty",
     ],
@@ -298,6 +300,13 @@ def test_sealing_requires_all_successful_platforms(bundle, change):
             "f" * 40 if change == "stale" else True
         )
         write(path, data)
+    elif change == "retained_missing":
+        (bundle / f"launcher-evidence-{target}/retained.json").unlink()
+    elif change == "retained_failed":
+        write(
+            bundle / f"launcher-evidence-{target}/retained.json",
+            {"binary_sha256": digest(target.encode()), "passed": False},
+        )
     else:
         write(bundle / f"launcher-evidence-{target}/skill.json", {"passed": False})
     with pytest.raises(ValueError):
