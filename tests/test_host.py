@@ -361,3 +361,39 @@ async def test_gateway_closes_upstream_on_upload_disconnect(
     assert upstream.is_closed
     assert [message["status"] for message in responses if "status" in message] == [499]
     assert not host.gateway_sessions
+
+
+async def test_close_wakes_task_admission_and_drains_owned_roots(host, tmp_path):
+    source = fixture_source(tmp_path, "alpha")
+    result = await operate(host, "add", source=str(source), enable=True)
+    assert result["status"] == "succeeded", result
+    runtime = host.runtimes["alpha"]
+    owned = await host.worker_call(runtime, "task.begin", {})
+    waiting = asyncio.Event()
+
+    class AdmissionEvent(asyncio.Event):
+        async def wait(self):
+            waiting.set()
+            return await super().wait()
+
+    host.changed = AdmissionEvent()
+    host.gated.add("alpha")
+    admission = asyncio.create_task(host.worker_call(runtime, "task.begin", {}))
+    await asyncio.wait_for(waiting.wait(), 0.5)
+    closing = asyncio.create_task(host.close())
+    try:
+        with pytest.raises(PluginError) as error:
+            await asyncio.wait_for(admission, 0.5)
+        assert error.value.code == "host_closing"
+        assert owned["root_id"] in host.roots
+        with pytest.raises(PluginError) as error:
+            await asyncio.wait_for(host.worker_call(runtime, "task.begin", {}), 0.5)
+        assert error.value.code == "host_closing"
+    finally:
+        await host.worker_call(runtime, "task.end", owned)
+        await asyncio.wait_for(closing, 5)
+    assert host._closed and not host.roots and not host.worker_owners
+    from toolframe_core.maintenance import stopped_application
+
+    with stopped_application(host.home) as inventory:
+        assert inventory.as_dict()["status"] == "STOPPED"

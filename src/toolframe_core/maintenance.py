@@ -219,7 +219,8 @@ def _processes():
                     "maintenance_ownership_unproven", "Process inventory is incomplete"
                 )
             pid, pgid = map(int, parts[:2])
-            if pid < 1 or pgid < 1 or pid in seen:
+            # Linux kernel threads can have PGID 0; retain their commands too.
+            if pid < 1 or pgid < 0 or pid in seen:
                 _fail("maintenance_ownership_unproven", "Process inventory is invalid")
             seen.add(pid)
             rows.append(parts[2])

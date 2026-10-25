@@ -77,6 +77,7 @@ async def task_host():
         )
         for name, candidate in candidates.items()
     }
+    host.closing = False
     host.gated = set()
     host.roots = {}
     host.failed_roots = set()
@@ -297,4 +298,110 @@ async def test_waiting_task_budget_is_rechecked_against_current_operator_policy(
     admitted = await task_host.worker_call(runtime, "task.begin", {"timeout": 60})
     await task_host.worker_call(runtime, "task.end", admitted)
     assert not task_host.roots
+    assert task_host.manager.counts == {"jobs": 0, "backend": 0}
+
+
+@pytest.mark.parametrize("gate", [False, True])
+async def test_closing_host_rejects_new_task_before_admission(task_host, gate):
+    runtime = task_host.runtimes["jobs"]
+    if gate:
+        task_host.gated.add("jobs")
+    task_host.closing = True
+    with pytest.raises(PluginError) as error:
+        await asyncio.wait_for(task_host.worker_call(runtime, "task.begin", {}), 0.5)
+    assert error.value.code == "host_closing"
+    assert not task_host.roots
+    assert not task_host.manager.counts
+
+
+@pytest.mark.parametrize("gate_remains", [False, True])
+async def test_waiting_task_rejects_shutdown_even_if_gate_reopens(
+    task_host, gate_remains
+):
+    runtime = task_host.runtimes["jobs"]
+    task_host.gated.add("jobs")
+    admission = asyncio.create_task(task_host.worker_call(runtime, "task.begin", {}))
+    await asyncio.sleep(0)
+    assert not admission.done()
+    task_host.closing = True
+    if not gate_remains:
+        task_host.gated.clear()
+    task_host.changed.set()
+    with pytest.raises(PluginError) as error:
+        await asyncio.wait_for(admission, 0.5)
+    assert error.value.code == "host_closing"
+    assert not task_host.roots
+    assert not task_host.manager.counts
+
+
+async def test_closing_host_allows_exact_root_ownership_to_settle(task_host):
+    runtime = task_host.runtimes["jobs"]
+    admitted = await task_host.worker_call(runtime, "task.begin", {})
+    task_host.closing = True
+    task_host.gated.add("jobs")
+    await task_host.worker_call(runtime, "task.end", admitted)
+    assert not task_host.roots
+    assert task_host.manager.counts == {"jobs": 0, "backend": 0}
+
+
+async def test_sdk_cancelled_admission_settles_during_shutdown(task_host):
+    requested = asyncio.Event()
+    runtime = task_host.runtimes["jobs"]
+    task_host.gated.add("jobs")
+
+    class Peer:
+        async def request(self, method, params, **kwargs):
+            requested.set()
+            return await task_host.worker_call(runtime, method, params)
+
+    context = RuntimeContext(Peer(), plugin_id="jobs", generation="g1")
+    context.ready.set()
+
+    async def factory():
+        pytest.fail("Shutdown admitted a pending factory")
+
+    task = context.task(factory)
+    await requested.wait()
+    task.cancel()
+    # Ensure the cancellation has reached the SDK's shielded handshake.
+    await asyncio.sleep(0)
+    task_host.closing = True
+    task_host.changed.set()
+    await asyncio.wait_for(context.close(), 0.5)
+    assert task.cancelled()
+    assert not context.tasks
+    assert not task_host.roots
+    assert not task_host.manager.counts
+
+
+async def test_sdk_cancel_after_root_acquired_settles_before_factory(task_host):
+    acquired = asyncio.Event()
+    release = asyncio.Event()
+    runtime = task_host.runtimes["jobs"]
+
+    class Peer:
+        async def request(self, method, params, **kwargs):
+            result = await task_host.worker_call(runtime, method, params)
+            if method == "task.begin":
+                acquired.set()
+                await release.wait()
+            return result
+
+    context = RuntimeContext(Peer(), plugin_id="jobs", generation="g1")
+    context.ready.set()
+
+    async def factory():
+        pytest.fail("Cancelled task started its factory")
+
+    task = context.task(factory)
+    await acquired.wait()
+    assert task_host.roots
+    task.cancel()
+    await asyncio.sleep(0)
+    task_host.closing = True
+    task_host.gated.add("jobs")
+    release.set()
+    await asyncio.wait_for(context.close(), 0.5)
+    assert task.cancelled()
+    assert not context.tasks and not task_host.roots
     assert task_host.manager.counts == {"jobs": 0, "backend": 0}

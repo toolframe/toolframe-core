@@ -240,6 +240,7 @@ class Host:
 
     async def _stop_after_journal_loss(self):
         self.closing = True
+        self.changed.set()
         self.gated.update(self.runtimes)
         current = asyncio.current_task()
         pending = [
@@ -335,6 +336,7 @@ class Host:
         if self._closed:
             return
         self.closing = True
+        self.changed.set()
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
@@ -2299,6 +2301,12 @@ class Host:
                 )
             return await self.web_access.admit(runtime, params)
         if method == "task.begin":
+
+            def check_open():
+                if self.closing:
+                    raise PluginError("host_closing", "Core is shutting down")
+
+            check_open()
             timeout = params.get("timeout", 30)
             if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
                 raise PluginError(
@@ -2326,12 +2334,14 @@ class Host:
             check_policy()
             async with asyncio.timeout(self.composition.runtime.activation_timeout):
                 while runtime.name in self.gated or not runtime.admitted:
+                    check_open()
                     if self.runtimes.get(runtime.name) is not runtime:
                         raise PluginError(
                             "stale_generation", "Task belongs to a withdrawn generation"
                         )
                     self.changed.clear()
                     await self.changed.wait()
+            check_open()
             if self.runtimes.get(runtime.name) is not runtime:
                 raise PluginError(
                     "stale_generation", "Task belongs to a withdrawn generation"
