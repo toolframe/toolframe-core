@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILD = Path(__file__).resolve().parents[1] / "build/package-fixtures"
 VERSIONS = {
     "toolframe-sdk": "0.4.1",
-    "toolframe-core": "0.9.0",
+    "toolframe-core": "0.8.2",
     "toolframe-web": "0.1.0",
     "toolframe-streamlit-dashboard": "0.5.1",
     "toolframe-dashboard-auth": "0.2.1",

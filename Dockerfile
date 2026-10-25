@@ -3,7 +3,7 @@ FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500c
 
 FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS runtime
 ARG TARGETARCH
-ARG TOOLFRAME_VERSION=0.9.0
+ARG TOOLFRAME_VERSION=0.8.2
 ARG TOOLFRAME_REVISION
 LABEL org.opencontainers.image.source="https://github.com/toolframe/toolframe-core" \
       org.opencontainers.image.title="Toolframe" \
@@ -68,7 +68,7 @@ RUN mkdir -p /opt/ps-libs/var/lib/dpkg/status.d \
     && dpkg-query -s tini > /opt/ps-libs/var/lib/dpkg/status.d/tini
 
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:83b9b50586253821cf63ffcec87d3d94265a093ad30da232039af962dd8f4edf AS distroless
-ARG TOOLFRAME_VERSION=0.9.0
+ARG TOOLFRAME_VERSION=0.8.2
 ARG TOOLFRAME_REVISION
 LABEL org.opencontainers.image.source="https://github.com/toolframe/toolframe-core" \
       org.opencontainers.image.title="Toolframe (Distroless)" \

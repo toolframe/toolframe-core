@@ -5,7 +5,7 @@ imply that its distributions have been published or every target is qualified.
 
 ## Unreleased
 
-## 0.9.0
+## 0.8.2
 
 - Resolve named application recipes to the latest compatible stable, non-yanked
   plugin releases within their declared minimum and upper bounds. Backtrack over

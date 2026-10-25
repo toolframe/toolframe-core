@@ -7,11 +7,11 @@ The Web cohort is independent of business workers and the Dashboard UI cohort.
 
 ## Create a notes application
 
-Use a Core 0.9 executable or `toolframe-core` Python entry point. Install the CLI
+Use a Core 0.8 executable or `toolframe-core` Python entry point. Install the CLI
 and select the published Web authoring package explicitly:
 
 ```sh
-uv tool install toolframe==0.9.0
+uv tool install toolframe==0.8.2
 toolframe --home ./notes-app init
 toolframe --home ./notes-app plugin new notes --from pypi:toolframe-web==0.1.0 --template toolframe-web/notes
 toolframe --home ./notes-app web prepare ./notes-app/plugins/notes

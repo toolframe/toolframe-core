@@ -9,7 +9,7 @@ contains no Python wheels; it resolves Core and selected plugins from PyPI.
 ## Coordinated release
 
 Core selects SDK 0.4.1 and requires Cordis 0.2.2. Publish Entry Register 0.4.2
-before Core 0.9.0. Its named recipe resolves bounded plugin ranges and freezes
+before Core 0.8.2. Its named recipe resolves bounded plugin ranges and freezes
 the compatible stable selections before first serve; see
 [application recipes](application-templates.md).
 
@@ -25,7 +25,7 @@ the public Web sdist by hash. The Web repository may remain private; its PyPI
 wheel and sdist are public. See [CI](ci.md) for source acquisition and local
 prepublication artifacts.
 
-Publish `toolframe-core==0.9.0` and `toolframe==0.9.0` together through Core's
+Publish `toolframe-core==0.8.2` and `toolframe==0.8.2` together through Core's
 workflow after the dependency combination is available. Core and launcher versions
 must match. The launcher resolves the package versions selected by the template;
 its native wheel does not bundle Python distributions.
@@ -59,7 +59,7 @@ credentials; see [CI](ci.md).
 ## Validate and publish
 
 `ci.yml` validates Core's wheel/sdist, real PostgreSQL integration and native
-launcher wheels on four platforms. Publication is manual: select tag `v0.9.0`
+launcher wheels on four platforms. Publication is manual: select tag `v0.8.2`
 for `publish.yml` to publish to PyPI.
 The tag must match both Python and Cargo versions. Branches and mismatched tags
 fail before validation.
@@ -117,7 +117,7 @@ Prepublication acceptance supplies matching local wheels explicitly. After all
 uploads, run in a fresh environment:
 
 ```sh
-uv tool install toolframe==0.9.0
+uv tool install toolframe==0.8.2
 toolframe --version
 toolframe --home ./release-check init --template entry-register
 toolframe --home ./release-check serve
@@ -125,7 +125,7 @@ toolframe --home ./release-check serve
 toolframe --home ./release-check open
 ```
 
-Repeat with `uvx --from toolframe==0.9.0 toolframe ...` and with the downloaded
+Repeat with `uvx --from toolframe==0.8.2 toolframe ...` and with the downloaded
 native archive. Compare the archive SHA-256 with `SHA256SUMS`. The automated
 consumer probe can be repeated without a test wheelhouse:
 
