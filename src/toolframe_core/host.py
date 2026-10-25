@@ -21,10 +21,12 @@ from fastapi_cordis import PluginManager
 from toolframe_sdk import PluginError, Principal, digest
 from toolframe_sdk.logging import LoggingSession
 from toolframe_sdk.tracing import configure_tracing
+from toolframe_sdk.web import WebAppCatalog
 
 from .access import Access, operation_scopes
 from .config import ConfigFile, HostLock, PluginRequest, atomic_write, management_token
 from .diagnostics import dependency_snapshot
+from .gateway import compile_gateway, endpoints, validate_web_catalogs
 from .graph import Graph
 from .mcp_access import McpAccess
 from .network import bind_host
@@ -33,6 +35,7 @@ from .process import WorkerProcess, group_exists, process_inventory, stop_group
 from .redaction import redact, secret_values
 from .state import CoreState, StateSettings
 from .stores import RetainedStores
+from .web_access import WebAccess
 
 
 @dataclass
@@ -184,6 +187,8 @@ class Host:
         self.transitioning = set()
         self.access = Access(self)
         self.mcp_access = McpAccess(self)
+        self.web_access = WebAccess(self)
+        self.gateway = compile_gateway(self.composition)
         self.operation_identities = {}
 
     async def start(self, *, apply=True, wait=True):
@@ -523,8 +528,25 @@ class Host:
             raise PluginError(
                 "stale_plan", "Composition changed while preparing the candidate"
             )
-        (await self.state.save_candidate(candidate))
+        (await self.save_candidate(candidate))
         return candidate
+
+    async def save_candidate(self, candidate):
+        # Cohort locks enrich an immutable artifact identity after activation.
+        # Restaging the same wheel must not erase the locks needed for recovery.
+        try:
+            retained = await self.state.candidate(candidate["id"])
+        except PluginError as error:
+            if error.code != "candidate_missing":
+                raise
+            retained = None
+        if retained:
+            for profile in ("ui", "web"):
+                for suffix in ("environment", "cohort"):
+                    field = f"{profile}_{suffix}"
+                    if field not in candidate and field in retained:
+                        candidate[field] = retained[field]
+        await self.state.save_candidate(candidate)
 
     async def selected(self):
         selected = {}
@@ -586,7 +608,7 @@ class Host:
             self.composition, self.revision = self.config.put_plugin(
                 name, request, self.revision
             )
-            (await self.state.save_candidate(candidate))
+            (await self.save_candidate(candidate))
             if request.enabled:
                 proposed = await self.selected()
                 proposed[name] = candidate
@@ -627,7 +649,7 @@ class Host:
                 raise PluginError(
                     "stale_plan", "Composition changed while staging update"
                 )
-            (await self.state.save_candidate(candidate))
+            (await self.save_candidate(candidate))
             (await self.write_lock())
             return {
                 "candidate": candidate["id"],
@@ -640,7 +662,7 @@ class Host:
             if params.get("runtime"):
                 await self.runtime_validate(name, candidate)
                 candidate["validation"]["runtime"] = "passed_scratch"
-                (await self.state.save_candidate(candidate))
+                (await self.save_candidate(candidate))
             (await self.write_lock())
             return {"candidate": candidate["id"], "validation": candidate["validation"]}
         if action == "stop" and params.get("force"):
@@ -854,8 +876,24 @@ class Host:
                 }
                 stages[stage] = {"status": "passed", "environment": environment["id"]}
             resources = graph.resources()
+            gateway = compile_gateway(self.composition, graph)
+            web = graph.providers.get("web")
+            if web:
+                stage = "web_environment"
+                cohort = [
+                    item
+                    for owner, item in proposed.items()
+                    if owner == web
+                    or any(
+                        r.kind == "web.app" for r in graph.definitions[owner].resources
+                    )
+                ]
+                environment = await self.packages.environment(cohort, extra="web")
+                proposed[web] = {**proposed[web], "web_environment": environment}
+                stages[stage] = {"status": "passed", "environment": environment["id"]}
             for kind, resource_kind in {
                 "dashboard": "dashboard.page",
+                "web": "web.app",
                 "mcp": "mcp.tool",
                 "llms": "llms.document",
             }.items():
@@ -867,7 +905,9 @@ class Host:
                 ]
                 provider = graph.providers.get(kind)
                 if owned and provider:
-                    await self.prepare_provider(proposed[provider], owned)
+                    prepared = await self.prepare_provider(proposed[provider], owned)
+                    if kind == "web":
+                        self.validate_web_preparation(prepared, owned, graph, gateway)
                     stages[stage] = {"status": "passed"}
                 else:
                     stages[stage] = {
@@ -890,7 +930,7 @@ class Host:
             )
             raise
         finally:
-            (await self.state.save_candidate(candidate))
+            (await self.save_candidate(candidate))
 
     async def plan_basis(self):
         schemas = {}
@@ -1080,7 +1120,9 @@ class Host:
         definition = self.graph.definitions[name]
         # Cordis cleanup owns even partially activated workers.
         context.on_dispose(self._dispose, runtime)
-        environment = candidate.get("ui_environment", candidate["environment"])
+        environment = candidate.get(
+            "web_environment", candidate.get("ui_environment", candidate["environment"])
+        )
         runtime.worker = await WorkerProcess.start(
             self.home / environment["python"],
             candidate["entrypoint"],
@@ -1126,10 +1168,15 @@ class Host:
                 "generation": generation,
                 "config": candidate["config"],
                 "private_secrets": private_secrets,
+                "endpoints": candidate.get(
+                    "endpoints", endpoints(self.gateway, definition.provider_kind)
+                ),
                 "state_directory": str(self.home / "data/plugins")
                 if definition.provider_kind == "sql"
                 else str(self.home / "data/objects" / name)
                 if definition.provider_kind == "object-store"
+                else str(self.home / ".toolframe/web-assets")
+                if definition.provider_kind == "web"
                 else None,
             },
         )
@@ -1254,6 +1301,7 @@ class Host:
                     self.graph.definitions[name].provider_kind
                     not in {
                         "dashboard",
+                        "web",
                         "mcp",
                         "llms",
                         "auth",
@@ -1377,6 +1425,20 @@ class Host:
             )
         replacement = Graph(proposed, self.composition.bindings)
         old_graph = self.graph
+        old_gateway = self.gateway
+        target_gateway = compile_gateway(self.composition, replacement)
+        for name, definition in replacement.definitions.items():
+            if definition.provider_kind in {"dashboard", "dashboard-auth", "web"}:
+                settings = {
+                    **endpoints(target_gateway, definition.provider_kind),
+                    "web": self.composition.web.model_dump(),
+                }
+                proposed[name] = {**proposed[name], "endpoints": settings}
+                if (
+                    name in self.runtimes
+                    and self.runtimes[name].candidate.get("endpoints") != settings
+                ):
+                    changed = set(changed) | {name}
         changed = set(changed) | {
             name
             for name in replacement.bindings
@@ -1390,6 +1452,7 @@ class Host:
             if definition.provider_kind
             in {
                 "dashboard",
+                "web",
                 "mcp",
                 "llms",
                 "auth",
@@ -1421,7 +1484,7 @@ class Host:
         ):
             raise PluginError("stale_plan", "Migration storage binding changed")
         for name, definition in replacement.definitions.items():
-            if definition.provider_kind == "dashboard" and (
+            if definition.provider_kind in {"dashboard", "web"} and (
                 name in affected or name not in self.runtimes
             ):
                 cohort = [
@@ -1429,24 +1492,32 @@ class Host:
                     for owner, candidate in proposed.items()
                     if owner == name
                     or any(
-                        resource.kind == "dashboard.page"
+                        resource.kind
+                        == (
+                            "web.app"
+                            if definition.provider_kind == "web"
+                            else "dashboard.page"
+                        )
                         for resource in replacement.definitions[owner].resources
                     )
                 ]
                 try:
                     cohort_ids = {item["plugin_id"]: item["id"] for item in cohort}
                     prior = proposed[name]
-                    environment = prior.get("ui_environment")
+                    profile = "web" if definition.provider_kind == "web" else "ui"
+                    environment = prior.get(profile + "_environment")
                     if (
                         not environment
-                        or prior.get("ui_cohort") != cohort_ids
+                        or prior.get(profile + "_cohort") != cohort_ids
                         or not (self.home / environment["python"]).is_file()
                     ):
-                        environment = await self.packages.environment(cohort, ui=True)
+                        environment = await self.packages.environment(
+                            cohort, extra=profile
+                        )
                     proposed[name] = {
                         **prior,
-                        "ui_environment": environment,
-                        "ui_cohort": cohort_ids,
+                        profile + "_environment": environment,
+                        profile + "_cohort": cohort_ids,
                     }
                 except Exception as error:
                     if name not in self.optional_new:
@@ -1466,12 +1537,13 @@ class Host:
         (await self.phase(operation, "prepare_resources"))
         for kind, provider in replacement.providers.items():
             if (
-                kind not in {"dashboard", "mcp", "llms"}
+                kind not in {"dashboard", "web", "mcp", "llms"}
                 or provider in self.optional_failures
             ):
                 continue
             resource_kind = {
                 "dashboard": "dashboard.page",
+                "web": "web.app",
                 "mcp": "mcp.tool",
                 "llms": "llms.document",
             }[kind]
@@ -1479,7 +1551,7 @@ class Host:
                 resource_kind
             ) != replacement.descriptor_digest(resource_kind):
                 try:
-                    await self.prepare_provider(
+                    prepared = await self.prepare_provider(
                         proposed[provider],
                         [
                             resource
@@ -1487,6 +1559,13 @@ class Host:
                             if resource.resource.kind == resource_kind
                         ],
                     )
+                    if kind == "web":
+                        self.validate_web_preparation(
+                            prepared,
+                            replacement.resources(),
+                            replacement,
+                            target_gateway,
+                        )
                 except Exception as error:
                     if provider not in self.optional_new:
                         raise
@@ -1584,9 +1663,9 @@ class Host:
             (await self.phase(operation, "activating"))
             await self._register_set(set(proposed) - self.registered)
             (await self.phase(operation, "publishing"))
-            await self.publish()
+            await self.publish(gateway=target_gateway)
             for name, candidate in proposed.items():
-                (await self.state.save_candidate(candidate))
+                (await self.save_candidate(candidate))
                 if (await self.state.plugin(name))["current_candidate"] != candidate[
                     "id"
                 ]:
@@ -1627,13 +1706,14 @@ class Host:
                     {"error": str(failure), "schemas": self.schema_events},
                 ) from failure
             self.graph = old_graph
+            self.gateway = old_gateway
             recover = affected & old_graph.candidates.keys()
             if not recover:
                 raise
             (await self.phase(operation, "recovering"))
             try:
                 await self._register_set(recover - self.registered)
-                await self.publish()
+                await self.publish(gateway=old_gateway)
                 await self._resume(recover)
                 for name in recover:
                     old = old_graph.candidates[name]
@@ -1678,7 +1758,9 @@ class Host:
                 "Resource preparation cannot call application services",
             )
 
-        environment = candidate.get("ui_environment", candidate["environment"])
+        environment = candidate.get(
+            "web_environment", candidate.get("ui_environment", candidate["environment"])
+        )
         worker = await WorkerProcess.start(
             self.home / environment["python"],
             candidate["entrypoint"],
@@ -1688,12 +1770,30 @@ class Host:
         activated = False
         try:
             await worker.request("runtime.describe")
-            await worker.request(
+            health = await worker.request(
                 "runtime.activate",
-                {"generation": "preflight", "config": candidate["config"]},
+                {
+                    "generation": "preflight",
+                    "config": candidate["config"],
+                    "endpoints": candidate.get("endpoints", {}),
+                },
             )
             activated = True
-            await worker.request(
+            supplied = candidate.get("endpoints", {})
+            if (
+                candidate["definition"].get("provider_kind") == "dashboard"
+                and supplied.get("profile") == "gateway-v2"
+                and supplied.get("public_base") != "/"
+                and (
+                    "gateway-endpoints-v1" not in health.get("capabilities", [])
+                    or health.get("public_base") != supplied.get("public_base")
+                )
+            ):
+                raise PluginError(
+                    "gateway_capability_missing",
+                    "The Dashboard provider does not support its configured public base",
+                )
+            result = await worker.request(
                 "provider.prepare",
                 {
                     "resources": [resource.model_dump() for resource in resources],
@@ -1701,6 +1801,7 @@ class Host:
                 },
             )
             await worker.request("provider.abort", {"epoch": "preflight"})
+            return result
         finally:
             try:
                 await worker.close(activated=activated)
@@ -1708,10 +1809,25 @@ class Host:
                 await worker.force_stop()  # validation has no live service/data access
                 raise
 
-    async def publish(self):
+    def validate_web_preparation(self, prepared, resources, graph, gateway):
+        resources = [r for r in resources if r.resource.kind == "web.app"]
+        values = prepared.get("web_apps", {})
+        if set(values) != {r.key for r in resources}:
+            raise PluginError(
+                "web_contract_unsupported",
+                "Web provider must return one versioned catalog per resource",
+            )
+        catalogs = {
+            key: WebAppCatalog.model_validate(value) for key, value in values.items()
+        }
+        validate_web_catalogs(gateway, resources, catalogs, graph)
+        return catalogs
+
+    async def publish(self, *, gateway=None):
         # This snapshot includes health changes already observed, including those
         # repaired by a reload. A new failure during publication queues another pass.
         self.health_publication_pending = False
+        gateway = gateway or self.gateway
         epoch = uuid.uuid4().hex
         generations = {
             name: runtime.generation for name, runtime in self.runtimes.items()
@@ -1740,6 +1856,7 @@ class Host:
         )
         for kind, resource_kind in (
             ("dashboard", "dashboard.page"),
+            ("web", "web.app"),
             ("mcp", "mcp.tool"),
             ("llms", "llms.document"),
         ):
@@ -1749,7 +1866,7 @@ class Host:
                 self.publication[kind] = {"state": "unavailable", "epoch": epoch}
                 continue
             try:
-                await runtime.worker.request(
+                prepared = await runtime.worker.request(
                     "provider.prepare",
                     {
                         "resources": [
@@ -1760,6 +1877,13 @@ class Host:
                         "epoch": epoch,
                     },
                 )
+                web_catalogs = (
+                    self.validate_web_preparation(
+                        prepared, resources, self.graph, gateway
+                    )
+                    if kind == "web"
+                    else None
+                )
                 result = await runtime.worker.request(
                     "provider.commit", {"epoch": epoch}
                 )
@@ -1769,6 +1893,8 @@ class Host:
                         "Provider did not acknowledge selected catalog",
                     )
                 runtime.epoch = epoch
+                if web_catalogs is not None:
+                    self.web_access.publish(web_catalogs)
                 self.publication[kind] = {
                     "state": "available",
                     "epoch": epoch,
@@ -1781,6 +1907,7 @@ class Host:
                     "epoch": epoch,
                     "error": str(error),
                 }
+        self.gateway = gateway
 
     async def write_lock(self):
         plugins = {}
@@ -1803,7 +1930,10 @@ class Host:
                             "artifact_hash",
                             "source",
                             "environment",
+                            "ui_environment",
+                            "web_environment",
                         )
+                        if key in candidate
                     }
             plugins[name] = candidates
         atomic_write(
@@ -2046,7 +2176,11 @@ class Host:
             kind = runtime.candidate["definition"].get("provider_kind")
             if (
                 not resource
-                or {"mcp": "mcp.tool", "dashboard": "dashboard.page"}.get(kind)
+                or {
+                    "mcp": "mcp.tool",
+                    "dashboard": "dashboard.page",
+                    "web": "web.app",
+                }.get(kind)
                 != resource.resource.kind
             ):
                 raise PluginError(
@@ -2114,6 +2248,24 @@ class Host:
                     ),
                     activity=True,
                 )
+            elif kind == "web":
+                if specification.audience != "business":
+                    raise PluginError(
+                        "forbidden", "Web apps may call only business methods"
+                    )
+                entry = self.web_access.context(
+                    runtime,
+                    params["key"],
+                    params["epoch"],
+                    params.get("access_context"),
+                )
+                if entry.method in {"GET", "HEAD"} and not specification.read_only:
+                    raise PluginError(
+                        "forbidden", "Safe Web requests may call only read-only methods"
+                    )
+                principal = await self.web_access.resolve(
+                    runtime, params, specification.required_scopes
+                )
             else:
                 identity = self.access.context(params.get("access_context"))
                 principal = await self.access.admit(
@@ -2140,6 +2292,12 @@ class Host:
                 lambda task: task.exception() if not task.cancelled() else None
             )
             return await asyncio.shield(task)
+        if method == "resource.admit":
+            if runtime.candidate["definition"].get("provider_kind") != "web":
+                raise PluginError(
+                    "forbidden", "Only the Web provider may admit Web handlers"
+                )
+            return await self.web_access.admit(runtime, params)
         if method == "task.begin":
             timeout = params.get("timeout", 30)
             if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
@@ -2262,6 +2420,7 @@ class Host:
                     self.home / item["environment"]["python"]
                 )
                 item.pop("ui_environment", None)
+                item.pop("web_environment", None)
             try:
                 await scratch.start(apply=False)
                 operation, _ = await scratch.state.new_operation(
@@ -2542,6 +2701,7 @@ class Host:
                 for resource in self.graph.definitions[name].resources:
                     kind = {
                         "dashboard.page": "dashboard",
+                        "web.app": "web",
                         "mcp.tool": "mcp",
                         "llms.document": "llms",
                     }[resource.kind]
@@ -2553,9 +2713,12 @@ class Host:
                         available.add(f"{name}/{resource.kind}/{resource.id}")
         missing = sorted(set(self.composition.required_capabilities) - available)
         needed_presentations = {
-            {"dashboard.page": "dashboard", "mcp.tool": "mcp", "llms.document": "llms"}[
-                resource.resource.kind
-            ]
+            {
+                "dashboard.page": "dashboard",
+                "web.app": "web",
+                "mcp.tool": "mcp",
+                "llms.document": "llms",
+            }[resource.resource.kind]
             for resource in self.graph.resources()
         }
         degraded = any(

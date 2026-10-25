@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 import tomlkit
+from dependencies import wheelhouse as dependency_wheelhouse
 from toolframe_sdk import AuthorizationSpec, PluginDefinition, PluginError
 
 from toolframe_core._state_sqlite import SQLiteCoreState
@@ -231,11 +232,9 @@ async def test_real_core_sqlite_business_shutdown_has_public_inventory(tmp_path)
     home = tmp_path / "real-store-core"
     config = ConfigFile(home)
     composition = config.initialize()
-    workspace = Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[2]
     sdk_wheel = os.environ.get("TOOLFRAME_SDK_WHEEL")
-    wheelhouse = (
-        Path(sdk_wheel).parent if sdk_wheel else workspace / "toolframe-sdk/dist"
-    )
+    wheelhouse = Path(sdk_wheel).parent if sdk_wheel else dependency_wheelhouse()
     composition.packages.find_links = [str(wheelhouse)]
     composition.runtime.health_interval = 3600
     atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
@@ -426,6 +425,10 @@ def test_layout_artifacts_business_identity_and_secret_redaction(home):
     environment.mkdir(parents=True)
     (environment / "python").symlink_to(Path(os.__file__))
     atomic_write(home / ".toolframe/endpoint.json", '{"port": 9876}')
+    atomic_write(home / ".toolframe/web-build-cache/compiler", "regenerable compiler")
+    atomic_write(
+        home / ".toolframe/web-assets/retained.css", "sealed presentation asset"
+    )
     with stopped_application(home) as inventory:
         text = json.dumps(inventory.as_dict())
         assert SECRET not in text and "packages.invalid" not in text
@@ -437,6 +440,8 @@ def test_layout_artifacts_business_identity_and_secret_redaction(home):
         paths = {item.path for item in inventory.files}
         assert "data/plugins/notes/attachment.txt" in paths
         assert ".toolframe/endpoint.json" not in paths
+        assert ".toolframe/web-assets/retained.css" in paths
+        assert not any(path.startswith(".toolframe/web-build-cache/") for path in paths)
         assert not any(path.startswith(".toolframe/environments/") for path in paths)
         assert len(inventory.dependency_wheels) == 2
         assert all(
@@ -783,7 +788,10 @@ def test_unknown_external_provider_kind_and_separate_application_are_refused(hom
     expect_failure(home, "maintenance_external_state")
 
 
-def test_retained_previous_and_ui_environment_requirements_are_included(home):
+@pytest.mark.parametrize("purpose", ["ui", "web"])
+def test_retained_previous_and_presentation_environment_requirements_are_included(
+    home, purpose
+):
     candidate = install(home)
     previous = dict(candidate)
     previous["id"] = "c" * 64
@@ -793,13 +801,13 @@ def test_retained_previous_and_ui_environment_requirements_are_included(home):
     previous["environment"] = dict(candidate["environment"])
     previous["environment"]["id"] = "d" * 64
     previous["environment"]["python"] = f".toolframe/environments/{'d' * 64}/bin/python"
-    previous["ui_environment"] = dict(
+    previous[purpose + "_environment"] = dict(
         previous["environment"],
         id="e" * 64,
         python=f".toolframe/environments/{'e' * 64}/bin/python",
     )
     interpreter_metadata(home, previous["environment"])
-    interpreter_metadata(home, previous["ui_environment"])
+    interpreter_metadata(home, previous[purpose + "_environment"])
     state = SQLiteCoreState(home)
     state.save_candidate(previous)
     state.select("notes", previous["id"])
@@ -818,10 +826,22 @@ def test_retained_previous_and_ui_environment_requirements_are_included(home):
         } == {
             (candidate["id"], "backend"),
             (previous["id"], "backend"),
-            (previous["id"], "ui"),
+            (previous["id"], purpose),
         }
     (home / previous["artifact"]).unlink()
     expect_failure(home, "maintenance_artifact_missing")
+
+
+def test_selected_web_provider_requires_recorded_cohort(home):
+    candidate = install(home, name="web", provider_kind="web")
+    expect_failure(home, "maintenance_layout_invalid")
+    candidate["web_environment"] = candidate["environment"]
+    update_candidate(home, candidate)
+    with stopped_application(home) as inventory:
+        assert {item.purpose for item in inventory.environment_locks} == {
+            "backend",
+            "web",
+        }
 
 
 def test_protected_environment_lock_is_accessible_but_not_serialized_or_represented(
@@ -1118,7 +1138,9 @@ async def test_real_core_package_overrides_require_matching_operator_environment
     expect_failure(home, "maintenance_layout_invalid")
 
 
-@pytest.mark.parametrize("selection_field", ["source", "version", "ui_environment"])
+@pytest.mark.parametrize(
+    "selection_field", ["source", "version", "ui_environment", "web_environment"]
+)
 def test_candidate_lock_source_version_and_present_ui_corruption_is_refused(
     home, selection_field
 ):

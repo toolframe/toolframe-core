@@ -10,6 +10,7 @@ from .graph import Graph
 
 PRESENTATIONS = {
     "dashboard.page": "dashboard",
+    "web.app": "web",
     "mcp.tool": "mcp",
     "llms.document": "llms",
 }

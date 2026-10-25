@@ -299,13 +299,15 @@ class Access:
                     raise
         return actor
 
-    async def presentation(self, identity):
-        try:
-            actor = await self.resolve(identity)
-        except PluginError as error:
-            if error.code not in {"authentication_required", "auth_transition"}:
-                raise
-            actor = Principal(kind="anonymous")
+    async def presentation(self, identity, *, principal=None):
+        actor = principal
+        if actor is None:
+            try:
+                actor = await self.resolve(identity)
+            except PluginError as error:
+                if error.code not in {"authentication_required", "auth_transition"}:
+                    raise
+                actor = Principal(kind="anonymous")
         catalog = self.catalog()
         return {
             **(await self.mode()),
@@ -313,6 +315,12 @@ class Access:
             "actor": actor.kind,
             "user_id": actor.user_id,
             "allowed_scopes": [s for s in catalog if actor.allows([s], catalog)],
+            "links": await self.host.web_access.links(identity)
+            if hasattr(self.host, "web_access")
+            else {},
+            "landing_url": self.host.gateway.landing_url
+            if hasattr(self.host, "gateway")
+            else "/",
             "login_url": "/_toolframe/auth/login",
             "logout_url": "/_toolframe/auth/logout",
         }

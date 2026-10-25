@@ -7,7 +7,6 @@
       "references/design.md"
     ],
     "avoid_read": [
-      "assets/sample-plugin",
       "references/operations.md"
     ],
     "success": [
@@ -26,7 +25,7 @@
       "references/operations.md"
     ],
     "success": [
-      "Runs toolframe --home APP plugin new reading-tracker before customizing APP/plugins/reading-tracker",
+      "Inspects the Dashboard Notes manifest and explicitly selects toolframe-streamlit-dashboard/notes before customizing source",
       "Scaffolds without registering, enabling or changing composition",
       "Owns an independent wheel and stable plugin ID",
       "Uses managed SQL and public service calls",
@@ -43,9 +42,7 @@
       "references/plugin-api.md",
       "references/operations.md"
     ],
-    "avoid_read": [
-      "assets/sample-plugin"
-    ],
+    "avoid_read": [],
     "success": [
       "Edits existing source directly without scaffolding over it",
       "Preserves the existing identity and applied migration bytes",
@@ -64,12 +61,12 @@
       "references/operations.md"
     ],
     "success": [
-      "Runs plugin new customer-notes and customizes the generated source without overwriting existing plugins",
+      "Selects the requested optional template explicitly and customizes the returned source without overwriting existing plugins",
       "Declares customer-notes.read and customer-notes.write in AuthorizationSpec",
       "Declares method audience and required scopes, page scopes and scope-aware write controls",
       "Keeps managed SQL internal to admitted business execution",
       "Distinguishes explicitly public HTTP from the independent public/protected MCP policy and Dashboard scopes",
-      "Builds and validates with SDK 0.3 and checks direct read-only write denial"
+      "Builds and validates with the installed compatible SDK and checks direct read-only write denial"
     ]
   },
   {
@@ -82,7 +79,7 @@
       "references/operations.md"
     ],
     "success": [
-      "Uses plugin new before adapting the generated source",
+      "Uses the default toolframe-core/basic without fetching optional providers",
       "Publishes a service with JSON schemas",
       "Omits presentation resources, storage and UI dependencies"
     ]
@@ -144,7 +141,59 @@
       "Leaves sensitive methods public_api=False and keeps private data out of llms publications",
       "Explains method scopes do not establish person/tenant identity or row isolation; designs trusted identity and row filtering explicitly",
       "Verifies anonymous, reader, writer and local operator access at each entrance, plus auth outage, revocation and recovery",
-      "Uses Core 0.6.1 / SDK 0.3 and capability detection for failure-policy UI on older Core"
+      "Uses the installed compatible Core/SDK combination and capability detection for failure-policy UI on older Core"
+    ]
+  },
+  {
+    "id": "new-web-plugin",
+    "prompt": "Create a Toolframe notes plugin with an HTML Web app and SQLite persistence, without installing Node. Recommend browser libraries for a small interactive form.",
+    "activate": true,
+    "read": [
+      "references/design.md",
+      "references/plugin-api.md",
+      "references/operations.md",
+      "references/web-authoring.md"
+    ],
+    "success": [
+      "Discovers toolframe-web/notes from its manifest, selects it explicitly and keeps business logic in declared services",
+      "Recommends htmx plus Tailwind while allowing ordinary CSS and browser-ready alternatives",
+      "Uses web prepare on captured source before building the installed wheel",
+      "Verifies scopes, CSRF/revision, fragments, reload and retained data through Core"
+    ]
+  },
+  {
+    "id": "existing-web-library",
+    "prompt": "Extend my existing Toolframe HTML app with a browser-ready chart library; keep its current CSS.",
+    "activate": true,
+    "read": [
+      "references/web-authoring.md"
+    ],
+    "success": [
+      "Edits the existing app without regeneration",
+      "Pins complete browser asset graphs and includes licenses",
+      "Keeps existing framework choices and avoids automatic Node installation"
+    ]
+  },
+  {
+    "id": "standalone-html",
+    "prompt": "Build a standalone HTML website with htmx; I am not using Toolframe.",
+    "activate": false,
+    "success": [
+      "Does not introduce Toolframe packaging or providers"
+    ]
+  },
+  {
+    "id": "unpublished-template",
+    "prompt": "Build a Toolframe Web plugin from this local wheel; do not change or start the existing application.",
+    "activate": true,
+    "read": [
+      "references/operations.md",
+      "references/web-authoring.md"
+    ],
+    "success": [
+      "Uses template show with --from wheel:PATH and reads its parameter schema",
+      "Generates using toolframe-web/notes without runtime add/enable/mount or provider startup",
+      "Treats catalog publication status separately from local wheel availability"
     ]
   }
 ]

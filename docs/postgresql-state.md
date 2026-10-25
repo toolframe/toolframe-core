@@ -1,6 +1,6 @@
 # PostgreSQL Core state
 
-Core 0.7 can keep its management journal in PostgreSQL instead of `data/core.sqlite`.
+Core can keep its management journal in PostgreSQL instead of `data/core.sqlite`.
 The journal contains candidates, selected plugin versions, operation history,
 idempotency keys and recovery metadata. It is independent of the optional
 `sql-postgres` plugin, which owns business and authentication data.
@@ -15,13 +15,9 @@ business databases. Do not provision Core tables in a business-provider database
 Install the coordinated Core release with its optional driver:
 
 ```sh
-pip install 'toolframe-core[postgres]==0.7.0'
+pip install 'toolframe-core[postgres]==0.8.0'
 toolframe-core --home ./app init
 ```
-
-While this release is unpublished, build matching SDK, Cordis and Core wheels
-as described in the repository quick start and install the Core wheel with its
-`postgres` extra from that wheelhouse.
 
 Read the stable `[application].id` from `app/toolframe.toml`. Supply a cluster
 administrator DSN as `TOOLFRAME_CORE_SETUP_DSN` through your secret manager, then:

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import httpx
 import pytest
 import tomlkit
+from dependencies import wheelhouse
 from toolframe_sdk import PluginError
 
 from toolframe_core.api import create_app
@@ -329,7 +330,6 @@ async def test_query_timeout_invalidates_owner(
 async def test_host_disposes_workers_after_database_disconnect(
     postgres_database, tmp_path
 ):
-    from pathlib import Path
 
     import psycopg
     from test_host import fixture_source
@@ -343,9 +343,7 @@ async def test_host_disposes_workers_after_database_disconnect(
     composition = config.initialize()
     composition.application.id = settings.application_id
     composition.plugins["example"] = PluginRequest(source=str(source), enabled=True)
-    composition.packages.find_links = [
-        str(Path(__file__).resolve().parents[2] / "toolframe-sdk/dist")
-    ]
+    composition.packages.find_links = [str(wheelhouse())]
     atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
     host = await Host.create(home, state_settings=settings)
     try:

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "requires_core": ">=0.8,<0.9",
+  "templates": [
+    {
+      "id": "basic",
+      "title": "Basic plugin",
+      "description": "Minimal plugin with a service and tests; no storage or presentation providers.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+            "description": "Plugin identifier used for the distribution, module and service namespace."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "generator": "toolframe_core.authoring:generate"
+    }
+  ]
+}

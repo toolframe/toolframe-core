@@ -5,7 +5,7 @@ enables `toolframe-auth` and `toolframe-dashboard-auth`. An empty
 `init` remains empty. Updating a binary alone never adds these plugins to an
 existing application's composition.
 
-Open the Dashboard directly on `http://127.0.0.1:9876`. The header shows **本機控制**.
+Open the Dashboard directly on `http://127.0.0.1:9876`. The header shows **Local control**.
 The **Access passwords** page creates named grants with random or custom secrets,
 optional expiry, selected scopes and a dynamic **All business scopes** option.
 System scopes start unchecked. New passwords accept 8–32 characters. The form
@@ -22,7 +22,7 @@ expiry/grant edits and revocation. Editing a grant invalidates its sessions and
 requires a fresh login. Revoked records remain revoked.
 
 Before the first password is created, business access is public with the header
-**目前處於公開訪問模式**. First creation changes the saved mode to protected. Removing
+**Public access mode**. First creation changes the saved mode to protected. Removing
 all valid passwords does not reopen access. An operator may explicitly choose
 public mode afterwards; subsequent password edits respect that choice.
 

@@ -8,6 +8,8 @@ from shutil import copytree, ignore_patterns
 
 import httpx
 import pytest
+from dependencies import source as dependency_source
+from dependencies import source_tree
 from fastmcp import Client
 from mcp.shared.exceptions import MCPError
 from starlette.datastructures import Headers
@@ -24,7 +26,7 @@ async def mcp_host(app_host, tmp_path):
     # Publish a write tool only in a disposable fixture; the shipped demo stays read-only.
     source = tmp_path / "scoped-mcp-demo"
     copytree(
-        ROOT / "toolframe-demo-entry-register",
+        source_tree("toolframe-demo-entry-register"),
         source,
         ignore=ignore_patterns(".git", ".venv", "dist", "__pycache__"),
     )
@@ -45,7 +47,7 @@ plugin = plugin.model_copy(update={"resources": (*plugin.resources,
     await operate(app_host, "update", id="entry-register", source=str(source))
     await operate(app_host, "reload", id="entry-register")
     for repo in ("toolframe-mcp-auth", "toolframe-fastmcp"):
-        await operate(app_host, "add", source=str(ROOT / repo), enable=True)
+        await operate(app_host, "add", source=dependency_source(repo), enable=True)
     yield app_host
 
 

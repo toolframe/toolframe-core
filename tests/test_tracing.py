@@ -5,11 +5,11 @@ import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 import httpx
 import pytest
 import tomlkit
+from dependencies import wheelhouse
 from google.protobuf.json_format import MessageToDict
 from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import (
     ExportLogsServiceRequest,
@@ -86,9 +86,7 @@ async def tracing_host(home):
     if not (home / "toolframe.toml").exists():
         config = ConfigFile(home)
         composition = config.initialize()
-        composition.packages.find_links = [
-            str(Path(__file__).resolve().parents[2] / "toolframe-sdk/dist")
-        ]
+        composition.packages.find_links = [str(wheelhouse())]
         composition.runtime.health_interval = 60
         atomic_write(config.path, tomlkit.dumps(composition.model_dump()))
     host = await Host.create(home)

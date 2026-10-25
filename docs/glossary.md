@@ -188,3 +188,15 @@ resource access.
 - **Core ownership marker**: The durable run/node identity paired with a
   PostgreSQL session lock. Unclean release requires explicit recovery after
   verifying the former Core and its workers have stopped.
+
+**Web application**: An owned `web.app` resource whose SDK factory defines full
+documents, bounded HTTP handlers and app-specific assets. It runs in the Web
+presentation cohort and calls domain services through Core-issued request context.
+
+**Web revision**: Core's identity for an app generation, prepared route/asset
+catalog and gateway selection. Unsafe submissions must prove the displayed
+revision; a changed revision requires a document reload.
+
+**Asset set**: A sealed manifest and allowlisted browser files whose combined
+digest names immutable URLs. Relative file relationships and license references
+are preserved during author-time preparation.

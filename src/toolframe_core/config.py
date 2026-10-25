@@ -13,7 +13,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import tomlkit
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from toolframe_sdk import PluginError
 
 from .network import bind_host
@@ -132,8 +132,30 @@ class McpAccessPolicy(Model):
         return validate_plugin_id(value)
 
 
+class PresentationMount(Model):
+    prefix: str
+
+    @field_validator("prefix")
+    @classmethod
+    def canonical(cls, value):
+        from toolframe_sdk.web import public_base
+
+        return public_base(value)
+
+
+class GatewaySettings(Model):
+    mounts: dict[str, PresentationMount] = Field(default_factory=dict)
+    landing_target: str = ""
+
+
+class WebSettings(Model):
+    max_body_bytes: int = Field(default=8 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
+    request_timeout: float = Field(default=30, gt=0, le=120, allow_inf_nan=False)
+    max_requests: int = Field(default=64, ge=1, le=512)
+
+
 class Composition(Model):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     application: Application
     plugins: dict[str, PluginRequest] = Field(default_factory=dict)
     bindings: dict[str, str] = Field(default_factory=dict)
@@ -142,6 +164,18 @@ class Composition(Model):
     packages: PackageSettings = Field(default_factory=PackageSettings)
     access: AccessPolicy = Field(default_factory=AccessPolicy)
     mcp_access: McpAccessPolicy = Field(default_factory=McpAccessPolicy)
+    gateway: GatewaySettings = Field(default_factory=GatewaySettings)
+    web: WebSettings = Field(default_factory=WebSettings)
+
+    @model_validator(mode="after")
+    def gateway_contract(self):
+        from .gateway import compile_gateway
+
+        try:
+            compile_gateway(self)
+        except PluginError as error:
+            raise ValueError(error.message) from error
+        return self
 
     @field_validator("plugins")
     @classmethod
