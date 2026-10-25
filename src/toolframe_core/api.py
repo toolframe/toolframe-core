@@ -390,7 +390,7 @@ def create_app(host, *, manage_lifespan=True):
     async def composition(request: Request):
         await require(request, "composition")
         try:
-            text = redact_toml(host.config.path.read_text(), host.redact)
+            text = redact_toml(host.config.path.read_text(), host.redact_composition)
         except ValueError as error:
             raise PluginError(
                 "configuration_invalid", "Repair invalid TOML before exporting"

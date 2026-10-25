@@ -137,6 +137,10 @@ database, management token and config. A missing key alongside an existing store
 fails activation; restore the original key rather than generating a replacement.
 Scratch runtime validation uses a separate temporary store/key. Password/session
 secrets never enter management operation history or exported composition.
+Composition exports apply each known plugin's secret schema to the TOML snapshot
+being exported, including manually rotated values before a Host refresh. Export
+reads do not apply those edits or rewrite the composition; ordinary non-secret
+settings and TOML comments remain visible.
 
 ## SDK and existing applications
 

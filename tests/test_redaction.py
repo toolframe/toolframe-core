@@ -3,10 +3,95 @@ import json
 
 import httpx
 import pytest
+import tomlkit
+from test_auth import app_host, client, credential, operate  # noqa: F401
 from test_host import fixture_source, host  # noqa: F401
 
 from toolframe_core.api import create_app
 from toolframe_core.redaction import redact, redact_toml, secret_values
+
+
+async def test_composition_export_redacts_rotated_schema_secrets_before_refresh(
+    app_host, tmp_path
+):
+    host = app_host
+    source = fixture_source(tmp_path, "alpha")
+    module = source / "fixture/__init__.py"
+    schema = {
+        "$defs": {"private": {"type": "string", "writeOnly": True}},
+        "properties": {
+            "opaque": {"$ref": "#/$defs/private"},
+            "pin": {"type": "integer", "x-secret": True},
+            "value": {"type": "string", "format": "password"},
+            "label": {"type": "string"},
+            "api_token": {"type": "string"},
+            "previous": {"type": "string"},
+        },
+    }
+    module.write_text(
+        module.read_text().replace(
+            "id='alpha',", f"id='alpha',config_schema={schema!r},"
+        )
+    )
+    old = {
+        "opaque": "old-opaque",
+        "pin": 481516,
+        "value": "old-value",
+        "api_token": "old-key",
+    }
+    new = {
+        "opaque": "new-opaque",
+        "pin": 234267,
+        "value": "new-value",
+        "api_token": "new-key",
+    }
+    await operate(
+        host, "add", source=str(source), enable=True, config={**old, "label": "visible"}
+    )
+    await credential(host, scopes=["system.plugins.read"])
+    async with client(host) as reader, client(host) as anonymous:
+        denied = await anonymous.get("/_toolframe/v1/composition")
+        assert denied.status_code == 401
+        login = await reader.post(
+            "/_toolframe/auth/login", json={"password": "test-password-read"}
+        )
+        assert login.status_code == 303
+        denied = await reader.post(
+            "/_toolframe/v1/operations",
+            json={"action": "reload", "params": {"id": "alpha"}},
+        )
+        assert denied.status_code == 403
+
+        async def exported():
+            original = host.config.path.read_bytes()
+            revision = host.revision
+            loaded = host.composition.model_dump()
+            response = await reader.get("/_toolframe/v1/composition")
+            assert response.status_code == 200, response.text
+            assert response.json()["secrets"] == "redacted"
+            assert host.config.path.read_bytes() == original
+            assert host.revision == revision and host.composition.model_dump() == loaded
+            text = response.json()["toml"]
+            config = tomlkit.parse(text)["plugins"]["alpha"]["config"]
+            assert config["label"] == "visible"
+            for field in old:
+                assert config[field] == "[REDACTED]", (field, config[field])
+            return text, config
+
+        await exported()
+        document = tomlkit.parse(host.config.path.read_text())
+        document["plugins"]["alpha"]["config"].update(
+            {**new, "previous": old["opaque"]}
+        )
+        document.add(tomlkit.comment("Preserve export formatting"))
+        host.config.path.write_text(tomlkit.dumps(document))
+        assert host.composition.plugins["alpha"].config["opaque"] == old["opaque"]
+        text, config = await exported()
+        assert config["previous"] == "[REDACTED]"
+        assert "# Preserve export formatting" in text
+        assert all(str(value) not in text for value in [*old.values(), *new.values()])
+        await host.refresh()
+        await exported()
 
 
 def test_schema_secrets_urls_and_short_credentials_are_redacted_without_changing_digests():
