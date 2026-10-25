@@ -62,6 +62,13 @@ not blindly retry credential creation.
 
 ## Entrances and grants
 
+Core prevents browser framing of the Dashboard and its management/sign-in
+responses with `Content-Security-Policy: frame-ancestors 'none'` and
+`X-Frame-Options: DENY`. This applies to both the legacy Dashboard root and
+explicit Dashboard mounts. The additional CSP policy preserves upstream CSP
+directives; Web applications retain their own response policies. Open the
+Dashboard as a top-level page.
+
 | Entrance | Access rule |
 | --- | --- |
 | Dashboard and `POST /_toolframe/v1/services/OWNER/SERVICE/METHOD` | Effective Dashboard policy and method scopes; internal services excluded |
