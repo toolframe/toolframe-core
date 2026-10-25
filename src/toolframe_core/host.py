@@ -2597,6 +2597,21 @@ class Host:
                 )
                 (await self.submit(action, {"id": name, "watch": True}))
 
+    def redact_composition(self, value):
+        """Protect the exported snapshot even before desired state is refreshed."""
+        secrets = set()
+        plugins = value.get("plugins", {})
+        if isinstance(plugins, dict):
+            for name, request in plugins.items():
+                definition = self.graph.definitions.get(name)
+                if isinstance(request, dict) and definition:
+                    secrets.update(
+                        secret_values(
+                            request.get("config", {}), definition.config_schema
+                        )
+                    )
+        return self.redact(redact(value, secrets))
+
     def redact(self, value):
         secrets = {self.token}
         for name, request in self.composition.plugins.items():
