@@ -6,7 +6,7 @@ from shutil import copy2, rmtree
 
 import pytest
 import tomlkit
-from dependencies import wheel
+from dependencies import wheelhouse
 from test_host import operate
 from test_package_selection import make_wheel
 from toolframe_sdk import PluginError
@@ -38,7 +38,8 @@ enabled = false
     )
     make_wheel(directory, "fixture-choice", "1.0", plugin="choice")
     make_wheel(directory, "fixture-pinned", "1.0", plugin="pinned")
-    copy2(wheel("toolframe-sdk"), directory)
+    (sdk_wheel,) = wheelhouse().glob(f"toolframe_sdk-{SDK_VERSION}-*.whl")
+    copy2(sdk_wheel, directory)
     catalog = tmp_path / "catalog"
     catalog.mkdir()
     (catalog / "templates.json").write_text(
