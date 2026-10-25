@@ -1,6 +1,9 @@
 {
   "entry-register": {
     "source": "pypi:toolframe-demo-entry-register==0.4.1",
-    "asset": "toolframe_demo_entry_register/templates/entry-register.toml"
+    "asset": "toolframe_demo_entry_register/templates/entry-register.toml",
+    "source_overrides": {
+      "fastmcp": "pypi:toolframe-fastmcp==0.3.1"
+    }
   }
 }

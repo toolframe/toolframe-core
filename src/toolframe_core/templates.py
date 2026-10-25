@@ -43,6 +43,8 @@ async def initialize_template(config, template, *, name=None, host=None, port=98
         artifact = await Packages(config.home, settings).capture(recipe["source"])
         with zipfile.ZipFile(config.home / artifact["artifact"]) as wheel:
             document = tomlkit.parse(wheel.read(recipe["asset"]).decode())
+        for plugin, source in recipe.get("source_overrides", {}).items():
+            document["plugins"][plugin]["source"] = source
     document["application"]["id"] = str(uuid.uuid4())
     document["application"]["port"] = port
     if host is not None:

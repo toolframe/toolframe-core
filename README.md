@@ -50,6 +50,9 @@ PyPI, and resolves each selected plugin independently. Core requires
 `fastapi-cordis==0.2.2`. `init` without `--template` creates an empty application;
 the Entry Register template selects storage, Dashboard, MCP, documentation and
 password providers. Plugin choices remain in the application configuration.
+The named Entry Register recipe selects FastMCP 0.3.1 for new applications.
+Explicit local TOML recipes retain their selected sources, and initialization
+refuses to rewrite an existing application or its retained plugin artifacts.
 
 Native CLI wheels target macOS 12+ on Apple Silicon and Intel, and Linux glibc
 2.28+ on ARM64 and x86-64. Windows and musl Linux are outside this release.
