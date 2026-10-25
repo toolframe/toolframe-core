@@ -27,6 +27,17 @@ plugins collaborate through service contracts rather than private imports or
 shared database connections. Entry Register follows the same contracts as an
 independently authored plugin.
 
+Core preserves documented plugin, worker and authoring contracts across subsequent
+0.x releases from the Core 0.8 baseline. The stopped-maintenance interfaces used by
+Backup retain their Core 0.7 contract. Package versions are independent: a Core
+minor update does not itself require a plugin release. SDK compatibility and
+minimum-version verification follow the
+[SDK compatibility policy](https://github.com/toolframe/toolframe-sdk/blob/main/docs/compatibility.md).
+Core still selects an exact SDK for its own runtime and records exact plugin
+environment locks. New features must keep older contracts usable or provide an
+explicit migration; unsupported schemas, protocols and authorization remain
+errors. This promise does not cover private Core implementation details.
+
 An empty application needs no presentation or business-storage provider. Core owns
 its database directly, so a failed optional provider does not remove management.
 Required service dependencies block consumers when unavailable; optional

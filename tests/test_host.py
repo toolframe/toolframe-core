@@ -27,7 +27,7 @@ build-backend="hatchling.build"
 [project]
 name="fixture-{name}"
 version="0.1.0"
-dependencies=["toolframe-sdk==0.4.1"]
+dependencies=["toolframe-sdk>=0.4.1,<1"]
 [project.entry-points."toolframe.plugins"]
 {name}="fixture:plugin"
 [tool.hatch.build.targets.wheel]

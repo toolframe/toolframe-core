@@ -10,7 +10,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "byfb", email = "62798989+byfb@users.noreply.github.com" }]
 requires-python = ">=3.14"
-dependencies = ["toolframe-sdk==0.4.1"]
+dependencies = ["toolframe-sdk>=0.4.1,<1"]
 
 [project.entry-points."toolframe.plugins"]
 basic = "toolframe_basic.plugin:plugin"
