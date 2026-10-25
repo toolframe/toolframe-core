@@ -281,8 +281,10 @@ def create_app(host, *, manage_lifespan=True):
                 result["token"],
                 httponly=True,
                 samesite="strict",
-                secure=host.composition.application.public_url.startswith("https://")
-                or request.url.scheme == "https",
+                secure=(
+                    urlsplit(host.composition.application.public_url).scheme == "https"
+                    or request.url.scheme == "https"
+                ),
                 max_age=max(1, int(result["expires_at"] - time.time())),
             )
             return response
@@ -362,8 +364,10 @@ def create_app(host, *, manage_lifespan=True):
                 token,
                 httponly=True,
                 samesite="strict",
-                secure=host.composition.application.public_url.startswith("https://")
-                or request.url.scheme == "https",
+                secure=(
+                    urlsplit(host.composition.application.public_url).scheme == "https"
+                    or request.url.scheme == "https"
+                ),
             )
             response.headers["referrer-policy"] = "no-referrer"
             response.headers["cache-control"] = "no-store"

@@ -79,7 +79,10 @@ admit fetches, frames, other routes, writes or local-control URLs. Dashboard
 session admission still applies. HTTP bodies are bounded;
 OIDC transaction/session cookies are HttpOnly, Secure on HTTPS, and SameSite=Lax
 for cross-site OIDC returns. Password/operator cookies remain SameSite=Strict and
-are Secure when a canonical HTTPS origin is configured. Core strips these cookies
+are Secure when a canonical HTTPS origin is configured. All four cookie types
+use the parsed origin scheme, so HTTPS scheme casing does not affect Secure;
+a direct HTTPS request also sets Secure. HTTP loopback development remains
+supported. Core strips these cookies
 before forwarding to presentation workers.
 
 ## Local management and failures

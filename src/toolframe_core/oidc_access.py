@@ -158,7 +158,10 @@ def install_routes(app, host):
             status_code=result["status"],
             headers=result.get("headers", {}),
         )
-        secure = host.composition.application.public_url.startswith("https://")
+        secure = (
+            urlsplit(host.composition.application.public_url).scheme == "https"
+            or request.url.scheme == "https"
+        )
         if result.get("browser"):
             response.set_cookie(
                 BROWSER_COOKIE,
