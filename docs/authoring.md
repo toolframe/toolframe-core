@@ -26,8 +26,8 @@ The local list reads installed distribution metadata and wheels already captured
 for the application or explicit authoring requests. Captured wheels are identified
 as cached, not as enabled plugins. It does not contact an index. The separate
 `--catalog` list is a small offline directory of official packages. Its availability
-field distinguishes published authoring packages from packages that require a
-matching local wheel. A catalog entry never installs anything or claims that an
+field distinguishes templates bundled with Core, published authoring packages,
+and packages that require a matching local wheel. A catalog entry never installs anything or claims that an
 unpublished authoring version can be downloaded.
 
 An explicit source reads and caches one wheel, without installing its dependencies:

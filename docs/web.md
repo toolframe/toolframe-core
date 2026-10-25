@@ -7,14 +7,13 @@ The Web cohort is independent of business workers and the Dashboard UI cohort.
 
 ## Create a notes application
 
-Use a Core 0.8 executable or `toolframe-core` Python entry point. Supply matching
-Core, SDK `0.4.1` and Web wheels in a local wheelhouse for this combination.
-Set `TOOLFRAME_WHEELHOUSE` for launcher/authoring preparation and set
-`packages.find_links` in the application's composition for plugin resolution.
+Use a Core 0.8 executable or `toolframe-core` Python entry point. Install the CLI
+and select the published Web authoring package explicitly:
 
 ```sh
+uv tool install toolframe==0.8.0
 toolframe --home ./notes-app init
-toolframe --home ./notes-app plugin new notes --from wheel:/path/to/toolframe_web-0.1.0-py3-none-any.whl --template toolframe-web/notes
+toolframe --home ./notes-app plugin new notes --from pypi:toolframe-web==0.1.0 --template toolframe-web/notes
 toolframe --home ./notes-app web prepare ./notes-app/plugins/notes
 ```
 

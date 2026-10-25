@@ -4,7 +4,7 @@
 Toolframe is a persistent local control host for replaceable Python plugins.
 Core owns composition, immutable package environments, worker lifecycles,
 management operations and a durable Core journal. SQLite (`data/core.sqlite`) is
-the default; Core 0.7 also supports a dedicated PostgreSQL database through runtime
+the default; Core also supports a dedicated PostgreSQL database through runtime
 environment configuration. Dashboard, MCP, llms.txt, business
 storage and Entry Register are independently packaged plugins.
 
@@ -64,7 +64,7 @@ library users can install `toolframe-core` on Python 3.14+; plugin authors insta
 `toolframe-sdk`. The Python CLI entry point is `toolframe-core`.
 
 For full HTML applications with forms, app-owned JavaScript/CSS and no Node build
-environment, use `plugin new NAME --template toolframe-web/notes` with its authoring wheel and follow
+environment, use `plugin new NAME --from pypi:toolframe-web==0.1.0 --template toolframe-web/notes` and follow
 [Web applications](docs/web.md). Web and Streamlit can share one Core with explicit
 presentation mounts.
 

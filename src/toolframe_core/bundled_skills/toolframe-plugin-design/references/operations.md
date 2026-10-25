@@ -28,7 +28,8 @@ toolframe --home APP plugin new customer-notes --from wheel:/path/to/toolframe_w
 
 Use `pypi:PACKAGE==VERSION` only when that authoring wheel is published or available
 through configured `find_links` / `--wheelhouse`. The offline official catalog
-labels unpublished authoring capabilities; it does not automatically install them.
+distinguishes bundled, published and local-wheel-only authoring capabilities;
+it does not automatically install them.
 List/show read only wheel metadata, without importing provider/generator code or
 installing dependencies. Generation alone prepares the selected wheel's isolated
 authoring environment. A runtime entry point or enabled provider is not required.
