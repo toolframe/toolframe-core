@@ -27,14 +27,13 @@ its native wheel does not bundle Python distributions.
 
 ## Publisher setup
 
-Create GitHub environments `testpypi` and `pypi` for Core, and
-`testpypi-launcher` and `pypi-launcher` for the launcher. On each corresponding
-index, create a Trusted Publisher for **both** projects below:
+Create GitHub environments `pypi` for Core and `pypi-launcher` for the launcher.
+On PyPI, create a Trusted Publisher for **both** projects below:
 
 | PyPI project | GitHub owner | Repository | Workflow | Environment |
 | --- | --- | --- | --- | --- |
-| `toolframe-core` | `toolframe` | `toolframe-core` | `publish.yml` | `testpypi` or `pypi` |
-| `toolframe` | `toolframe` | `toolframe-core` | `publish.yml` | `testpypi-launcher` or `pypi-launcher` |
+| `toolframe-core` | `toolframe` | `toolframe-core` | `publish.yml` | `pypi` |
+| `toolframe` | `toolframe` | `toolframe-core` | `publish.yml` | `pypi-launcher` |
 
 The projects use separate upload jobs and environments so that each has a
 distinct publisher identity. PyPI does not allow two pending publishers with the
@@ -56,7 +55,7 @@ credentials; see [CI](ci.md).
 
 `ci.yml` validates Core's wheel/sdist, real PostgreSQL integration and native
 launcher wheels on four platforms. Publication is manual: select tag `v0.8.0`
-for `publish.yml`, choose `testpypi`, inspect that run, then select `pypi`.
+for `publish.yml` to publish to PyPI.
 The tag must match both Python and Cargo versions. Branches and mismatched tags
 fail before validation.
 
@@ -127,6 +126,6 @@ python3.14 scripts/verify-skill.py --binary /path/to/toolframe \
 
 Verify Dashboard and an independent MCP client, then restart with `--offline`
 and confirm retained data. On Intel macOS include an empty companion cache to
-exercise the actual Release download. TestPyPI does not mirror public
-dependencies; use explicit dependency sources for staging checks. Record actual
+exercise the actual Release download. Use explicit local wheels for
+prepublication checks and verify PyPI resolution after publication. Record actual
 commands, revisions, hashes and results in CI artifacts or ignored local notes.
