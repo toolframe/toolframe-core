@@ -21,7 +21,7 @@ from toolframe_core.scaffold import describe_templates
 def manifest():
     return {
         "schema_version": 1,
-        "requires_core": ">=0.8,<0.9",
+        "requires_core": ">=0.8,<1",
         "templates": [
             {
                 "id": "example",
@@ -105,7 +105,9 @@ def test_official_authoring_contract_survives_core_minor_updates(
 
 
 def test_third_party_explicit_upper_bound_is_still_enforced(tmp_path, monkeypatch):
-    distribution = from_wheel(make_wheel(tmp_path))
+    document = manifest()
+    document["requires_core"] = ">=0.8,<0.9"
+    distribution = from_wheel(make_wheel(tmp_path, document=document))
     monkeypatch.setattr(authoring_metadata, "__version__", "0.9.0")
     with pytest.raises(PluginError, match="Cannot execute"):
         distribution.require_compatible()
@@ -114,7 +116,7 @@ def test_third_party_explicit_upper_bound_is_still_enforced(tmp_path, monkeypatc
 async def incompatible_source(tmp_path, monkeypatch, source_kind, runtime):
     document = manifest()
     if runtime == "core":
-        document["requires_core"] = ">=0.9"
+        document["requires_core"] = ">=999"
     marker = tmp_path / "incompatible-imported"
     wheel = make_wheel(
         tmp_path / "wheels",
@@ -190,7 +192,7 @@ def test_incompatible_cli_discovery_and_generation_preflight(
             rows = result.get("templates", [result])
             row = next(r for r in rows if r["id"] == "third-party-author/example")
             assert row["requires_core"] == (
-                ">=0.9" if runtime == "core" else ">=0.8,<0.9"
+                ">=999" if runtime == "core" else ">=0.8,<1"
             )
             assert row["requires_python"] == (
                 ">=999" if runtime == "python" else ">=3.14"
@@ -341,7 +343,7 @@ async def test_conflicting_versions_require_explicit_source(
     one = from_wheel(make_wheel(tmp_path / "one"))
     document = manifest()
     if incompatible:
-        document["requires_core"] = ">=0.9"
+        document["requires_core"] = ">=999"
     two = from_wheel(make_wheel(tmp_path / "two", version="2.0", document=document))
     monkeypatch.setattr(authoring, "available", lambda config: [one, two])
     with pytest.raises(PluginError, match="Multiple versions"):
@@ -356,7 +358,7 @@ async def test_common_execution_gate_rejects_both_runtime_mismatches(
     tmp_path, monkeypatch
 ):
     document = manifest()
-    document["requires_core"] = ">=0.9"
+    document["requires_core"] = ">=999"
     wheel = make_wheel(tmp_path / "wheels", document=document, requires_python=">=999")
     dist = from_wheel(wheel)
     assert dist.compatibility()["compatible"] is False
@@ -387,7 +389,7 @@ async def test_installed_and_cached_metadata_conflicts_remain_errors(
     if difference == "manifest":
         document["templates"][0]["title"] = "Conflicting title"
     elif difference == "requires_core":
-        document["requires_core"] = ">=0.9"
+        document["requires_core"] = ">=999"
     changed = make_wheel(
         tmp_path / "changed",
         document=document,
@@ -404,7 +406,7 @@ async def test_installed_and_cached_metadata_conflicts_remain_errors(
 
 async def test_cached_incompatible_wheel_still_requires_intact_bytes(tmp_path):
     document = manifest()
-    document["requires_core"] = ">=0.9"
+    document["requires_core"] = ">=999"
     wheel = make_wheel(tmp_path / "wheels", document=document)
     config = ConfigFile(tmp_path / "app")
     selected = await authoring.acquire(

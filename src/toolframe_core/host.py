@@ -28,11 +28,13 @@ from .config import ConfigFile, HostLock, PluginRequest, atomic_write, managemen
 from .diagnostics import dependency_snapshot
 from .gateway import compile_gateway, endpoints, validate_web_catalogs
 from .graph import Graph
+from .lockfile import write_lock
 from .mcp_access import McpAccess
 from .network import bind_host
-from .packages import Packages, pinned_index_source, source_files
+from .packages import Packages, floating_index_source, index_source, source_files
 from .process import WorkerProcess, group_exists, process_inventory, stop_group
 from .redaction import redact, secret_values
+from .selection import prepare_selection
 from .state import CoreState, StateSettings
 from .stores import RetainedStores
 from .web_access import WebAccess
@@ -520,7 +522,7 @@ class Host:
         if (
             not retained
             or retained["source"]["request"] != request.source
-            or not (installed or pinned_index_source(request.source))
+            or not (installed or index_source(request.source))
         ):
             retained = None
         candidate = await self.packages.prepare(
@@ -642,7 +644,33 @@ class Host:
         if action == "update":
             request = self.composition.plugins[name]
             source = params.get("source", request.source)
-            candidate = await self.packages.prepare(name, source, request.config)
+            pin = False
+            if "source" not in params:
+                row = await self.state.plugin(name)
+                previous = row["last_candidate"] or row["current_candidate"]
+                retained = await self.state.candidate(previous) if previous else None
+                if retained and retained["source"]["request"] == source:
+                    source = retained["source"].get("requirement", source)
+                    pin = source != request.source
+            if floating_index_source(source):
+                fixed = await self.selected()
+                fixed.pop(name, None)
+                candidates = await prepare_selection(
+                    self.packages,
+                    {name: request.model_copy(update={"source": source})},
+                    self.composition.bindings,
+                    fixed=fixed,
+                    enabled={
+                        key
+                        for key, item in self.composition.plugins.items()
+                        if item.enabled
+                    },
+                    pin=pin,
+                )
+                candidate = candidates[name]
+                source = candidate["source"]["request"]
+            else:
+                candidate = await self.packages.prepare(name, source, request.config)
             if source != request.source:
                 self.composition, self.revision = self.config.put_plugin(
                     name, request.model_copy(update={"source": source}), self.revision
@@ -871,7 +899,7 @@ class Host:
                         for resource in graph.definitions[owner].resources
                     )
                 ]
-                environment = await self.packages.environment(cohort, ui=True)
+                environment = await self.packages.cohort_environment(cohort, extra="ui")
                 proposed[dashboard] = {
                     **proposed[dashboard],
                     "ui_environment": environment,
@@ -890,7 +918,9 @@ class Host:
                         r.kind == "web.app" for r in graph.definitions[owner].resources
                     )
                 ]
-                environment = await self.packages.environment(cohort, extra="web")
+                environment = await self.packages.cohort_environment(
+                    cohort, extra="web"
+                )
                 proposed[web] = {**proposed[web], "web_environment": environment}
                 stages[stage] = {"status": "passed", "environment": environment["id"]}
             for kind, resource_kind in {
@@ -1507,15 +1537,9 @@ class Host:
                     cohort_ids = {item["plugin_id"]: item["id"] for item in cohort}
                     prior = proposed[name]
                     profile = "web" if definition.provider_kind == "web" else "ui"
-                    environment = prior.get(profile + "_environment")
-                    if (
-                        not environment
-                        or prior.get(profile + "_cohort") != cohort_ids
-                        or not (self.home / environment["python"]).is_file()
-                    ):
-                        environment = await self.packages.environment(
-                            cohort, extra=profile
-                        )
+                    environment = await self.packages.cohort_environment(
+                        cohort, extra=profile
+                    )
                     proposed[name] = {
                         **prior,
                         profile + "_environment": environment,
@@ -1912,46 +1936,7 @@ class Host:
         self.gateway = gateway
 
     async def write_lock(self):
-        plugins = {}
-        for name in self.composition.plugins:
-            row = await self.state.plugin(name)
-            candidates = {}
-            for selection in (
-                "current_candidate",
-                "last_candidate",
-                "previous_candidate",
-            ):
-                if row[selection]:
-                    candidate = await self.state.candidate(row[selection])
-                    candidates[selection] = {
-                        key: candidate[key]
-                        for key in (
-                            "id",
-                            "version",
-                            "artifact",
-                            "artifact_hash",
-                            "source",
-                            "environment",
-                            "ui_environment",
-                            "web_environment",
-                        )
-                        if key in candidate
-                    }
-            plugins[name] = candidates
-        atomic_write(
-            self.home / "toolframe.lock",
-            json.dumps(
-                {"format": 1, "desired_revision": self.revision, "plugins": plugins},
-                indent=2,
-            )
-            + "\n",
-        )
-        (await self.state.set_meta("desired_revision", self.revision))
-        (
-            await self.state.set_meta(
-                "last_valid_composition", self.composition.model_dump()
-            )
-        )
+        await write_lock(self.home, self.state, self.composition, self.revision)
 
     def begin_root(self, owner, *, deadline=None, principal=None):
         if (

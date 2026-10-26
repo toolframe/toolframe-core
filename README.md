@@ -219,14 +219,18 @@ toolframe --home ./example plugin status plugin-id --json --check
 `enable` and `apply` reuse the latest installed candidate when its source matches
 composition, including after the original source or an older binary bundle is
 removed. They verify the retained wheel and rerun import/configuration preflight.
-`reload` and `validate` likewise reuse an installed exact `pypi:package==version`
-wheel; local directories, wheel paths, Git refs and unpinned index requests are
-captured afresh. A missing or modified retained wheel is an error, never an
-implicit package upgrade. Rebuilding a missing environment may require cached or
-downloadable dependencies.
+`reload` and `validate` likewise retain installed index selections, including
+`pypi:package>=minimum,<ceiling` ranges. Local directories, wheel paths and Git refs
+are captured afresh. A missing or modified retained wheel is an error, never an
+implicit package upgrade. Missing environments are restored from their exact
+locks when the runtime profile is unchanged; required dependencies must be cached
+or downloadable.
 
 `update` explicitly resolves the source again and stages a candidate; it does not
-change the active generation. Use it to pick up a replaced wheel or dependency
+change the active generation. Named application recipes select compatible stable
+versions during initialization, write exact sources and locks, and retain their
+original ranges for explicit updates. See [application recipes](docs/application-templates.md)
+for selection, isolation and offline behavior. Use update to pick up a replaced wheel or dependency
 resolution, or to change the requested source/version. `reload` does not enable a
 disabled plugin: use `enable` to restore its services, pages and tools.
 A reviewed plan binds the
@@ -236,7 +240,7 @@ candidate. `--expected-revision` protects managed edits to composition.
 
 Supported sources are local directories (`path:/absolute/directory`), Git
 (`git+https://host/repo.git@ref#subdirectory=path`), wheel files/HTTPS URLs and
-`pypi:distribution==version`. Git refs resolve to full commits; local edits receive
+`pypi:distribution==version` or bounded index ranges. Git refs resolve to full commits; local edits receive
 new content identities even when their package version is unchanged. Workers use
 captured wheels, never live editable imports. Each wheel supplies one
 `toolframe.plugins` entry point and one stable plugin ID.

@@ -10,7 +10,7 @@
         "project": "toolframe-core",
         "availability": "bundled",
         "note": "The basic template is bundled with this Core installation; no additional package is needed.",
-        "version": "0.8.1"
+        "version": "0.8.2"
       },
       "templates": [
         {

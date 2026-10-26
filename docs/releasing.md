@@ -8,9 +8,14 @@ contains no Python wheels; it resolves Core and selected plugins from PyPI.
 
 ## Coordinated release
 
-Core selects SDK 0.4.1 and requires Cordis 0.2.2. The Core 0.8.1 application
-combination uses SQLite 0.4.1, auth 0.3.1, dashboard-auth 0.2.1, Dashboard 0.5.1,
-Web 0.1.0, FastMCP 0.3.1, llms-txt 0.3.0 and Entry Register 0.4.1. Optional
+Core selects SDK 0.4.1 and requires Cordis 0.2.2. Publish Entry Register 0.4.2
+before Core 0.8.2. Its named recipe resolves bounded plugin ranges and freezes
+the compatible stable selections before first serve; see
+[application recipes](application-templates.md).
+
+The release validation combination uses SQLite 0.4.1, auth 0.3.1,
+dashboard-auth 0.2.1, Dashboard 0.5.1, Web 0.1.0, `toolframe-fastmcp` 0.3.1,
+llms-txt 0.3.0 and Entry Register 0.4.2. Optional
 versions are PostgreSQL 0.2.1, MCP Auth 0.3.1, OIDC Auth 0.3.2, Jobs 0.2.1 and
 Backup 0.2.2. Backup uses the public Core operator API and supports gateway mounts.
 
@@ -20,7 +25,7 @@ the public Web sdist by hash. The Web repository may remain private; its PyPI
 wheel and sdist are public. See [CI](ci.md) for source acquisition and local
 prepublication artifacts.
 
-Publish `toolframe-core==0.8.1` and `toolframe==0.8.1` together through Core's
+Publish `toolframe-core==0.8.2` and `toolframe==0.8.2` together through Core's
 workflow after the dependency combination is available. Core and launcher versions
 must match. The launcher resolves the package versions selected by the template;
 its native wheel does not bundle Python distributions.
@@ -54,7 +59,7 @@ credentials; see [CI](ci.md).
 ## Validate and publish
 
 `ci.yml` validates Core's wheel/sdist, real PostgreSQL integration and native
-launcher wheels on four platforms. Publication is manual: select tag `v0.8.1`
+launcher wheels on four platforms. Publication is manual: select tag `v0.8.2`
 for `publish.yml` to publish to PyPI.
 The tag must match both Python and Cargo versions. Branches and mismatched tags
 fail before validation.
@@ -112,7 +117,7 @@ Prepublication acceptance supplies matching local wheels explicitly. After all
 uploads, run in a fresh environment:
 
 ```sh
-uv tool install toolframe==0.8.1
+uv tool install toolframe==0.8.2
 toolframe --version
 toolframe --home ./release-check init --template entry-register
 toolframe --home ./release-check serve
@@ -120,7 +125,7 @@ toolframe --home ./release-check serve
 toolframe --home ./release-check open
 ```
 
-Repeat with `uvx --from toolframe==0.8.1 toolframe ...` and with the downloaded
+Repeat with `uvx --from toolframe==0.8.2 toolframe ...` and with the downloaded
 native archive. Compare the archive SHA-256 with `SHA256SUMS`. The automated
 consumer probe can be repeated without a test wheelhouse:
 
