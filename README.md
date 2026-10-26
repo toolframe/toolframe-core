@@ -8,6 +8,9 @@
 
 # Toolframe Core
 
+[![CI on main](https://github.com/toolframe/toolframe-core/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/toolframe/toolframe-core/actions/workflows/ci.yml?query=branch%3Amain)
+[![Container security on main](https://github.com/toolframe/toolframe-core/actions/workflows/container-security.yml/badge.svg?branch=main&event=schedule)](https://github.com/toolframe/toolframe-core/actions/workflows/container-security.yml?query=branch%3Amain)
+
 Build local apps from Python plugins, with web pages, dashboards and MCP tools.
 Update plugins while keeping their data.
 
@@ -53,6 +56,7 @@ presentation are separate plugins you choose for your application.
 
 | I want to… | Start here |
 | --- | --- |
+| Choose a recipe or control versions | [Application recipes](docs/application-templates.md) |
 | Install, update or reload plugins | [Operator guide](docs/operations.md) |
 | Choose where data lives | [SQL](docs/sql-storage.md) · [Files](docs/object-storage.md) |
 | Set up access | [Dashboard](docs/authentication.md) · [MCP](docs/mcp-authentication.md) · [OIDC](docs/oidc-authentication.md) |
