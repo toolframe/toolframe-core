@@ -5,6 +5,40 @@ on PATH; `--home APP` goes before the subcommand. Consult `--help` for the insta
 version rather than assuming commands from another Toolframe generation.
 These examples target Core 0.8.0, SDK 0.4.1 and Web 0.1.0.
 
+## Application home and startup
+
+Honor explicit user paths for the application, plugin source and other files.
+For a new complete app without a selected home, use the delivered project
+directory: `toolframe.toml` belongs there, with managed state in `.toolframe/` and
+`data/`. Keep runtime state, credentials and generated output out of version
+control. Source can live in `plugins/`, `packages/` or the user's chosen directory.
+Keep disposable QA homes separate. A request to extend an existing app preserves
+its home; source-only generation and design-only work do not initialize an app.
+If a requested layout conflicts with a supported CLI contract, explain the
+specific conflict instead of silently replacing the requested path.
+
+Separate three operations:
+
+- **Build:** prepare assets and wheels with the selected authoring tools.
+- **Initial setup:** initialize the chosen home, install/configure providers and
+  business plugins, and provision required credentials through public operations.
+  An idempotent helper can perform these steps while preserving existing data.
+- **Restart:** use the official CLI against the prepared home. A project-specific
+  script, authoring virtual environment or another provision run is not required.
+
+From that application directory, the normal start command is `toolframe serve`.
+The native launcher also accepts `toolframe` with no arguments, or `uvx toolframe`
+when using uv's tool runner. An explicitly chosen home outside the current
+directory uses `toolframe --home PATH serve` (or the corresponding uvx command).
+Keep the user's chosen location and document the matching command. Native runtime
+preparation may download packages on first use; it is separate from rebuilding
+the app or reissuing its credentials. A project's Python `uv.lock` does not select
+the standalone launcher version; record the actual CLI/Core versions used.
+
+Finish setup with the selected home, URL, credential location and official
+restart command. Put first-time setup and routine startup in separate README
+steps so the user can restart an already prepared app directly.
+
 ## New source and application
 
 For a new plugin, discover the local templates and inspect the selected version:
@@ -183,6 +217,18 @@ reader discovery/call limits and writer mutations through the real client; then
 read the same record from Web. Keep all sensitive methods `public_api=False`.
 
 ## Evidence for completion
+
+For complete apps, test the documented official CLI startup in a disposable
+installed application, with the working directory set to its selected home.
+Use `toolframe`, `toolframe serve` or `uvx toolframe`; an explicit user-selected
+home may instead use `--home PATH serve`. Run without the authoring venv,
+`PYTHONPATH` or setup-only environment overrides. Create a synthetic business
+record, stop the owned server and restart with the same command. Verify the same
+application identity, retained record and requested login/MCP flows without
+reseeding or reprovisioning. Check application readiness and the intended user
+surface; a live Core process or HTTP 200 alone is insufficient. Record the home,
+exact command, versions and results. Existing apps retain their selected paths;
+do not move an app to satisfy the default for new projects.
 
 Verify business invariants through public services and requested interfaces.
 For Web, verify complete pages and fragments, both form encodings and JSON,

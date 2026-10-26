@@ -195,5 +195,51 @@
       "Generates using toolframe-web/notes without runtime add/enable/mount or provider startup",
       "Treats catalog publication status separately from local wheel availability"
     ]
+  },
+  {
+    "id": "complete-app-restart",
+    "prompt": "Use Toolframe to build a complete task tracker with login and MCP tools. Make it ready to use.",
+    "activate": true,
+    "read": [
+      "references/design.md",
+      "references/plugin-api.md",
+      "references/operations.md"
+    ],
+    "success": [
+      "Defaults a new complete application to the delivered project directory when the user has not selected another home",
+      "Separates build and initial credential provisioning from routine startup",
+      "Documents and verifies an official Toolframe CLI command from the application home without a project startup wrapper or authoring virtual environment",
+      "Stops and restarts a disposable installed application; verifies application readiness, identity, retained business records, login and requested MCP flows",
+      "Reports the actual home, command, runtime versions and checks not run without equating Core liveness to application readiness"
+    ]
+  },
+  {
+    "id": "explicit-application-paths",
+    "prompt": "Build a Toolframe reading tracker. Keep the application in ./instances/reading and put the plugin source in ./packages/books; keep these paths. Use a build helper if needed.",
+    "activate": true,
+    "read": [
+      "references/operations.md"
+    ],
+    "success": [
+      "Honors both user-specified destinations instead of replacing either with the repository-root default",
+      "Verifies the official CLI from ./instances/reading or with explicit --home ./instances/reading serve",
+      "Does not make the build helper a routine startup requirement",
+      "Keeps temporary acceptance homes separate from the user-selected application"
+    ]
+  },
+  {
+    "id": "existing-app-home",
+    "prompt": "Add a due-date filter to the existing Toolframe task app in ./instances/team. Preserve its configuration and records.",
+    "activate": true,
+    "read": [
+      "references/design.md",
+      "references/plugin-api.md",
+      "references/operations.md"
+    ],
+    "success": [
+      "Preserves the existing home, source paths, identity and data rather than moving them to the repository root",
+      "Validates the changed feature and applicable restart flow using the documented official command",
+      "Does not reissue credentials or reseed records during normal restart"
+    ]
   }
 ]

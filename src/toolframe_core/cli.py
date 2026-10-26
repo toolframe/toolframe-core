@@ -49,7 +49,12 @@ def parser():
     result.add_argument(
         "--version", "-V", action="version", version=f"toolframe {__version__}"
     )
-    result.add_argument("--home", type=Path, default=Path.cwd())
+    result.add_argument(
+        "--home",
+        type=Path,
+        default=Path.cwd(),
+        help="Application directory containing toolframe.toml; defaults to the current directory",
+    )
     _add_json_option(result)
     commands = result.add_subparsers(dest="command", required=True)
 
@@ -323,6 +328,7 @@ def _exit_code(code):
         "invalid_config",
         "configuration_invalid",
         "configuration_exists",
+        "application_not_initialized",
         "config_invalid",
         "config_missing",
         "malformed_input",
@@ -472,6 +478,23 @@ def _status_check(result, *, plugin=False):
     return 3
 
 
+def _require_application_home(config):
+    # Existing journals may need recovery even when their configuration is gone.
+    if config.path.exists() or (config.home / "data/core.sqlite").exists():
+        return
+    from .state import StateSettings
+
+    if StateSettings.from_env().backend == "postgresql":
+        return
+    raise PluginError(
+        "application_not_initialized",
+        f"No application configuration at {config.path}. "
+        "Run 'toolframe init' in the intended application directory, or select "
+        "an existing application with 'toolframe --home PATH serve'.",
+        {"home": str(config.home), "configuration": str(config.path)},
+    )
+
+
 def _serve(config, *, listen_host=None):
     return asyncio.run(_serve_async(config, listen_host=listen_host))
 
@@ -487,9 +510,29 @@ async def _serve_async(config, *, listen_host=None):
     host = control.listen_host
     authority = f"[{host}]" if ":" in host else host
     print(
+        f"Toolframe Core {__version__}\n"
+        f"Application home: {config.home}\n"
+        f"Configuration: {config.path}\n"
+        f"Application: {application.name} ({application.id})",
+        flush=True,
+    )
+    if control.configuration_error:
+        print(
+            "Application not ready: configuration is missing or invalid; "
+            "management recovery remains available. Repair the selected configuration "
+            "before applying changes.",
+            file=sys.stderr,
+            flush=True,
+        )
+    print(
         f"Toolframe: {http_url(client_host(host), application.port)} "
         f"· listening on {authority}:{application.port} · management token: "
         f"{config.home / '.toolframe/management.token'}",
+        flush=True,
+    )
+    print(
+        "Check application readiness with 'toolframe status --check' "
+        "from the application home.",
         flush=True,
     )
     server = uvicorn.Server(
@@ -661,11 +704,12 @@ def run(arguments):
             _emit_json({"configuration": str(config.path), "skill": skill})
         else:
             print(
-                f"Initialized {config.path}. Run toolframe --home {config.home} serve"
+                f"Initialized {config.path}. Run 'toolframe serve' from {config.home}"
             )
             print(installation_message(skill))
         return 0
     if arguments.command == "serve":
+        _require_application_home(config)
         from .skills import installation_message
 
         try:

@@ -1,6 +1,6 @@
 ---
 name: toolframe-plugin-design
-version: "0.5.0"
+version: "0.5.1"
 description: Load when designing, creating, or modifying a Toolframe business plugin, including HTML Web apps, forms and lists, domain services, persistence, Streamlit Dashboard pages, or MCP tools. Excludes routine operation, calling existing tools, standalone HTML or Streamlit apps, Codex plugins, and Toolframe runtime/provider internals.
 ---
 
@@ -13,8 +13,12 @@ basic template travel with the application; a Toolframe source checkout is optio
 ## Establish the design
 
 Identify the application home, existing plugin source (if any), and whether the
-request is design-only or includes implementation. Preserve existing plugin IDs
-and data ownership when extending a plugin.
+request is design-only or includes implementation. Honor the user's explicit file
+and directory destinations. For a new complete application with no chosen home,
+use the delivered project directory as its application home. Preserve an existing
+application's home, plugin IDs and data ownership. For application setup, read
+[home and startup](references/operations.md#application-home-and-startup) before
+choosing a layout or helper scripts.
 
 Read [design.md](references/design.md) when establishing or changing business
 behavior. Resolve the operations, invariants, data ownership and required user
@@ -75,3 +79,6 @@ Existing-data migrations require a reviewed migration plan and an explicitly
 authorized apply; a normal reload does not apply them. Report evidence for the
 affected service and each requested presentation surface, retained data after
 reload, and any checks not run. An installed package alone is not completion.
+For complete application delivery, verify the documented official Toolframe CLI
+command from the selected home, including restart and retained data, as described
+in [completion evidence](references/operations.md#evidence-for-completion).
