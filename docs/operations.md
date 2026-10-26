@@ -69,6 +69,45 @@ drains admitted work and requires cleanup before starting a replacement. See
 [lifecycle and recovery](architecture.md#workers-reload-and-recovery) for drain
 timeouts, failed activation and schema-repair rules.
 
+## Application home and restart
+
+The application home contains `toolframe.toml`, `toolframe.lock`, private
+`.toolframe/` runtime state and persistent `data/`. Keep that home to retain the
+application's identity, credentials and records. Keep private state and
+credentials out of version control. Plugin source can live in a separate
+directory; installing a wheel makes routine startup independent of the author's
+virtual environment and build tools.
+
+Once setup has prepared the application, run the official CLI from its home:
+
+```sh
+cd my-app
+toolframe serve
+```
+
+The native launcher accepts `toolframe` with no arguments as well. `uvx toolframe`
+is the equivalent tool-runner entry point. These commands select the current
+directory; they do not search parent directories or hidden QA homes. For an
+explicitly selected home, use `toolframe --home /path/to/app serve`. First-time
+asset builds, provider installation and credential provisioning are setup work;
+routine restart does not require a project-specific startup script or repeat setup.
+Native runtime downloads on a fresh machine are described in the
+[runtime guide](runtime.md).
+
+Startup prints the selected home, configuration path, application identity and
+Core version. Run `toolframe status --check` from that home to verify application
+readiness, then check the intended page or client. A listening management server
+does not by itself mean the business application is ready.
+
+Starting from a directory without `toolframe.toml` or an existing local Core
+journal fails with `application_not_initialized` (exit 2), before creating app
+state or installing a skill. Run `toolframe init` in the intended new home, or
+select the existing home with `--home`. An existing journal, or explicitly
+configured PostgreSQL journal, retains its recovery path when configuration is
+missing or invalid. The CLI marks that application not ready while keeping
+management recovery available; repair the selected configuration before applying
+changes. It does not silently choose a different application.
+
 ## Composition and local development
 
 `toolframe.toml` holds the desired configuration. `toolframe.lock` records exact

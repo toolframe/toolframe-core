@@ -65,7 +65,7 @@ operator's existing application.
 
 | Driver | Coverage |
 | --- | --- |
-| `scripts/verify-release.py` | Copied executable, empty/demo startup, caches, replacement, shutdown and missing-cache behavior. |
+| `scripts/verify-release.py` | Copied executable, rejection of uninitialized homes, app-root startup/restart, retained identity/data, caches, replacement, shutdown and missing-cache behavior. |
 | `scripts/verify-network.py` | Gateway listeners, local management and LAN access. |
 | `scripts/verify-auth.py` and `scripts/verify-auth-upgrade.py` | Access rules, scoped operations and upgrades. |
 | `scripts/verify-dependencies.py` | Dependency and impact diagnostics. |

@@ -15,7 +15,7 @@ business databases. Do not provision Core tables in a business-provider database
 Install the coordinated Core release with its optional driver:
 
 ```sh
-pip install 'toolframe-core[postgres]==0.8.2'
+pip install 'toolframe-core[postgres]==0.8.3'
 toolframe-core --home ./app init
 ```
 

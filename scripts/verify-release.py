@@ -55,6 +55,7 @@ def main():
         "TOOLFRAME_OFFLINE",
         "TOOLFRAME_UV",
         "PYTHONPATH",
+        "VIRTUAL_ENV",
     ):
         environment.pop(name, None)
     if args.uv_path:
@@ -124,26 +125,37 @@ def main():
         with urllib.request.urlopen(req, timeout=5) as response:
             return json.loads(response.read())
 
+    uninitialized = root / "not-an-application"
+    rejected = command("--home", uninitialized, "serve", expected=2)
+    assert rejected.returncode == 2, rejected.stderr
+    assert json.loads(rejected.stderr.splitlines()[-1])["error"]["code"] == (
+        "application_not_initialized"
+    )
+    assert not uninitialized.exists(), "Rejected startup must not create an app home"
+    reports["uninitialized_home"] = "rejected_without_creating_state"
+
     for template in ("empty", "entry-register"):
         home, listen = root / template, port()
         initialize = ["--home", home, "init", "--port", listen]
         if template != "empty":
             initialize += ["--template", template]
         command(*initialize)
+        composition = tomllib.loads((home / "toolframe.toml").read_text())
+        identity = composition["application"]["id"]
         if wheels is None:
-            composition = tomllib.loads((home / "toolframe.toml").read_text())
             assert composition.get("packages", {}).get("find_links", []) == []
         for offline in (False, True):
             arguments = [str(binary), *wheel_args]
             if offline:
                 arguments += ["--offline"]
-            arguments += ["--home", str(home), "serve"]
+            # Launcher-only options leave the default serve command intact.
+            # Restart exactly from the selected app home, without a wrapper.
             endpoint = f"http://127.0.0.1:{listen}"
             with (root / f"{template}-{offline}.log").open("w") as log:
                 server = subprocess.Popen(
                     arguments,
                     env=environment,
-                    cwd=root,
+                    cwd=home,
                     stdin=subprocess.DEVNULL,
                     stdout=log,
                     stderr=log,
@@ -175,6 +187,12 @@ def main():
                     )
                     assert len(status["plugins"]) == (0 if template == "empty" else 7)
                     assert request(home, endpoint, "/_toolframe/v1/readiness")["ready"]
+                    assert (
+                        tomllib.loads((home / "toolframe.toml").read_text())[
+                            "application"
+                        ]["id"]
+                        == identity
+                    )
                     interpreters = list((root / "runtime/core").glob("*/bin/python"))
                     assert len(interpreters) == 1, interpreters
                     inspection = subprocess.run(
@@ -201,6 +219,9 @@ def main():
                     assert not any(runtime_info["optional_imports"].values())
                     outcome = {
                         "template": template,
+                        "application_id": identity,
+                        "startup_command": arguments,
+                        "startup_directory": str(home),
                         "offline": offline,
                         "core_environment": runtime_info,
                         "status": {

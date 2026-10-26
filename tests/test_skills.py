@@ -253,6 +253,10 @@ def test_skill_upgrade_and_replacement_preserve_generated_plugins(
     (mutable_bundle / "references/design.md").write_text(
         "Updated template selection guidance\n"
     )
+    config = ConfigFile(home)
+    assert not config.path.exists()
+    config.initialize()
+    configuration = config.path.read_bytes()
     monkeypatch.setattr(cli, "_serve", lambda config, **kwargs: 0)
     assert cli.main(["--home", str(home), "serve"]) == 0
     (destination / "references/design.md").write_text("My custom guidance\n")
@@ -263,7 +267,7 @@ def test_skill_upgrade_and_replacement_preserve_generated_plugins(
     assert {
         p: p.read_bytes() for root in roots for p in root.rglob("*") if p.is_file()
     } == before
-    assert not (home / "toolframe.toml").exists()
+    assert config.path.read_bytes() == configuration
 
 
 @pytest.mark.parametrize("change", ["edit", "add", "delete", "invalid_receipt"])
@@ -323,6 +327,7 @@ def test_serve_refreshes_clean_skill_and_retains_changed_upgrade(
     tmp_path, mutable_bundle, monkeypatch, capsys
 ):
     home = tmp_path / "app"
+    ConfigFile(home).initialize()
     destination = Path(install_skill(home)["path"])
     monkeypatch.setattr(cli, "_serve", lambda config, **kwargs: 0)
     bump_bundle(mutable_bundle)
@@ -361,6 +366,7 @@ def test_bad_bundle_guidance_does_not_block_server_startup(
         cli, "_serve", lambda config, **kwargs: started.append(config.home) or 0
     )
     home = tmp_path / "app"
+    ConfigFile(home).initialize()
     assert cli.main(["--home", str(home), "serve"]) == 0
     assert started == [home]
     assert "invalid YAML" in capsys.readouterr().err

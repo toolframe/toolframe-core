@@ -1186,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "toolframe"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "anyhow",
  "flate2",

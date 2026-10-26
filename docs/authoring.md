@@ -1,5 +1,12 @@
 # Distribution-provided plugin templates
 
+When delivering a complete app, honor the user's explicit file and directory
+destinations. With no selected application home, use the delivered project root.
+Preserve existing application homes when extending them. Keep initial preparation
+separate from the official CLI [restart workflow](operations.md#application-home-and-restart),
+and verify restart, retained data and the requested user interfaces before handoff.
+Plugin-only generation remains separate from application setup.
+
 `toolframe plugin new NAME` creates `toolframe-core/basic`: a minimal package,
 plugin definition, bounded echo service and test. It requires only the SDK, with
 no SQL, Web, Dashboard or MCP resources. Generate into a new directory:

@@ -34,6 +34,10 @@ toolframe --home ./my-app open
 
 The demo includes a Streamlit Dashboard, MCP tools and SQLite storage. It listens
 on `127.0.0.1:9876`; keep `my-app` to retain its configuration and data.
+After stopping it, restart from `my-app` with `toolframe` or `toolframe serve`.
+Without a persistent CLI installation, use `uvx toolframe` from the same directory.
+See [application home and restart](docs/operations.md#application-home-and-restart)
+for other locations and startup diagnostics.
 
 **Requirements:** macOS 12+ or Linux glibc 2.28+, on ARM64 or x86-64.
 First run downloads Python and packages. Windows and musl Linux are unsupported.

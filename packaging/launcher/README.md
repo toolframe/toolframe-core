@@ -18,6 +18,12 @@ link. To run without a persistent CLI installation, use
 `uvx toolframe --home ./my-app init --template entry-register` and then
 `uvx toolframe --home ./my-app serve`.
 
+After initialization, start or restart from the application directory with
+`toolframe`, `toolframe serve` or `uvx toolframe`. An explicitly selected location
+uses `toolframe --home PATH serve`. Build/provision helpers are separate from
+routine startup. See the [application home guide](https://github.com/toolframe/toolframe-core/blob/main/docs/operations.md#application-home-and-restart)
+for readiness checks and configuration recovery.
+
 The wheels contain the Rust executable itself. No Python wrapper or extension is
 loaded. The same executable is available in the
 [GitHub Releases](https://github.com/toolframe/toolframe-core/releases) archives
