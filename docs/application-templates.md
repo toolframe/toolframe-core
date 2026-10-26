@@ -18,6 +18,10 @@ see [plugin authoring](authoring.md).
 
 ## Initialization
 
+Initialization refuses to overwrite an existing application or its retained
+plugin artifacts. Choose a new home directory to create another application;
+use the update workflow below to change an existing one.
+
 For each index range, initialization chooses the newest available stable,
 non-yanked release satisfying the declared range, Python/platform metadata and
 dependencies. Core's exact SDK selection is held fixed. A plugin's declared Core

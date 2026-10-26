@@ -33,7 +33,7 @@ Initialization is explicit; startup never overwrites an existing configuration.
 
 The default command is `serve --host 0.0.0.0`. The example publishes the gateway
 only on the host's loopback interface. For LAN access, publish `9876:9876` and
-follow the [network and access guidance](../README.md#lan-access).
+follow the [network and access guidance](operations.md#lan-access).
 
 ## Choose an image
 

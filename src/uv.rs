@@ -977,11 +977,22 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_uv(path: &Path, output: &str) {
-        use std::os::unix::fs::PermissionsExt;
-
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, format!("#!/bin/sh\nprintf '%s\\n' '{output}'\n")).unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        // A sibling test can fork while a writable fixture descriptor is open.
+        // Write in a child so that descriptor cannot be inherited by other tests.
+        let mut writer = std::process::Command::new("/bin/sh")
+            .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "write-fake-uv"])
+            .arg(path)
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("start fake uv writer");
+        writer
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(format!("#!/bin/sh\nprintf '%s\\n' '{output}'\n").as_bytes())
+            .expect("write fake uv script");
+        assert!(writer.wait().expect("wait for fake uv writer").success());
     }
 
     #[cfg(unix)]
