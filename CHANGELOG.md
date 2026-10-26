@@ -1,9 +1,30 @@
 # Changelog
 
-These versions describe local development releases. A version entry does not
-imply that its distributions have been published or every target is qualified.
+For installation and platform support, see the [README](README.md).
 
 ## Unreleased
+
+## v0.8.3 — 2026-10-26
+
+### Changed
+
+- Startup now shows the selected application home, configuration, identity and
+  Core version, with a command to check application readiness.
+- The bundled authoring guide separates setup from official CLI restart and
+  retained-data checks, honoring explicit user paths before new-app defaults.
+
+### Fixed
+
+- Reject uninitialized application directories before creating runtime state or
+  installing a skill, while preserving recovery for existing Core journals.
+
+### Upgrade notes
+
+- Start existing apps from their application directory or use
+  `toolframe --home PATH serve`; initialize a new home with `toolframe init`.
+
+[Full changelog](https://github.com/toolframe/toolframe-core/compare/v0.8.2...v0.8.3)
+[Application home guide](https://github.com/toolframe/toolframe-core/blob/v0.8.3/docs/operations.md#application-home-and-restart)
 
 ## 0.8.2
 
