@@ -57,7 +57,7 @@ The example targets ARM64; use the architecture of the executable being tested.
 `--wheelhouse` is an explicit local/offline input. No build step embeds its contents
 in the executable. Omit it after publication to test public PyPI resolution.
 Native Intel builds also need the external companion described in
-[FastMCP's build guide](https://github.com/toolframe/toolframe-fastmcp#macos-intel-release-artifact).
+[FastMCP's build guide](https://github.com/toolframe/toolframe-fastmcp/blob/main/docs/macos-intel.md).
 
 Probe scripts accept `--help` for their inputs. Write generated reports under
 ignored `build/` or `dist/`, and use disposable application homes rather than an
