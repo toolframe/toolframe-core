@@ -217,3 +217,49 @@ Official catalog updates must pass `scripts/check-authoring-catalog.py --wheelho
 PATH` with matching wheels for all listed packages. It compares IDs, titles and
 descriptions with their manifests; parameters and executable entries are never
 copied into the catalog.
+
+## Agent guidance
+
+`init` installs the bundled `toolframe-plugin-design` skill at
+`APP/.agents/skills/toolframe-plugin-design`. Open an agent session in the
+application directory and invoke `$toolframe-plugin-design` with your business
+requirements. Existing sessions may need to refresh skill discovery.
+
+The guide covers domain and data design, SDK services, managed SQL, optional
+Web/Streamlit/MCP resources and installed-application validation. Install it in
+an existing application, or obtain a separate copy:
+
+```sh
+toolframe --home APP skill install
+toolframe --home APP skill install --output ./toolframe-plugin-design --json
+```
+
+`--output` names the exact skill directory. Installation needs no running server,
+application configuration or management token. Global agent settings remain
+unchanged. The skill has its own semantic version in the `SKILL.md` YAML
+frontmatter. `.toolframe-install.json` records that version and the SHA-256 of
+every shipped file as the baseline for later updates.
+
+After a binary update, `serve` refreshes the skill before starting Core.
+Unmodified copies update automatically. Modified, added or deleted files require
+confirmation in an interactive terminal; the default answer keeps the local
+copy. Noninteractive startup keeps customizations, prints resolution
+instructions and continues serving. It does not repeatedly ask about a
+customized copy when the binary still ships the same skill. `skill install`
+explicitly checks for replacement.
+
+JSON or noninteractive `skill install` returns exit 5 and
+`confirmation_required: true` when a decision is needed. After confirmation,
+`skill install --overwrite` replaces the copy and saves the customized files in
+a sibling ZIP archive. Use `--output` to compare or merge a separate copy instead.
+Destinations that are files or contain symlinks are retained; choose a new
+directory in those cases. Results report `installed`, `updated`, `unchanged` or
+`preserved`.
+
+Updates affect only the installed skill. Generated or customized business
+plugins under `APP/plugins/`, or an explicit output directory, remain unchanged.
+The skill's top-level `evals/` directory is development-only and excluded from
+the Core wheel, installed copies and receipt. Upgrading an unmodified older
+copy removes previously bundled evals and their receipt entries. Customized
+copies retain the confirmation and backup protections above. See
+[testing](testing.md) for delivery checks and structural-validation limits.

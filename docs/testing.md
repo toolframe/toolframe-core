@@ -41,9 +41,27 @@ package-source selection.
 
 ## Executable and integration probes
 
-Build with `bash scripts/build-release.sh`. Probe scripts accept `--help` for their
-inputs. Write generated reports under ignored `build/` or `dist/`, and use
-disposable application homes rather than an operator's existing application.
+For local development with matching sibling checkouts, build their Python wheels
+into a development wheelhouse, then build the native launcher:
+
+```sh
+uv sync --locked --group dev
+bash scripts/dev-wheelhouse.sh
+bash scripts/build-release.sh
+uv run python scripts/verify-release.py \
+  --binary target/release/toolframe --wheelhouse wheelhouse \
+  --architecture arm64 --output build/release-arm64.json
+```
+
+The example targets ARM64; use the architecture of the executable being tested.
+`--wheelhouse` is an explicit local/offline input. No build step embeds its contents
+in the executable. Omit it after publication to test public PyPI resolution.
+Native Intel builds also need the external companion described in
+[FastMCP's build guide](https://github.com/toolframe/toolframe-fastmcp#macos-intel-release-artifact).
+
+Probe scripts accept `--help` for their inputs. Write generated reports under
+ignored `build/` or `dist/`, and use disposable application homes rather than an
+operator's existing application.
 
 | Driver | Coverage |
 | --- | --- |
@@ -54,6 +72,16 @@ disposable application homes rather than an operator's existing application.
 | `scripts/verify-operation-history.py` | Journal ordering, pagination and filters. |
 | `scripts/verify-retained-plugins.py` | Retained artifacts across binary upgrades. |
 | `scripts/verify-skill.py` and `scripts/verify-scaffold.py` | Skill installation, packaging, upgrades and generated plugins. |
+
+To exercise the native executable over a LAN, replace `SERVER_LAN_IP` with the
+machine's actual IPv4 address. The probe creates and stops a separate temporary
+application:
+
+```sh
+uv run python scripts/verify-network.py \
+  --binary target/release/toolframe \
+  --address SERVER_LAN_IP --output build/lan-access.json
+```
 
 Run the release probe with `--uv-path /path/to/uv` to qualify an installed version
 against the [runtime range](runtime.md). It also asserts that no private uv was
