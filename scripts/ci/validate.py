@@ -12,12 +12,14 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import tomllib
 import urllib.request
 import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from verification_workspace import create_workspace, managed_verification
 
 CORE = Path(__file__).resolve().parents[2]
 PYTHON = "3.14.7"
@@ -213,6 +215,7 @@ def python_checks(root, core, output, env):
         "scripts/verify-release.py",
         "scripts/verify-skill.py",
         "scripts/verify-scaffold.py",
+        "scripts/verification_workspace.py",
         "scripts/check-authoring-catalog.py",
         "scripts/ci",
         cwd=core,
@@ -441,6 +444,7 @@ def postgres_checks(root, core, output, env):
     )
 
 
+@managed_verification
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -472,7 +476,7 @@ def main():
         parser.error("Run this script with Python 3.14.7")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    root = Path(tempfile.mkdtemp(prefix="toolframe-core-ci-"))
+    root = create_workspace("toolframe-core-ci-", evidence=output / "validation.json")
     core = root / "workspace/toolframe-core"
     core.mkdir(parents=True)
     (output / "workspace.txt").write_text(f"{root}\n")

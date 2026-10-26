@@ -7,14 +7,15 @@ import json
 import os
 import socket
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
 import httpx
 import tomlkit
+from verification_workspace import create_workspace, managed_verification
 
 
+@managed_verification
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--previous-binary", required=True, type=Path)
@@ -23,7 +24,7 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     old, new = args.previous_binary.resolve(), args.binary.resolve()
-    directory = Path(tempfile.mkdtemp(prefix="toolframe-auth-upgrade-"))
+    directory = create_workspace("toolframe-auth-upgrade-", evidence=args.output)
     home = directory / "app"
     env = {
         k: v

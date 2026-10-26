@@ -9,11 +9,11 @@ import shutil
 import signal
 import socket
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
 import httpx
+from verification_workspace import create_workspace, managed_verification
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
@@ -39,6 +39,7 @@ print(json.dumps({
 """
 
 
+@managed_verification
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path)
@@ -51,7 +52,7 @@ def main():
     )
     args = parser.parse_args()
     source = args.binary.resolve()
-    directory = Path(tempfile.mkdtemp(prefix="toolframe-auth-release-"))
+    directory = create_workspace("toolframe-auth-release-", evidence=args.output)
     binary = directory / "toolframe"
     shutil.copy2(source, binary)
     env = {

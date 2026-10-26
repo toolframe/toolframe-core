@@ -8,11 +8,12 @@ import os
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 import urllib.request
 import zipfile
 from pathlib import Path
+
+from verification_workspace import create_workspace, managed_verification
 
 
 def inventory(directory):
@@ -23,6 +24,7 @@ def inventory(directory):
     }
 
 
+@managed_verification
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -30,7 +32,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     original, wheels = args.binary.resolve(), args.wheelhouse.resolve()
-    root = Path(tempfile.mkdtemp(prefix="toolframe-scaffold-")).resolve()
+    root = create_workspace("toolframe-scaffold-", evidence=args.output)
     binary = root / "toolframe"
     shutil.copy2(original, binary)
     environment = {**os.environ, "TOOLFRAME_RUNTIME_ROOT": str(root / "runtime")}

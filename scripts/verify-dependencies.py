@@ -7,20 +7,21 @@ import os
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
 import httpx
+from verification_workspace import create_workspace, managed_verification
 
 
+@managed_verification
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime-root", type=Path)
     args = parser.parse_args()
-    directory = Path(tempfile.mkdtemp(prefix="toolframe-dependencies-"))
+    directory = create_workspace("toolframe-dependencies-", evidence=args.output)
     binary = directory / "toolframe"
     shutil.copy2(args.binary.resolve(), binary)
     home = directory / "app"
