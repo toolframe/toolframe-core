@@ -1,14 +1,15 @@
+<p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-banner-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme-banner-light.png">
-  <img src="docs/assets/readme-banner-light.png" alt="Toolframe Core — a persistent host for replaceable Python plugins. Python packages → managed environments → plugin workers." width="1200">
+  <img src="docs/assets/readme-banner-light.png" alt="Toolframe Core — a persistent host for replaceable Python plugins. Python packages → managed environments → plugin workers." width="720">
 </picture>
+</p>
 
 # Toolframe Core
 
-Build local apps from Python plugins. Toolframe manages their environments and
-processes, so you can add web pages, dashboards and MCP tools, then replace
-plugins while keeping their stored data.
+Build local apps from Python plugins, with web pages, dashboards and MCP tools.
+Update plugins while keeping their data.
 
 ## Quick start
 
@@ -17,7 +18,8 @@ start the Entry Register demo:
 
 ```sh
 uv tool install toolframe
-toolframe --home ./my-app init --template entry-register
+toolframe --home ./my-app init \
+  --template entry-register
 toolframe --home ./my-app serve
 ```
 
