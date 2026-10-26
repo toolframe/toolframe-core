@@ -9,12 +9,13 @@ import shutil
 import signal
 import socket
 import subprocess
-import tempfile
 import time
 import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from verification_workspace import create_workspace, managed_verification
 
 
 def port():
@@ -23,6 +24,7 @@ def port():
         return connection.getsockname()[1]
 
 
+@managed_verification
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
@@ -39,9 +41,10 @@ def main():
     args = parser.parse_args()
     original = args.binary.resolve()
     wheels = args.wheelhouse.resolve() if args.wheelhouse else None
-    root = Path(
-        tempfile.mkdtemp(prefix=f"toolframe-release-{args.architecture}-")
-    ).resolve()
+    root = create_workspace(
+        f"toolframe-release-{args.architecture.replace('_', '-')}-",
+        evidence=args.output,
+    )
     binary = root / "toolframe"
     shutil.copy2(original, binary)
     environment = {**os.environ, "TOOLFRAME_RUNTIME_ROOT": str(root / "runtime")}

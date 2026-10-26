@@ -4,6 +4,8 @@ import hashlib
 import importlib.util
 import io
 import json
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -14,6 +16,51 @@ spec = importlib.util.spec_from_file_location(
 )
 validation = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validation)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_validation_preserves_evidence_and_retires_only_successful_scratch(
+    tmp_path, monkeypatch, fail
+):
+    helper = sys.modules["verification_workspace"]
+    monkeypatch.setattr(helper, "ROOT", tmp_path)
+    monkeypatch.setattr(helper, "idle", lambda path: True)
+    monkeypatch.delenv("TOOLFRAME_KEEP_TEST_WORKSPACE", raising=False)
+    output = tmp_path / "evidence"
+    monkeypatch.setattr(
+        sys, "argv", ["validate.py", "--checks", "python", "--output", str(output)]
+    )
+
+    def capture(*command, cwd):
+        if command == ("uv", "--version"):
+            return "uv 0.12.8 (fixture)"
+        return "a" * 40 if command[1] == "rev-parse" else ""
+
+    monkeypatch.setattr(validation, "capture", capture)
+    monkeypatch.setattr(validation, "snapshot_core", lambda destination: None)
+    monkeypatch.setattr(validation, "prepare_siblings", lambda *args: None)
+
+    def check(root, core, destination, environment):
+        (destination / "pytest.xml").write_text("<testsuite/>")
+        (root / "check.log").write_text("diagnostics")
+        if fail:
+            raise subprocess.CalledProcessError(1, ["fixture-check"])
+        (destination / "python-dist").mkdir()
+        (destination / "python-dist/fixture.whl").write_bytes(b"validated wheel")
+
+    monkeypatch.setattr(validation, "python_checks", check)
+    if fail:
+        with pytest.raises(subprocess.CalledProcessError):
+            validation.main()
+    else:
+        validation.main()
+    report = json.loads((output / "validation.json").read_text())
+    assert report["passed"] is not fail
+    assert Path(report["workspace"]).exists() is fail
+    assert (output / "pytest.xml").is_file()
+    assert list((output / "validation.json.logs").glob("*/check.log"))
+    if not fail:
+        assert (output / "python-dist/fixture.whl").read_bytes() == b"validated wheel"
 
 
 def sdist(tmp_path, *, version="0.1.0", member="pyproject.toml", name="toolframe-web"):

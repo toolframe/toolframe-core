@@ -100,6 +100,27 @@ of local Git objects. Validation records the exact dependency pins, environment,
 results and temporary workspace path. Keep historical evidence in CI artifacts
 or ignored local directories.
 
+## Local verification storage
+
+The CI validator and `verify-*.py` checks that create application homes use owned
+scratch directories under `build/verification/`. A successful check saves its
+requested report and adjacent `<report>.logs/<run>/` diagnostics before removing
+the scratch environment. `workspace.json` in that diagnostics directory records
+whether the environment was retained; workspace paths in older reports are
+historical and need not still exist. Distributions, XML results and requested
+reports stay in their output directories for subsequent validation or publication.
+
+Failed checks retain the latest failed workspace per verifier for up to seven
+days. The next invocation prunes superseded or expired owned workspaces after
+checking process command lines and open files. Install POSIX `ps` and `lsof` for
+automatic cleanup; unknown activity, changed ownership and active processes keep
+the workspace intact. Existing unmarked temporary directories are not adopted.
+An owned workspace left by an exited verifier first gets a lifecycle report and
+saved logs; it is eligible for pruning only when its remaining processes are idle.
+Set `TOOLFRAME_KEEP_TEST_WORKSPACE=1` to retain a workspace explicitly, including
+after success. Supplied runtime roots and existing applications remain outside
+the disposable boundary.
+
 ## Artifacts and consumer checks
 
 Python validation installs the locked workspace without editable packages so

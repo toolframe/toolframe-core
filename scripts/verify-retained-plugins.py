@@ -7,14 +7,15 @@ import os
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
 import httpx
 import tomlkit
+from verification_workspace import create_workspace, managed_verification
 
 
+@managed_verification
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--previous-binary", type=Path, required=True)
@@ -23,7 +24,7 @@ def main():
     parser.add_argument("--runtime-root", type=Path)
     parser.add_argument("--wheelhouse", type=Path)
     args = parser.parse_args()
-    directory = Path(tempfile.mkdtemp(prefix="toolframe-retained-"))
+    directory = create_workspace("toolframe-retained-", evidence=args.output)
     old, new = directory / "previous", directory / "toolframe"
     shutil.copy2(args.previous_binary.resolve(), old)
     shutil.copy2(args.binary.resolve(), new)

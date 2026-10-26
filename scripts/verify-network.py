@@ -8,16 +8,17 @@ import os
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 import tomllib
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
+from verification_workspace import create_workspace, managed_verification
 from websockets.asyncio.client import connect
 
 
+@managed_verification
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path)
@@ -29,7 +30,7 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     source = args.binary.resolve()
-    directory = Path(tempfile.mkdtemp(prefix="toolframe-network-"))
+    directory = create_workspace("toolframe-network-", evidence=args.output)
     binary = directory / "toolframe"
     shutil.copy2(source, binary)
     env = os.environ.copy()
