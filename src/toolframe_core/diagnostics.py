@@ -199,3 +199,53 @@ def dependency_snapshot(graph, plugins, candidates, bindings, cordis, publicatio
         "edges": edges,
         "impacts": impacts,
     }
+
+
+def diagnose_plugins(snapshot, plugins):
+    """Explain observed conditions without preparing candidates or changing readiness."""
+    nodes = {node["id"]: node for node in snapshot["nodes"]}
+    diagnoses = []
+    for edge in snapshot["edges"]:
+        if edge["state"] != "missing" or edge["kind"] not in ("required", "optional"):
+            continue
+        name, service = edge["source"], edge["label"]
+        target_state = nodes.get(edge["target"], {}).get("state", "unknown")
+        required = edge["kind"] == "required"
+        summary = f"{name} cannot resolve its {edge['kind']} service {service}."
+        action = f"Check the provider and binding for {service}."
+        if target_state == "disabled":
+            summary += f" Provider {edge['target']} is disabled."
+            action = f"Review the configuration and enablement of {edge['target']}."
+        elif target_state == "ambiguous":
+            summary += " Several providers match."
+            action = f"Review the binding for {name}/{edge['alias']}."
+        diagnoses.append(
+            {
+                "code": "missing_required_service"
+                if required
+                else "optional_service_missing",
+                "plugin_id": name,
+                "summary": summary,
+                "next_step": action,
+                "evidence": {
+                    "service": service,
+                    "alias": edge["alias"],
+                    "target": edge["target"],
+                    "target_state": target_state,
+                },
+            }
+        )
+    for plugin in plugins:
+        observed = plugin["health_observed_at"]
+        if observed is not None and plugin["active"] and not plugin["health_fresh"]:
+            name = plugin["id"]
+            diagnoses.append(
+                {
+                    "code": "stale_health",
+                    "plugin_id": name,
+                    "summary": f"The last health observation for {name} has expired.",
+                    "next_step": "Refresh status and inspect the plugin logs if health stays stale.",
+                    "evidence": {"observed_at": observed},
+                }
+            )
+    return diagnoses

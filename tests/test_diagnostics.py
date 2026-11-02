@@ -259,3 +259,63 @@ def test_mcp_restart_only_on_descriptor_removal_and_docs_refresh_without_restart
     assert {
         item["provider"] for item in report["impacts"]["app"]["reload"]["presentations"]
     } == {"mcp", "docs"}
+
+
+def test_diagnoses_use_observed_graph_and_freshness():
+    from toolframe_core.diagnostics import diagnose_plugins
+
+    known = {
+        "sql": candidate("sql", provider="sql"),
+        "app": candidate(
+            "app",
+            requires={
+                "db": Requirement(service="sql.service"),
+                "optional": Requirement(service="support.service", optional=True),
+            },
+        ),
+    }
+    graph = Graph({"app": known["app"]}, {})
+    rows = [
+        row("app", healthy=False, state="blocked"),
+        row("sql", enabled=False, healthy=False),
+    ]
+    report = snapshot(graph, known=known, rows=rows)
+    observations = [
+        {
+            "id": "app",
+            "active": None,
+            "health_fresh": False,
+            "health_observed_at": None,
+        },
+        {
+            "id": "sql",
+            "active": None,
+            "health_fresh": False,
+            "health_observed_at": None,
+        },
+        {
+            "id": "late",
+            "active": "wheel",
+            "health_fresh": False,
+            "health_observed_at": 10.5,
+        },
+        {
+            "id": "fresh",
+            "active": "wheel",
+            "health_fresh": True,
+            "health_observed_at": 11.5,
+        },
+    ]
+    diagnoses = {d["code"]: d for d in diagnose_plugins(report, observations)}
+    assert set(diagnoses) == {
+        "missing_required_service",
+        "optional_service_missing",
+        "stale_health",
+    }
+    assert (
+        diagnoses["missing_required_service"]["evidence"]["target_state"] == "disabled"
+    )
+    assert "sql" in diagnoses["missing_required_service"]["next_step"]
+    assert diagnoses["optional_service_missing"]["plugin_id"] == "app"
+    assert diagnoses["stale_health"]["evidence"] == {"observed_at": 10.5}
+    assert "never-publish-this" not in str(diagnoses)
