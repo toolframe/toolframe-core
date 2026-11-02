@@ -227,6 +227,10 @@ def test_invalid_toml_status_and_open_use_endpoint_file(tmp_path, monkeypatch, c
     assert cli.main(["--home", str(home), "status"]) == 0
     capsys.readouterr()
     assert requests[0].url == "http://127.0.0.1:9999/_toolframe/v1/status"
+    assert cli.main(["--home", str(home), "status", "--explain"]) == 0
+    assert "Plugin diagnoses are unavailable" in capsys.readouterr().out
+    assert cli.main(["--home", str(home), "status", "--explain", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["application"] == "ready"
 
     assert cli.main(["--home", str(home), "open"]) == 0
     assert capsys.readouterr().out.startswith(
