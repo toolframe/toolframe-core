@@ -32,6 +32,16 @@ permission as the status table and is not exposed through public business APIs.
 
 ## Snapshot contract
 
+`toolframe status --explain` prints each reported plugin problem with its next
+step. `toolframe status --json` and the management status API include a
+`diagnoses` array. Each entry has a stable `code`, the affected `plugin_id`,
+a `summary`, a `next_step`, and `evidence` from the same status snapshot.
+`missing_required_service` and `optional_service_missing` identify a service
+and binding. `stale_health` includes the last observation time in Unix seconds
+for an active plugin whose health has expired. Diagnoses use the status read
+permission. Application readiness and the `--check` exit code keep their
+existing meaning.
+
 `GET /_toolframe/v1/status` and `toolframe status --json` include an additive
 `dependency_graph` field with `schema_version: 1`:
 

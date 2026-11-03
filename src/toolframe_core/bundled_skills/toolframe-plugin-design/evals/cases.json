@@ -241,5 +241,25 @@
       "Validates the changed feature and applicable restart flow using the documented official command",
       "Does not reissue credentials or reseed records during normal restart"
     ]
+  },
+  {
+    "id": "inspect-cloud-deployment",
+    "prompt": "Diagnose why an existing Toolframe Cloud deployment failed from its recorded evidence.",
+    "activate": false,
+    "success": [
+      "Inspects deployment evidence without starting plugin design or modifying application source"
+    ]
+  },
+  {
+    "id": "fix-cloud-business-plugin",
+    "prompt": "The deployment diagnosis shows that my Toolframe business plugin declares the wrong SQL dependency. Update the plugin and its tests.",
+    "activate": true,
+    "read": [
+      "references/plugin-api.md",
+      "references/operations.md"
+    ],
+    "success": [
+      "Corrects the business plugin dependency in its owning repository and verifies the affected application"
+    ]
   }
 ]

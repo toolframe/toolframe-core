@@ -25,7 +25,7 @@ from toolframe_sdk.web import WebAppCatalog
 
 from .access import Access, operation_scopes
 from .config import ConfigFile, HostLock, PluginRequest, atomic_write, management_token
-from .diagnostics import dependency_snapshot
+from .diagnostics import dependency_snapshot, diagnose_plugins
 from .gateway import compile_gateway, endpoints, validate_web_catalogs
 from .graph import Graph
 from .lockfile import write_lock
@@ -2694,6 +2694,9 @@ class Host:
                     "runtime": row["runtime"],
                     "stopped_override": row["stopped"],
                     "blocked_by": self.graph.missing.get(name, []),
+                    "health_observed_at": runtime.observed
+                    if runtime and runtime.observed
+                    else None,
                     "health_fresh": bool(
                         runtime
                         and time.time() - runtime.observed
@@ -2746,6 +2749,14 @@ class Host:
             or (await self.state.meta("forward_repair"))
         )
         cordis = self.manager.snapshot()
+        topology = dependency_snapshot(
+            self.graph,
+            plugins,
+            candidates,
+            self.composition.bindings,
+            cordis,
+            self.publication,
+        )
         return self.redact(
             {
                 "report_schema": 1,
@@ -2773,13 +2784,7 @@ class Host:
                 "presentations": self.publication,
                 "operations": (await self.state.operations()),
                 "cordis": cordis,
-                "dependency_graph": dependency_snapshot(
-                    self.graph,
-                    plugins,
-                    candidates,
-                    self.composition.bindings,
-                    cordis,
-                    self.publication,
-                ),
+                "dependency_graph": topology,
+                "diagnoses": diagnose_plugins(topology, plugins),
             }
         )

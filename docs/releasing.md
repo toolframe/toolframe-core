@@ -47,7 +47,9 @@ same repository, workflow and environment for different project names.
 Use the actual owner if publishing from a fork. Each provider uses the same
 workflow/environment names in its own repository; see that repository's release
 guide. Follow [PyPI's Trusted Publishing documentation](https://docs.pypi.org/trusted-publishers/using-a-publisher/).
-Only the upload jobs receive `id-token: write`; they use no PyPI API-token secret.
+The PyPI upload jobs and native asset attestation job receive `id-token: write`;
+the PyPI jobs use no API-token secret. The native asset job also receives
+`attestations: write` to publish GitHub build provenance.
 Environment reviewers and release-tag protections can restrict who releases.
 
 Source validation fetches sibling repositories. Public repositories need no
@@ -91,7 +93,29 @@ replace a published companion with different bytes: existing launchers will
 reject it. Native dependency updates use the explicit build procedure in the
 companion guide before ordinary CI or publication.
 
-After production Release assets succeed, `publish-containers` calls the
+Before creating the GitHub Release, the workflow generates signed SLSA build
+provenance for the exact archives, manifests, companion wheel and checksum files
+with `actions/attest`. Attestation records publication by `publish.yml` at the
+release tag commit; the validated bundle retains the original build provenance
+when CI artifacts were promoted. Attestation does not rebuild or modify assets.
+
+After upload, four native runner jobs download their platform's public assets
+from that exact Release. Each job compares every downloaded SHA-256 with this
+publication run's sealed bundle, including the public aggregate checksum file.
+GitHub CLI must verify each asset's attestation for the selected repository,
+`publish.yml`, tag ref and source commit, with GitHub-hosted runner provenance.
+The manifest must match the version and platform. The verifier rejects unsafe
+archive members and checks the executable's SHA-256 before staging it.
+
+Each runner then executes the downloaded binary through the release and skill
+acceptance probes using published dependencies and disposable application homes.
+The Intel macOS probe starts with an empty companion cache. The
+`public-native-<target>` workflow artifacts retain attestation verification,
+runner details, hashes and acceptance reports. A failed public verification
+leaves the already published Python packages and Release available for inspection;
+it blocks container publication and requires investigation before recovery.
+
+After all four public native archive checks succeed, `publish-containers` calls the
 [container workflow](container.md#publish-to-github-container-registry). It builds
 and verifies Debian and Distroless images on native Linux ARM64 and x86-64 using
 the validated executable artifacts from the same run, then publishes their GHCR
@@ -104,7 +128,11 @@ PyPI files are immutable. If upload partially succeeds, inspect the accepted
 files before recovery; do not rebuild and blindly retry the same version.
 If only GitHub Release creation fails, recover it from the `launcher-release-*`
 directories inside that run's `validated-release` bundle and verify their checksums
-before publishing. Do not rerun package publication solely to repair release assets.
+before publishing. Preserve the exact attested bytes, including manifests and
+per-platform checksum files, and reconstruct `SHA256SUMS` by concatenating the
+per-platform files in filename order. Do not rerun package publication solely to
+repair release assets. Complete the public download verification and native
+acceptance checks before publishing containers.
 
 The CLI binaries are unsigned and not Apple-notarized. macOS 12+, Linux glibc
 2.28+, both CPU architectures, physical hardware and any emulation used for

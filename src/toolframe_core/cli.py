@@ -96,6 +96,11 @@ def parser():
     status = commands.add_parser("status")
     _add_json_option(status)
     status.add_argument("--check", action="store_true")
+    status.add_argument(
+        "--explain",
+        action="store_true",
+        help="Show application readiness and plugin diagnoses",
+    )
 
     open_command = commands.add_parser("open")
     _add_json_option(open_command)
@@ -450,6 +455,21 @@ def _operation_exit_code(result, *, no_wait=False):
     return 4
 
 
+def _explain_status(report):
+    print("Application:", report.get("application", "unknown"))
+    diagnoses = report.get("diagnoses")
+    if diagnoses is None:
+        print("Plugin diagnoses are unavailable from this Core.")
+    elif not diagnoses:
+        print("No plugin diagnoses reported.")
+    else:
+        for diagnosis in diagnoses:
+            print(
+                f"{diagnosis['plugin_id']} [{diagnosis['code']}]: {diagnosis['summary']}"
+            )
+            print(f"  {diagnosis['next_step']}")
+
+
 def _status_check(result, *, plugin=False):
     if plugin:
         rows = result if isinstance(result, list) else [result]
@@ -769,7 +789,12 @@ def run(arguments):
                     ),
                     {},
                 )
-            _emit_json(result)
+            if getattr(arguments, "explain", False) and not getattr(
+                arguments, "json", False
+            ):
+                _explain_status(result)
+            else:
+                _emit_json(result)
             if getattr(arguments, "check", False):
                 if plugin_status and not getattr(arguments, "id", None):
                     result = result.get("plugins", [])
