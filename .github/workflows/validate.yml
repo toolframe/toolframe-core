@@ -56,7 +56,7 @@ jobs:
     needs: reuse
     if: needs.reuse.outputs.reused == 'false'
     name: PostgreSQL journal and mixed SQL storage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       postgres:

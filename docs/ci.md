@@ -16,7 +16,8 @@ Branch policy, lint, formatting and applicable PR commit/title checks must pass
 in `quality.yml` before `validate.yml` can start. Publication applies the same
 quality gate after checking its release tag. Quality checks run even when an
 existing validation bundle is reused. Python integration and architecture
-tests run on macOS ARM64. The PostgreSQL job starts its own PostgreSQL 16 service
+tests run on macOS ARM64. The PostgreSQL job runs on Ubuntu 24.04 with matching
+client tools and starts its own PostgreSQL 16 service
 and exercises Core journals, failure recovery and simultaneous SQLite/PostgreSQL
 workers.
 `launcher.yml` builds and exercises native wheels on macOS ARM64, macOS Intel,
