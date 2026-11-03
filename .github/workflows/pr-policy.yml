@@ -20,10 +20,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.14.7'
-      - uses: commit-check/commit-check-action@a61779784a953fd9047c001c102cfeac5cf26964 # commit-check 2.18.3
+      - uses: commit-check/commit-check-action@b6819c7bfd40f576d670a78712646a67f2659ff3 # commit-check 2.18.3
         with:
           message: true
           branch: false
