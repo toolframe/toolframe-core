@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import tarfile
 import tomllib
 import urllib.request
@@ -13,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGETS = {"amd64": "x86_64-unknown-linux-gnu", "arm64": "aarch64-unknown-linux-gnu"}
 
 
-def stage(releases, output, version, architecture):
+def stage(releases, output, version, architecture, wheel_dir=None):
     target = TARGETS[architecture]
     archive = releases / f"toolframe-{version}-{target}.tar.gz"
     sums = releases / f"SHA256SUMS-{target}.txt"
@@ -28,6 +29,20 @@ def stage(releases, output, version, architecture):
     manifest = json.loads((releases / f"manifest-{target}.json").read_text())
     if manifest["version"] != version or manifest["target"] != target:
         raise ValueError(f"Release manifest does not match {version}/{target}")
+    wheel = None
+    if wheel_dir is not None:
+        wheel = wheel_dir / f"toolframe_core-{version}-py3-none-any.whl"
+        if not wheel.is_file():
+            raise ValueError(f"Missing matching Core wheel: {wheel.name}")
+    wheels = output / "wheels"
+    wheels.mkdir(parents=True, exist_ok=True)
+    # Reusing a staging directory must not silently select an older candidate.
+    for previous in wheels.iterdir():
+        if not previous.is_file() or previous.suffix != ".whl":
+            raise ValueError(f"Unexpected staged wheelhouse entry: {previous.name}")
+        previous.unlink()
+    if wheel is not None:
+        shutil.copyfile(wheel, wheels / wheel.name)
     destination = output / architecture
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive) as bundle:
@@ -53,6 +68,11 @@ def main():
         "--release-dir",
         type=Path,
         help="Use existing CI artifacts; otherwise download a release",
+    )
+    parser.add_argument(
+        "--wheel-dir",
+        type=Path,
+        help="Stage the matching Core wheel from a verified CI bundle",
     )
     parser.add_argument("--output", type=Path, default=ROOT / "build/container")
     parser.add_argument(
@@ -81,7 +101,7 @@ def main():
             with urllib.request.urlopen(url, timeout=60) as response:
                 (releases / name).write_bytes(response.read())
     for arch in architectures:
-        stage(releases, args.output, args.version, arch)
+        stage(releases, args.output, args.version, arch, args.wheel_dir)
 
 
 if __name__ == "__main__":

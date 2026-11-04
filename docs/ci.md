@@ -2,6 +2,8 @@
 
 Ordinary CI validates Python distributions, PostgreSQL integration and four native
 launcher wheels, or promotes the matching successful validation bundle.
+It then builds, exercises and scans both container variants on both Linux
+architectures using that run's validated launcher and Core wheel.
 Publication is a separate manual workflow described in [releasing](releasing.md).
 
 ## Validation workflows
@@ -24,9 +26,9 @@ workers.
 Linux ARM64 and Linux x86-64. Linux wheels use manylinux 2.28 containers. Each job
 has a fresh workspace and uploads only its own validated artifacts.
 
-The final `CI result` check succeeds only when both quality and validation
-succeed; failed, cancelled or skipped prerequisites cannot produce a green
-result. `pr-policy.yml` also provides a standalone `PR policy` check on PR source
+The final `CI result` check succeeds only when quality, validation and all four
+container checks succeed; failed, cancelled or skipped prerequisites cannot
+produce a green result. `pr-policy.yml` also provides a standalone `PR policy` check on PR source
 updates and metadata edits. This small policy check runs both independently and
 inside the source-validation gate, so a title edit can update a required check
 without cancelling or repeating native builds. Configure both `CI result` and
@@ -63,6 +65,8 @@ security groups. Catch-all groups include major versions and use compliant
 group before the catch-all; exclusions would restore individual branch names.
 
 Python 3.14.7, uv 0.12.8, Rust 1.94.1 and Maturin 1.14.1 are the build pins.
+Native launcher acceptance uses uv 0.13.7, matching the managed runtime download
+and container pin.
 Third-party actions use full commit IDs. Runtime uv compatibility is a separate
 contract in [runtime preparation](runtime.md).
 

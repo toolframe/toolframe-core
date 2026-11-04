@@ -21,8 +21,8 @@ use std::fs::OpenOptions;
 
 const RELEASE_MANIFEST: &str = include_str!("../uv-release-manifest.txt");
 const UV_RELEASE_BASE_URL: &str = "https://github.com/astral-sh/uv/releases/download";
-const MINIMUM_UV_VERSION: (u64, u64, u64) = (0, 12, 2);
-const MAXIMUM_UV_VERSION_EXCLUSIVE: (u64, u64, u64) = (0, 13, 0);
+const MINIMUM_UV_VERSION: (u64, u64, u64) = (0, 13, 7);
+const MAXIMUM_UV_VERSION_EXCLUSIVE: (u64, u64, u64) = (0, 14, 0);
 const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
@@ -873,29 +873,29 @@ mod tests {
     #[test]
     fn manifest_pins_supported_platforms() {
         let arm = release_for_target("aarch64-apple-darwin").expect("read arm release");
-        assert_eq!(arm.version, "0.12.8");
+        assert_eq!(arm.version, "0.13.7");
         assert_eq!(
             arm.archive_sha256,
-            "8ce083658dbff20143607ca7af8e0c1d64b6fd7bf03a5cdcb62bf3d47d991b5f"
+            "81b811b57e4624df7ed3aac148e0359100d9962f3d9dce00aec533dc2e086731"
         );
         assert_eq!(
             arm.executable_sha256,
-            "e053a85d61ffa0790b564afe56bb7314d69334ff33b77175df03f9de2f11dd46"
+            "0f333833a6d011710d3edc0e45b55d3d934aef15bb83a25b29848c241ac513b4"
         );
         assert_eq!(
             arm.download_url(),
-            "https://github.com/astral-sh/uv/releases/download/0.12.8/uv-aarch64-apple-darwin.tar.gz"
+            "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-apple-darwin.tar.gz"
         );
 
         let intel = release_for_target("x86_64-apple-darwin").expect("read Intel release");
-        assert_eq!(intel.version, "0.12.8");
+        assert_eq!(intel.version, "0.13.7");
         assert_eq!(
             intel.archive_sha256,
-            "bfcd4407de99e0a2c1904df0902fa1795653d4edd145358e6561527e746a4f16"
+            "20c47e4c1f630b8abaff8c291fa9b9aa300fef92c4fbff95adf198b55287cda7"
         );
         assert_eq!(
             intel.executable_sha256,
-            "c7dd0293072831b718924b82f390bb2d179666cec739118eb781a755c5504334"
+            "b345904c70c5bb715cda5a58cb74b6c53158346e806258e270a774fdaa3d7739"
         );
 
         for target in [
@@ -907,7 +907,7 @@ mod tests {
             "x86_64-pc-windows-msvc",
         ] {
             let release = release_for_target(target).expect("read portable release");
-            assert_eq!(release.version, "0.12.8");
+            assert_eq!(release.version, "0.13.7");
             assert_eq!(release.archive_sha256.len(), 64);
             assert_eq!(release.executable_sha256.len(), 64);
         }
@@ -916,7 +916,7 @@ mod tests {
         assert_eq!(windows.archive_member(), "uv.exe");
         assert_eq!(
             windows.download_url(),
-            "https://github.com/astral-sh/uv/releases/download/0.12.8/uv-x86_64-pc-windows-msvc.zip"
+            "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-pc-windows-msvc.zip"
         );
         assert!(release_for_target("powerpc-apple-darwin").is_err());
     }
@@ -944,26 +944,26 @@ mod tests {
 
     #[test]
     fn parses_uv_version_and_target() {
-        let build = parse_uv_version("uv 0.12.8 (68209e5c6 2026-08-31 aarch64-apple-darwin)\n")
+        let build = parse_uv_version("uv 0.13.7 (316c827e0 2026-11-03 aarch64-apple-darwin)\n")
             .expect("parse official version output");
-        assert_eq!(build.version, "0.12.8");
-        assert_eq!(build.semantic_version, (0, 12, 8));
+        assert_eq!(build.version, "0.13.7");
+        assert_eq!(build.semantic_version, (0, 13, 7));
         assert_eq!(build.target.as_deref(), Some("aarch64-apple-darwin"));
 
         assert!(parse_uv_version("uv unknown").is_err());
-        assert!(parse_uv_version("not-uv 0.12.8").is_err());
+        assert!(parse_uv_version("not-uv 0.13.7").is_err());
     }
 
     #[test]
     fn accepts_version_output_without_a_target_but_rejects_unstable_versions() {
-        let build = parse_uv_version("uv 0.12.2 (Homebrew)\n").unwrap();
-        assert_eq!(build.semantic_version, (0, 12, 2));
+        let build = parse_uv_version("uv 0.13.7 (Homebrew)\n").unwrap();
+        assert_eq!(build.semantic_version, (0, 13, 7));
         assert_eq!(build.target, None);
         for version in [
-            "0.12.2rc1",
-            "0.12.2-dev",
-            "0.12.2+local",
-            "0.12.2.1",
+            "0.13.7rc1",
+            "0.13.7-dev",
+            "0.13.7+local",
+            "0.13.7.1",
             "0.12",
             "0..2",
             "nightly",
@@ -1000,19 +1000,19 @@ mod tests {
     async fn external_uv_accepts_supported_patches_without_official_hash_or_target() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("custom-uv");
-        for version in ["0.12.2", "0.12.8", "0.12.22"] {
+        for version in ["0.13.7", "0.13.8", "0.13.9"] {
             fake_uv(&path, &format!("uv {version} (custom build)"));
             let resolved = inspect_candidate(&path, None, UvSource::Configured)
                 .await
                 .unwrap();
             assert_eq!(resolved.version, version);
         }
-        for version in ["0.8.24", "0.12.1", "0.13.0", "1.0.0"] {
+        for version in ["0.8.24", "0.12.24", "0.13.6", "0.14.0", "1.0.0"] {
             fake_uv(&path, &format!("uv {version}"));
             let error = inspect_candidate(&path, None, UvSource::Configured)
                 .await
                 .unwrap_err();
-            assert!(error.to_string().contains(">=0.12.2,<0.13.0"), "{error}");
+            assert!(error.to_string().contains(">=0.13.7,<0.14.0"), "{error}");
         }
     }
 
@@ -1022,8 +1022,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let explicit = directory.path().join("renamed uv");
         let path_directory = directory.path().join("bin");
-        fake_uv(&explicit, "uv 0.12.2");
-        fake_uv(&path_directory.join("uv"), "uv 0.12.22");
+        fake_uv(&explicit, "uv 0.13.7");
+        fake_uv(&path_directory.join("uv"), "uv 0.13.9");
         let managed_root = directory.path().join("managed");
         let release = release_for_target("aarch64-apple-darwin").unwrap();
         let resolved = resolve_with_path(
@@ -1039,7 +1039,7 @@ mod tests {
         assert_eq!(resolved.path, explicit.canonicalize().unwrap());
         assert!(!managed_root.exists());
 
-        fake_uv(&explicit, "uv 0.12.1");
+        fake_uv(&explicit, "uv 0.13.6");
         let error = resolve_with_path(
             Some(&explicit),
             &managed_root,
@@ -1050,7 +1050,7 @@ mod tests {
         .await
         .unwrap_err();
         assert!(format!("{error:#}").contains("configured UV executable is invalid"));
-        assert!(format!("{error:#}").contains("UV 0.12.1 is unsupported"));
+        assert!(format!("{error:#}").contains("UV 0.13.6 is unsupported"));
         assert!(!managed_root.exists());
     }
 
@@ -1063,10 +1063,10 @@ mod tests {
             .map(|name| directory.path().join(name))
             .collect();
         fake_uv(&bins[1].join("uv"), "not uv");
-        fake_uv(&bins[2].join("uv"), "uv 0.12.1");
-        fake_uv(&bins[3].join("uv"), "uv 0.13.0");
-        fake_uv(&bins[4].join("uv"), "uv 0.12.2");
-        fake_uv(&bins[5].join("uv"), "uv 0.12.22");
+        fake_uv(&bins[2].join("uv"), "uv 0.13.6");
+        fake_uv(&bins[3].join("uv"), "uv 0.14.0");
+        fake_uv(&bins[4].join("uv"), "uv 0.13.7");
+        fake_uv(&bins[5].join("uv"), "uv 0.13.9");
         let search_path = env::join_paths(&bins).unwrap();
         let managed_root = directory.path().join("managed");
         let release = release_for_target("aarch64-apple-darwin").unwrap();
@@ -1107,11 +1107,11 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let managed_root = directory.path().join("managed");
         let managed = managed_root.join("uv");
-        fake_uv(&managed, "uv 0.12.8 (aarch64-apple-darwin)");
+        fake_uv(&managed, "uv 0.13.7 (aarch64-apple-darwin)");
         let mut release = release_for_target("aarch64-apple-darwin").unwrap();
         release.executable_sha256 = sha256_file(&managed).unwrap();
         let old_bin = directory.path().join("old");
-        fake_uv(&old_bin.join("uv"), "uv 0.12.1");
+        fake_uv(&old_bin.join("uv"), "uv 0.13.6");
         let alias_bin = directory.path().join("alias");
         fs::create_dir_all(&alias_bin).unwrap();
         symlink(&managed, alias_bin.join("uv")).unwrap();
@@ -1128,7 +1128,7 @@ mod tests {
         assert_eq!(resolved.source, UvSource::Managed);
         assert_eq!(resolved.path, managed.canonicalize().unwrap());
 
-        fake_uv(&managed, "uv 0.12.8 (different build)");
+        fake_uv(&managed, "uv 0.13.7 (different build)");
         let error = resolve_with_path(
             None,
             &managed_root,
@@ -1196,7 +1196,7 @@ mod tests {
     #[test]
     fn progress_line_includes_bar_rate_elapsed_and_eta() {
         let line = format_progress_line(
-            "uv 0.12.8 (aarch64-apple-darwin)",
+            "uv 0.13.7 (aarch64-apple-darwin)",
             5 * 1024 * 1024,
             Some(10 * 1024 * 1024),
             Duration::from_secs(2),
@@ -1224,17 +1224,17 @@ mod tests {
     async fn accepts_only_the_exact_version_and_target_for_a_pinned_release() {
         let directory = tempfile::tempdir().expect("create temp directory");
         let path = directory.path().join("exact-uv");
-        fake_uv(&path, "uv 0.12.8 (test 2026-09-03 aarch64-apple-darwin)");
+        fake_uv(&path, "uv 0.13.7 (test 2026-09-03 aarch64-apple-darwin)");
         let mut release = release_for_target("aarch64-apple-darwin").expect("read release");
         release.executable_sha256 = sha256_file(&path).expect("hash exact fake uv");
         let resolved = inspect_candidate(&path, Some(&release), UvSource::Managed)
             .await
             .expect("accept exact fake uv");
-        assert_eq!(resolved.version, "0.12.8");
+        assert_eq!(resolved.version, "0.13.7");
 
         // Keep each executable fixture immutable after it has been launched.
         let path = directory.path().join("old-uv");
-        fake_uv(&path, "uv 0.12.7 (test 2026-09-03 aarch64-apple-darwin)");
+        fake_uv(&path, "uv 0.13.6 (test 2026-09-03 aarch64-apple-darwin)");
         release.executable_sha256 = sha256_file(&path).expect("hash old fake uv");
         let error = inspect_candidate(&path, Some(&release), UvSource::Managed)
             .await
@@ -1245,7 +1245,7 @@ mod tests {
         );
 
         let path = directory.path().join("wrong-target-uv");
-        fake_uv(&path, "uv 0.12.8 (test 2026-09-03 x86_64-apple-darwin)");
+        fake_uv(&path, "uv 0.13.7 (test 2026-09-03 x86_64-apple-darwin)");
         release.executable_sha256 = sha256_file(&path).expect("hash wrong-target fake uv");
         let error = inspect_candidate(&path, Some(&release), UvSource::Managed)
             .await
