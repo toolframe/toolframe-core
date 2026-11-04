@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
 
-FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS runtime
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS runtime
 ARG TARGETARCH
 ARG TOOLFRAME_VERSION=0.8.3
 ARG TOOLFRAME_REVISION
@@ -69,7 +69,7 @@ RUN mkdir -p /opt/ps-libs/var/lib/dpkg/status.d \
     && dpkg-query -s procps > /opt/ps-libs/var/lib/dpkg/status.d/procps \
     && dpkg-query -s tini > /opt/ps-libs/var/lib/dpkg/status.d/tini
 
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:83b9b50586253821cf63ffcec87d3d94265a093ad30da232039af962dd8f4edf AS distroless
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS distroless
 ARG TOOLFRAME_VERSION=0.8.3
 ARG TOOLFRAME_REVISION
 LABEL org.opencontainers.image.source="https://github.com/toolframe/toolframe-core" \
