@@ -13,10 +13,34 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567
-      with:
-        version: v0.76.0
-        cache: false
+    - name: Install the verified scanner from GitHub Releases
+      shell: bash
+      env:
+        TRIVY_VERSION: '0.76.0'
+      run: |
+        case "$RUNNER_ARCH" in
+          X64)
+            architecture=64bit
+            checksum=e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
+            ;;
+          ARM64)
+            architecture=ARM64
+            checksum=aab21e677a7b7071fc79f1711480840754c18a1b9d9cefa7ccd06af63a0e8f4c
+            ;;
+          *) echo "Unsupported scanner architecture: $RUNNER_ARCH" >&2; exit 1 ;;
+        esac
+        archive="trivy_${TRIVY_VERSION}_Linux-${architecture}.tar.gz"
+        directory="$RUNNER_TEMP/toolframe-trivy"
+        mkdir -p "$directory"
+        curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+          --fail --silent --show-error --location --retry 3 --retry-all-errors \
+          --connect-timeout 15 --max-time 180 \
+          --output "$directory/$archive" \
+          "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$archive"
+        printf '%s  %s\n' "$checksum" "$directory/$archive" | sha256sum --check --strict
+        tar -xzf "$directory/$archive" -C "$directory" trivy
+        "$directory/trivy" --version
+        echo "$directory" >> "$GITHUB_PATH"
     - name: Scan every severity and keep the package inventory
       shell: bash
       env:

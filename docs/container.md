@@ -180,6 +180,8 @@ appears in GitHub Actions and the README security badge; maintainers can enable
 workflow failure notifications in their GitHub notification settings. Unfiltered
 JSON, scanner/database metadata and a CycloneDX inventory are retained for seven
 days. These artifacts are inventories, not signed image attestations.
+CI downloads the pinned Trivy archive directly from GitHub Releases and checks
+its architecture-specific SHA-256 before running it.
 
 Dependabot checks Docker base/uv pins and GitHub Actions dependencies every
 Monday at 04:23 UTC. Update pull requests require review, all image checks and
@@ -228,7 +230,8 @@ index. The final `CI result` requires container verification and security checks
 to succeed.
 
 For a container-only rebuild of an already published version, run the
-**Container images** workflow on a ref whose Cargo version matches that release.
+**Container images** workflow on that version's published release tag, where
+the Dockerfile's uv pin matches the released launcher's compatibility range.
 Its default is validation only; enable `publish` to upload. This also recovers
 container publication failures without republishing immutable PyPI files.
 A failed container job does not undo a successful Python/GitHub release.
