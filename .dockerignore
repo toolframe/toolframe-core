@@ -13,3 +13,5 @@
 !build/container/arm64/toolframe
 !build/container/arm64/LICENSE
 !build/container/arm64/NOTICE
+!build/container/wheels/
+!build/container/wheels/*.whl

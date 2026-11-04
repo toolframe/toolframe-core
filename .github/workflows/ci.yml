@@ -33,10 +33,19 @@ jobs:
       rebuild: ${{ inputs.rebuild || false }}
     secrets: inherit
 
+  containers:
+    needs: validate
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/container.yml
+    with:
+      release_artifacts: true
+
   result:
     name: CI result
     if: always()
-    needs: [quality, validate]
+    needs: [quality, validate, containers]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -46,7 +55,10 @@ jobs:
         env:
           QUALITY_RESULT: ${{ needs.quality.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
+          CONTAINERS_RESULT: ${{ needs.containers.result }}
         run: |
           echo "Quality: $QUALITY_RESULT; validation: $VALIDATE_RESULT"
+          echo "Containers: $CONTAINERS_RESULT"
           test "$QUALITY_RESULT" = success
           test "$VALIDATE_RESULT" = success
+          test "$CONTAINERS_RESULT" = success

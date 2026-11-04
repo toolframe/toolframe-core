@@ -144,7 +144,10 @@ python3 scripts/verify-container.py --image toolframe:local-distroless \
 
 Use `linux/amd64` on x86-64. Emulated runs check compatibility but do not replace
 native release checks. `--release-dir PATH` uses already downloaded CI/release
-artifacts. `--architecture amd64` or `--architecture arm64` prepares one platform.
+artifacts. Add `--wheel-dir PATH` to stage the matching Core wheel exported from
+a verified CI bundle; omitting it uses the published package. The wheel remains
+at `/opt/toolframe/wheels` so later commands use the same bootstrap environment.
+`--architecture amd64` or `--architecture arm64` prepares one platform.
 When selecting another release, pass matching versions to the staging script
 (`--version`) and Docker (`--build-arg TOOLFRAME_VERSION`).
 
@@ -177,6 +180,8 @@ appears in GitHub Actions and the README security badge; maintainers can enable
 workflow failure notifications in their GitHub notification settings. Unfiltered
 JSON, scanner/database metadata and a CycloneDX inventory are retained for seven
 days. These artifacts are inventories, not signed image attestations.
+CI downloads the pinned Trivy archive directly from GitHub Releases and checks
+its architecture-specific SHA-256 before running it.
 
 Dependabot checks Docker base/uv pins and GitHub Actions dependencies every
 Monday at 04:23 UTC. Update pull requests require review, all image checks and
@@ -216,13 +221,17 @@ Native ARM64 and x86-64 jobs build, test and scan both variants; version and sta
 alias tags are assembled only after all four jobs succeed. Intermediate
 `build-RUN-ATTEMPT-VARIANT-ARCH` tags identify each tested image.
 
-Pull requests changing container packaging run the same four checks against the
-latest published Core release, without pushing images. Core source validation
-runs separately, so a version bump does not require publishing Python packages
-just to test Docker packaging.
+Ordinary CI runs the same four checks after source validation, without pushing
+images. It exports the Linux executable and matching Core wheel from that run's
+verified `validated-release` bundle. The image prepares Core from this wheel,
+so changes to the launcher, uv compatibility and Python runtime are exercised
+together before publication. Other Python dependencies resolve from the package
+index. The final `CI result` requires container verification and security checks
+to succeed.
 
 For a container-only rebuild of an already published version, run the
-**Container images** workflow on a ref whose Cargo version matches that release.
+**Container images** workflow on that version's published release tag, where
+the Dockerfile's uv pin matches the released launcher's compatibility range.
 Its default is validation only; enable `publish` to upload. This also recovers
 container publication failures without republishing immutable PyPI files.
 A failed container job does not undo a successful Python/GitHub release.

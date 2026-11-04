@@ -1,7 +1,7 @@
 # Runtime preparation and uv selection
 
 The Toolframe executable prepares Python and package environments automatically.
-It reuses an installed **stable uv version `>=0.12.2,<0.13`** when available.
+It reuses an installed **stable uv version `>=0.13.7,<0.14`** when available.
 This runtime range is separate from the exact build-tool versions used by CI.
 
 ## Selecting uv
@@ -46,10 +46,12 @@ otherwise uses PATH; the built launcher owns version-range validation.
 Toolframe continues to request the exact Python 3.14.7 architecture. Reusing uv
 does not relax the Python requirement or change an existing package lock.
 
-The minimum uv version includes Python 3.14.7 in its download catalog. Older uv
-versions may work with an existing interpreter but are outside this supported
-range. uv can introduce breaking changes in a minor release, so later minor
-series require validation before being admitted. See the upstream
+The minimum uv version includes the Rustls 0.23.46 security fixes and Python
+3.14.7 in its download catalog. Older uv versions are outside this supported
+range. Automatic discovery skips them and installs the verified private copy;
+an explicit `--uv-path` or `TOOLFRAME_UV` must point to a supported version.
+uv can introduce breaking changes in a minor release, so later minor series
+require validation before being admitted. See the upstream
 [Python installation documentation](https://docs.astral.sh/uv/concepts/python-versions/#installing-a-python-version)
 and [versioning policy](https://docs.astral.sh/uv/reference/policies/versioning/).
 

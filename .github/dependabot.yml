@@ -17,17 +17,17 @@ updates:
       # Catch every version and security update, including major versions.
       # To split a dependency out, add a named group before these catch-alls;
       # exclusions would fall back to noncompliant solo dependency/version names.
-      container-dependencies:
+      containers:
         applies-to: version-updates
         patterns: ['*']
-      container-security:
+      container-sec:
         applies-to: security-updates
         patterns: ['*']
     ignore:
-      # The 0.6.3 launcher accepts uv >=0.12.2,<0.13.0.
-      # Widen this only alongside a compatible launcher release.
+      # The launcher accepts uv >=0.13.7,<0.14.0.
+      # Validate a new minor series before widening this range.
       - dependency-name: astral-sh/uv
-        versions: ['>=0.13.0']
+        versions: ['<0.13.7', '>=0.14.0']
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -42,7 +42,7 @@ updates:
       prefix: chore
       template: '{prefix}/{name}'
     groups:
-      actions-dependencies:
+      actions:
         applies-to: version-updates
         patterns: ['*']
       actions-security:

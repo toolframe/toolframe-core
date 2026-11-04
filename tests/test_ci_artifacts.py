@@ -570,3 +570,21 @@ def test_validation_gate_rejects_all_incomplete_outcomes():
                 key,
                 value,
             )
+
+
+def test_ci_result_requires_successful_container_checks():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    script = workflow["jobs"]["result"]["steps"][0]["run"]
+    base = {
+        **os.environ,
+        "QUALITY_RESULT": "success",
+        "VALIDATE_RESULT": "success",
+    }
+    for value in ("success", "failure", "cancelled", "skipped", ""):
+        result = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", script],
+            env={**base, "CONTAINERS_RESULT": value},
+            capture_output=True,
+            check=False,
+        )
+        assert (result.returncode == 0) == (value == "success")

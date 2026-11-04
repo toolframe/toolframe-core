@@ -96,3 +96,32 @@ def test_accepts_per_platform_ci_checksums(tmp_path):
         tmp_path / f"SHA256SUMS-{prepare.TARGETS['arm64']}.txt"
     )
     prepare.stage(tmp_path, tmp_path / "output", "0.6.3", "arm64")
+
+
+def test_stages_only_the_matching_candidate_core_wheel(tmp_path):
+    release(tmp_path)
+    wheel_dir = tmp_path / "python-dist"
+    wheel_dir.mkdir()
+    name = "toolframe_core-0.6.3-py3-none-any.whl"
+    (wheel_dir / name).write_bytes(b"candidate Core")
+    (wheel_dir / "toolframe_core-0.6.3.tar.gz").write_bytes(b"sdist")
+    (wheel_dir / "toolframe_sdk-1.0.0-py3-none-any.whl").write_bytes(b"SDK")
+    output = tmp_path / "output"
+    prepare.stage(tmp_path, output, "0.6.3", "arm64", wheel_dir)
+    assert {path.name for path in (output / "wheels").iterdir()} == {name}
+    assert (output / "wheels" / name).read_bytes() == b"candidate Core"
+
+    # A later public-release build must resolve from its public package source.
+    prepare.stage(tmp_path, output, "0.6.3", "arm64")
+    assert list((output / "wheels").iterdir()) == []
+
+
+def test_missing_candidate_wheel_does_not_fall_back_to_pypi(tmp_path):
+    release(tmp_path)
+    wheel_dir = tmp_path / "python-dist"
+    wheel_dir.mkdir()
+    (wheel_dir / "toolframe_core-0.6.2-py3-none-any.whl").write_bytes(b"old Core")
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="Missing matching Core wheel"):
+        prepare.stage(tmp_path, output, "0.6.3", "arm64", wheel_dir)
+    assert not output.exists()

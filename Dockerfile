@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a AS uv
+FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
 
 FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS runtime
 ARG TARGETARCH
@@ -23,11 +23,13 @@ COPY --from=uv /uv /usr/local/bin/uv
 # prepare-container.py verifies the release checksums before staging these files.
 COPY build/container/${TARGETARCH}/toolframe /usr/local/bin/toolframe
 COPY build/container/${TARGETARCH}/LICENSE build/container/${TARGETARCH}/NOTICE /usr/share/doc/toolframe/
+COPY --chown=65532:65532 build/container/wheels/ /opt/toolframe/wheels/
 COPY scripts/container-healthcheck.py /usr/local/lib/toolframe/healthcheck.py
 COPY scripts/harden-container.py /usr/local/lib/toolframe/harden.py
 ENV HOME=/home/nonroot \
     TOOLFRAME_UV=/usr/local/bin/uv \
     TOOLFRAME_RUNTIME_ROOT=/opt/toolframe/runtime \
+    TOOLFRAME_WHEELHOUSE=/opt/toolframe/wheels \
     UV_PYTHON_INSTALL_DIR=/opt/toolframe/python \
     UV_CACHE_DIR=/data/.toolframe/uv-cache \
     UV_LINK_MODE=copy \
@@ -88,6 +90,7 @@ COPY --from=runtime --chown=65532:65532 /data/ /data/
 ENV HOME=/home/nonroot \
     TOOLFRAME_UV=/usr/local/bin/uv \
     TOOLFRAME_RUNTIME_ROOT=/opt/toolframe/runtime \
+    TOOLFRAME_WHEELHOUSE=/opt/toolframe/wheels \
     UV_PYTHON_INSTALL_DIR=/opt/toolframe/python \
     UV_CACHE_DIR=/data/.toolframe/uv-cache \
     UV_LINK_MODE=copy \
