@@ -4,6 +4,8 @@ For installation and platform support, see the [README](README.md).
 
 ## Unreleased
 
+## v0.8.4 — 2026-11-11
+
 ### Added
 
 - Plugin status explains disabled, blocked and degraded plugins and includes
@@ -22,7 +24,7 @@ For installation and platform support, see the [README](README.md).
 - Back up the application, then recreate its container with the existing data
   volume as described in the [upgrade guide](docs/container.md#data-permissions-and-upgrades).
 
-[Full changelog](https://github.com/toolframe/toolframe-core/compare/v0.8.3...main)
+[Full changelog](https://github.com/toolframe/toolframe-core/compare/v0.8.3...v0.8.4)
 
 ## v0.8.3 — 2026-10-26
 
