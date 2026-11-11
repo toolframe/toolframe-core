@@ -4,6 +4,28 @@ For installation and platform support, see the [README](README.md).
 
 ## Unreleased
 
+## v0.8.4 — 2026-11-11
+
+### Added
+
+- Plugin status explains disabled, blocked and degraded plugins and includes
+  repair commands in CLI and JSON output.
+
+### Security
+
+- Require uv >=0.13.7,<0.14 with patched Rustls in the launcher and containers.
+- Refresh Debian and Distroless base images and rebuild OS packages to include
+  the available apt and zlib security fixes.
+
+### Upgrade notes
+
+- Update the launcher and Core together; a custom `TOOLFRAME_UV` executable must
+  satisfy the [uv compatibility range](docs/runtime.md).
+- Back up the application, then recreate its container with the existing data
+  volume as described in the [upgrade guide](docs/container.md#data-permissions-and-upgrades).
+
+[Full changelog](https://github.com/toolframe/toolframe-core/compare/v0.8.3...v0.8.4)
+
 ## v0.8.3 — 2026-10-26
 
 ### Changed

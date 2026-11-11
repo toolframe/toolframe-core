@@ -43,6 +43,15 @@ def main():
     assert info["Config"]["Entrypoint"][:2] == ["/usr/bin/tini", "--"]
     security = ["--cap-drop", "ALL", "--security-opt", "no-new-privileges:true"]
     run = ["run", "--rm", "--platform", args.platform, *security]
+    version = info["Config"]["Labels"]["org.opencontainers.image.version"]
+    # The entrypoint's --home argument routes --version to the installed Core.
+    assert (
+        docker(
+            *run, "--network", "none", args.image, "--offline", "--version"
+        ).stdout.strip()
+        == f"toolframe {version}"
+    )
+    report["version"] = version
     # A fresh container must have an offline Core, even without any application volume.
     docker(*run, "--network", "none", args.image, "--offline", "--help")
     report["cold_offline_core"] = True
