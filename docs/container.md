@@ -230,12 +230,13 @@ together before publication. Other Python dependencies resolve from the package
 index. The final `CI result` requires container verification and security checks
 to succeed.
 
-For a container-only rebuild of an already published version, run the
-**Container images** workflow on that version's published release tag, where
-the Dockerfile's uv pin matches the released launcher's compatibility range.
-Its default is validation only; enable `publish` to upload. This also recovers
-container publication failures without republishing immutable PyPI files.
-A failed container job does not undo a successful Python/GitHub release.
+To rebuild the images for a published release, run the **Container images**
+workflow on its release tag. To include base-image updates merged since that
+release, select `main` while it still declares the published version and its
+uv pin is compatible with the released launcher. The workflow downloads the
+launcher from that release and validates all four images. Enable `publish` to
+update the GHCR tags after validation. This workflow can also retry a failed
+container publication using the existing Python packages and release assets.
 
 The workflow logs in with `GITHUB_TOKEN` and `packages: write`; no personal token
 is required in CI. The image source label links the package to this repo.
